@@ -23,6 +23,7 @@ use crate::validate::validate_neutral;
 use crate::CadIr;
 use cadmpeg_core::decode::WorkBudget;
 
+mod basis;
 mod helix;
 mod law_sweep;
 mod ruled_sum;

@@ -1449,28 +1449,61 @@ fn bspline_span(knots: &[f64], degree: usize, count: usize, t: f64) -> Option<us
     Some(lo)
 }
 
+/// Inline storage for common spline degrees; higher degrees retain checked allocation.
+enum BasisValues {
+    Inline { values: [f64; 16], len: usize },
+    Heap(Vec<f64>),
+}
+
+impl std::ops::Deref for BasisValues {
+    type Target = [f64];
+
+    fn deref(&self) -> &[f64] {
+        match self {
+            Self::Inline { values, len } => &values[..*len],
+            Self::Heap(values) => values,
+        }
+    }
+}
+
+impl std::ops::DerefMut for BasisValues {
+    fn deref_mut(&mut self) -> &mut [f64] {
+        match self {
+            Self::Inline { values, len } => &mut values[..*len],
+            Self::Heap(values) => values,
+        }
+    }
+}
+
 /// Non-zero basis function values at `t` for the given span (Cox–de Boor).
-fn bspline_basis(knots: &[f64], degree: usize, span: usize, t: f64) -> Option<Vec<f64>> {
-    let mut values = vec![1.0];
-    let mut left = alloc_filled(degree.checked_add(1)?, 0.0, "IR B-spline basis left").ok()?;
-    let mut right = alloc_filled(degree.checked_add(1)?, 0.0, "IR B-spline basis right").ok()?;
+/// Degrees up to 15 need no heap allocation. Each level overwrites the
+/// preceding level from left to right, after reading its old value.
+fn bspline_basis(knots: &[f64], degree: usize, span: usize, t: f64) -> Option<BasisValues> {
+    let len = degree.checked_add(1)?;
+    let mut values = if len <= 16 {
+        BasisValues::Inline {
+            values: [0.0; 16],
+            len,
+        }
+    } else {
+        BasisValues::Heap(alloc_filled(len, 0.0, "IR B-spline basis").ok()?)
+    };
+    values[0] = 1.0;
     for j in 1..=degree {
-        left[j] = t - knots[span + 1 - j];
-        right[j] = knots[span + j] - t;
         let mut saved = 0.0;
-        let mut next = alloc_filled(j.checked_add(1)?, 0.0, "IR B-spline basis level").ok()?;
-        for (r, &value) in values.iter().enumerate().take(j) {
-            let denominator = right[r + 1] + left[j - r];
+        for r in 0..j {
+            let left = t - knots[span + 1 - (j - r)];
+            let right = knots[span + r + 1] - t;
+            let denominator = right + left;
             let factor = if denominator == 0.0 {
                 0.0
             } else {
-                value / denominator
+                values[r] / denominator
             };
-            next[r] = saved + right[r + 1] * factor;
-            saved = left[j - r] * factor;
+            values[r] = saved + right * factor;
+            saved = left * factor;
         }
-        next[j] = saved;
-        values = next;
+        values[j] = saved;
     }
     Some(values)
 }
