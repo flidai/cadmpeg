@@ -50,3 +50,8 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   a pcurve. Current/stale and named/compact alias tests reject extra tail fields.
   Resource refusals propagate without trying another layout. Separate upstream
   bugfix candidate; not submitted.
+- Subtype definitions memoize their balanced scope length over immutable tokens.
+  Repeated reference admission keeps the same work and depth charges while
+  avoiding repeated delimiter scans. Inline cache storage remains accounted
+  by the definition vector reservation. Tests cover nested/malformed scopes,
+  Send/Sync and independent-context refusals after warming the cache.
