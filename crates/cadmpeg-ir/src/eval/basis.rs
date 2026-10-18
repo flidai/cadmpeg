@@ -206,6 +206,9 @@ pub(super) fn fill_bspline_basis_with_precision<'ctx, 'arena: 'ctx>(
 /// Inspect the finite range of a basis, admitting input-sized visits first.
 pub(super) fn all_finite(scratch: &decode::Scratch<'_, '_>, values: &[f64]) -> Option<bool> {
     scratch.work(0, "IR B-spline finite basis inspection")?;
+    if matches!(scratch.admission, EvaluationAdmission::Standard) {
+        return Some(values.iter().all(|value| value.is_finite()));
+    }
     for value in values {
         if values.len() > 2 {
             scratch.work(1, "IR B-spline finite basis inspection")?;

@@ -1895,6 +1895,20 @@ fn homogeneous_curve_sum(
     weight: impl Fn(usize) -> Option<f64>,
     first: usize,
 ) -> Option<Homogeneous> {
+    if scratch.precision == EvalPrecision::Fast {
+        if values.len() > 2 {
+            scratch.work(values.len(), "IR homogeneous pole traversal")?;
+        }
+        let mut sum = rational::FastHomogeneous::default();
+        for (local, &basis) in values.iter().enumerate() {
+            sum.add(
+                [basis, 1.0],
+                weight(first + local).unwrap_or(1.0),
+                pole(first + local)?,
+            );
+        }
+        return Some(sum.finish());
+    }
     scratch.admit(Homogeneous::sum(
         scratch,
         values.iter().copied().enumerate().map(|(local, basis)| {
@@ -3021,6 +3035,7 @@ struct NurbsSurfaceFirstPartials {
 /// The homogeneous sum of a NURBS surface's poles local to `spans`, blended
 /// by `u_values` along `u` and `v_values` along `v`. A missing pole and a
 /// value that is not finite leave no sum.
+#[inline]
 fn nurbs_local_sum(
     scratch: &decode::Scratch<'_, '_>,
     surface: &NurbsSurface,
@@ -3188,6 +3203,7 @@ impl NurbsSurfaceLocal<'_> {
 /// coordinate reads NaN; a projection that overflows carries each coordinate
 /// it reached. A parameter that is not finite, a knot vector or pole net that
 /// states no span at the parameter, and a zero weight sum have no value.
+#[inline]
 fn nurbs_surface_local<'a>(
     scratch: &decode::Scratch<'_, '_>,
     surface: &'a NurbsSurface,
@@ -3197,6 +3213,7 @@ fn nurbs_surface_local<'a>(
     scratch.settle(nurbs_surface_local_unsettled(scratch, surface, u_at, v_at))
 }
 
+#[inline]
 fn nurbs_surface_local_unsettled<'a>(
     scratch: &decode::Scratch<'_, '_>,
     surface: &'a NurbsSurface,

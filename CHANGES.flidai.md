@@ -25,3 +25,7 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   because the construction carrier cannot represent it. Synthetic tests cover
   current/stale caches and named/compact aliases. Separate upstream bugfix
   candidate; not submitted upstream.
+- Fast curve sums use the same direct ordered accumulator as surface sums.
+  Standard evaluation avoids per-lane no-op admission; admitted evaluation
+  still charges every traversal. Inline local surface helpers avoid copying
+  unused derivative state for point-only callers.
