@@ -129,14 +129,15 @@ pub(super) fn fill_bspline_basis_with_precision<'ctx, 'arena: 'ctx>(
         return Ok(None);
     }
     let finite_t = FiniteReal::new(t);
-    if degree > 1 {
+    let charged = !matches!(admission, EvaluationAdmission::Standard);
+    if degree > 1 && charged {
         admission.work(1, "IR B-spline basis work")?;
     }
     values[0] = 1.0;
     for j in 1..=degree {
         let mut saved = 0.0;
         for r in 0..j {
-            if degree > 1 {
+            if degree > 1 && charged {
                 admission.work(1, "IR B-spline basis work")?;
             }
             let value = values[r];
@@ -194,7 +195,7 @@ pub(super) fn fill_bspline_basis_with_precision<'ctx, 'arena: 'ctx>(
             values[r] = saved + right_term;
             saved = left_term;
         }
-        if degree > 1 {
+        if degree > 1 && charged {
             admission.work(1, "IR B-spline basis work")?;
         }
         values[j] = saved;

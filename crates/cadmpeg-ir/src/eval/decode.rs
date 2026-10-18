@@ -259,6 +259,7 @@ impl<'ctx, 'arena> Scratch<'ctx, 'arena> {
         Some(values)
     }
 
+    #[inline]
     pub(super) fn work(&self, count: usize, operation: &'static str) -> Option<()> {
         if self.refusal.borrow().is_some() {
             return None;

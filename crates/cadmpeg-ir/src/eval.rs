@@ -3029,6 +3029,25 @@ fn nurbs_local_sum(
     u_values: &[f64],
     v_values: &[f64],
 ) -> Option<Homogeneous> {
+    if scratch.precision == EvalPrecision::Fast {
+        // Admit the complete active net before advancing through its poles.
+        scratch.work(
+            u_values.len().checked_mul(v_values.len())?,
+            "IR homogeneous pole traversal",
+        )?;
+        let mut sum = rational::FastHomogeneous::default();
+        for (i, &u_value) in u_values.iter().enumerate() {
+            for (j, &v_value) in v_values.iter().enumerate() {
+                let (pole_u, pole_v) = (u_span - u_degree + i, v_span - v_degree + j);
+                sum.add(
+                    [u_value, v_value],
+                    surface.weight(pole_u, pole_v).map_or(1.0, NonZeroReal::get),
+                    surface.pole(pole_u, pole_v)?,
+                );
+            }
+        }
+        return Some(sum.finish());
+    }
     scratch.admit(Homogeneous::sum(
         scratch,
         u_values

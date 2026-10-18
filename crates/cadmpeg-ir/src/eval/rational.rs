@@ -35,6 +35,28 @@ pub(super) struct Homogeneous {
     fast: Option<[f64; 4]>,
 }
 
+/// Ordered binary64 accumulation, shared by curve and surface traversal.
+#[derive(Default)]
+pub(super) struct FastHomogeneous([f64; 4]);
+
+impl FastHomogeneous {
+    pub(super) fn add(&mut self, basis: [f64; 2], weight: f64, point: FinitePoint3) {
+        let factor = basis[0] * basis[1] * weight;
+        self.0[0] += factor * point.x;
+        self.0[1] += factor * point.y;
+        self.0[2] += factor * point.z;
+        self.0[3] += factor;
+    }
+
+    pub(super) fn finish(self) -> Homogeneous {
+        Homogeneous {
+            values: [None; 4],
+            constant: [None; 3],
+            fast: Some(self.0),
+        }
+    }
+}
+
 impl Homogeneous {
     pub(super) fn sum(
         scratch: &decode::Scratch<'_, '_>,
@@ -47,24 +69,16 @@ impl Homogeneous {
             input_sized,
         };
         if scratch.precision == super::EvalPrecision::Fast {
-            let mut values = [0.0; 4];
+            let mut sum = FastHomogeneous::default();
             for term in terms {
                 let Some((basis, weight, point)) = term else {
                     scratch.unless_refused()?;
                     return Ok(None);
                 };
-                let factor = basis[0] * basis[1] * weight;
-                for (value, coordinate) in values[..3].iter_mut().zip([point.x, point.y, point.z]) {
-                    *value += factor * coordinate;
-                }
-                values[3] += factor;
+                sum.add(basis, weight, point);
             }
             scratch.unless_refused()?;
-            return Ok(Some(Self {
-                values: [None; 4],
-                constant: [None; 3],
-                fast: Some(values),
-            }));
+            return Ok(Some(sum.finish()));
         }
         let mut values = [None; 4];
         for (axis, value) in values.iter_mut().enumerate() {

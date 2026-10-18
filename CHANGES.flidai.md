@@ -16,3 +16,6 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   keep exact evaluation. Inline storage and resource refusal remain active.
   Fast can lose accuracy or finite values through cancellation or intermediate
   overflow; it is intended for rounded measurements, not exact predicates.
+- Fast surface sums traverse the active net directly and admit its work in one
+  charge, sharing the ordered accumulator with curve sums. Standard evaluation
+  skips no-op basis work accounting; admitted evaluation retains its limits.

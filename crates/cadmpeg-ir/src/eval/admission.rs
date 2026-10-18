@@ -184,6 +184,7 @@ impl<'ctx, 'arena> EvaluationAdmission<'ctx, 'arena> {
         }
     }
 
+    #[inline]
     pub(super) fn work(self, count: u64, operation: &'static str) -> Result<(), ResourceLimit> {
         match self {
             Self::Decode(context) => context.charge_work_limit(count, operation),
