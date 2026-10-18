@@ -194,6 +194,15 @@ impl DecodeContext<'_> {
         count: usize,
         operation: &'static str,
     ) -> Result<(), ResourceLimit> {
+        let required = values
+            .len()
+            .checked_add(count)
+            .ok_or_else(|| self.retained_size_overflow_limit(operation))?;
+        if required <= values.capacity() {
+            // No backing bytes change owners when the existing allocation fits.
+            self.charge_retained_limit(0, operation)?;
+            return self.charge_collection_items_limit(u64_from_index(count), operation);
+        }
         reservation.with_storage_limit(|| self.reserve_vec_limit(values, count, operation))
     }
 

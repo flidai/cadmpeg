@@ -4,6 +4,89 @@ use crate::decode::{DecodeArena, DecodeContext, DecodePolicy, ResourceDimension}
 use crate::CodecError;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
+#[test]
+fn scoped_vec_capacity_fit_charges_items_without_new_backing_and_keeps_refusal() {
+    let arena = DecodeArena::new();
+    let mut policy = DecodePolicy::service();
+    policy.limits.max_retained_bytes = 0;
+    policy.limits.max_materialized_bytes = 32;
+    policy.limits.max_collection_items = 2;
+    let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).expect("test context");
+    let mut reservation = ctx
+        .reserve_scoped(0, "test scoped vector")
+        .expect("empty scoped reservation");
+    let mut values = Vec::<u64>::new();
+    ctx.reserve_scoped_vec_limit(&mut reservation, &mut values, 1, "test scoped growth")
+        .expect("first item fits the scoped backing allowance");
+    values.push(7);
+    let capacity = values.capacity();
+    assert_eq!(capacity, 4);
+    ctx.reserve_scoped_vec_limit(&mut reservation, &mut values, 1, "test capacity fit")
+        .expect("existing scoped backing needs neither retained nor additional materialized bytes");
+    assert_eq!(values.capacity(), capacity);
+    let refused = ctx
+        .reserve_scoped_vec_limit(&mut reservation, &mut values, 1, "test capacity fit")
+        .expect_err("both growth and capacity-fit reservations charge collection items");
+    assert_eq!(refused.dimension, ResourceDimension::CollectionItems);
+    assert_eq!(refused.used, 2);
+    assert_eq!(refused.additional, 1);
+    assert_eq!(values, [7]);
+    assert_eq!(values.capacity(), capacity);
+    assert_eq!(ctx.resource_refusal(), Some(refused));
+    assert_eq!(
+        ctx.reserve_scoped_vec_limit(&mut reservation, &mut values, 0, "test fused fit")
+            .expect_err("zero additional items preserve the fused refusal"),
+        refused,
+    );
+}
+
+#[test]
+fn scoped_vec_growth_still_accounts_and_releases_the_complete_backing() {
+    let arena = DecodeArena::new();
+    let mut policy = DecodePolicy::service();
+    policy.limits.max_retained_bytes = 0;
+    policy.limits.max_materialized_bytes = 64;
+    let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).expect("test context");
+    let mut reservation = ctx
+        .reserve_scoped(0, "test scoped vector")
+        .expect("empty scoped reservation");
+    let mut values = Vec::<u64>::new();
+    for value in 0..5 {
+        ctx.reserve_scoped_vec_limit(&mut reservation, &mut values, 1, "test scoped growth")
+            .expect("five items fit the scoped backing allowance");
+        values.push(value);
+    }
+    assert_eq!(values.capacity(), 8);
+    drop(values);
+    drop(reservation);
+    ctx.reserve_scoped(64, "test released scoped backing")
+        .expect("growth remains owned by the reservation and releases on drop");
+    ctx.finish_session().expect("no resource refusal");
+}
+
+#[test]
+fn zero_sized_scoped_vec_fit_still_charges_each_item() {
+    let arena = DecodeArena::new();
+    let mut policy = DecodePolicy::service();
+    policy.limits.max_retained_bytes = 0;
+    policy.limits.max_materialized_bytes = 0;
+    policy.limits.max_collection_items = 1;
+    let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).expect("test context");
+    let mut reservation = ctx
+        .reserve_scoped(0, "test zero-sized scoped vector")
+        .expect("empty scoped reservation");
+    let mut values = Vec::<()>::new();
+    ctx.reserve_scoped_vec_limit(&mut reservation, &mut values, 1, "test zero-sized fit")
+        .expect("first zero-sized item fits the collection allowance");
+    values.push(());
+    let refused = ctx
+        .reserve_scoped_vec_limit(&mut reservation, &mut values, 1, "test zero-sized fit")
+        .expect_err("second zero-sized item exceeds the collection allowance");
+    assert_eq!(refused.dimension, ResourceDimension::CollectionItems);
+    assert_eq!((refused.used, refused.additional), (1, 1));
+    assert_eq!(values.len(), 1);
+}
+
 fn scoped_storage_cases<T>(
     small: u64,
     grown: u64,

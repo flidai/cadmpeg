@@ -775,10 +775,14 @@ pub(crate) fn admit_subtype_references(
             cadmpeg_core::decode::u64_from_index(record.tokens.len()),
             "scan ASM subtype references",
         )?;
+        let mut references = subtype_refs(&record.tokens).peekable();
+        if references.peek().is_none() {
+            continue;
+        }
         let mut visited = std::collections::HashSet::new();
         let mut pending = Vec::new();
         let mut scratch = ctx.reserve_scoped(0, "walk ASM subtype references")?;
-        let root = (subtype_refs(&record.tokens), None);
+        let root = (references, None);
         ctx.push_scoped_vec(&mut scratch, &mut pending, root, "walk ASM subtype stack")?;
         while let Some((references, _guard)) = pending.last_mut() {
             let Some(index) = references.next() else {
@@ -793,7 +797,8 @@ pub(crate) fn admit_subtype_references(
                 cadmpeg_core::decode::u64_from_index(std::mem::size_of::<usize>());
             scratch.grow(visited_slot_bytes)?;
 
-            ctx.insert_hash_set(&mut visited, index, "visit ASM subtype reference")?;
+            ctx.reserve_set(&mut visited, 1, "visit ASM subtype reference")?;
+            visited.insert(index);
             let Some((tokens, _)) = table.defs.get(index) else {
                 continue;
             };
@@ -805,7 +810,7 @@ pub(crate) fn admit_subtype_references(
                 continue;
             };
             let guard = ctx.enter_nested("follow ASM subtype reference")?;
-            let frame = (subtype_refs(target.tokens()), Some(guard));
+            let frame = (subtype_refs(target.tokens()).peekable(), Some(guard));
             ctx.push_scoped_vec(&mut scratch, &mut pending, frame, "walk ASM subtype stack")?;
         }
     }
@@ -1029,6 +1034,38 @@ mod tests {
         };
         assert_eq!(limit.dimension, ResourceDimension::CollectionItems);
         assert_eq!(limit.operation, "index ASM subtype definitions");
+    }
+
+    #[test]
+    fn reference_free_records_still_charge_scan_work_without_stack_storage() {
+        use cadmpeg_core::decode::{DecodeArena, DecodeContext, DecodePolicy, ResourceDimension};
+        use cadmpeg_core::CodecError;
+
+        let records = [crate::sab::Record {
+            index: 0,
+            name: "node".into(),
+            tokens: vec![Token::Long(0), Token::Double(1.0)].into(),
+            offset: 0,
+            len: 0,
+        }];
+        let table = with_ctx(|ctx| super::SubtypeTable::from_records(ctx, &records).unwrap());
+        for work in [1, 2] {
+            let arena = DecodeArena::new();
+            let mut policy = DecodePolicy::service();
+            policy.limits.max_work_units = work;
+            policy.limits.max_collection_items = 0;
+            policy.limits.max_materialized_bytes = 0;
+            let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
+            let result = super::admit_subtype_references(&ctx, &records, &table);
+            if work == 1 {
+                assert!(matches!(result, Err(CodecError::ResourceLimit(limit))
+                    if limit.dimension == ResourceDimension::WorkUnits
+                        && limit.operation == "scan ASM subtype references"));
+            } else {
+                result.expect("no references need no stack collection or backing bytes");
+                ctx.finish_session().unwrap();
+            }
+        }
     }
 
     #[test]

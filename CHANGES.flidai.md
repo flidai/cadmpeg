@@ -29,3 +29,7 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   Standard evaluation avoids per-lane no-op admission; admitted evaluation
   still charges every traversal. Inline local surface helpers avoid copying
   unused derivative state for point-only callers.
+- Scoped vector reservations that fit existing capacity keep item and sticky
+  refusal checks without changing storage ownership. Reference-free records
+  retain scan-work admission without allocating a traversal stack. Tests cover
+  growth, zero-sized items, collection refusal and scan-work refusal.
