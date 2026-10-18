@@ -127,6 +127,7 @@ pub(super) fn keep_faces_and_carriers(
         undecoded_carriers,
         ..
     } = &mut *reach;
+    let mut construction_eligibility = std::collections::HashMap::new();
     for r in records {
         if r.head() != "face" {
             continue;
@@ -200,16 +201,44 @@ pub(super) fn keep_faces_and_carriers(
             ctx.insert_hash_set(kept_surfaces, surf_ref, "ASM topology kept_surfaces")?;
             continue;
         }
-        if let Some(procedural) = nurbs::proc_surface::procedural_surface_resolving_refs(
-            ctx,
-            &surf_rec.tokens,
-            token_table,
-        ) {
-            ctx.insert_hash_map(
-                procedural_surface_defs,
-                surf_ref,
-                procedural?,
-                "ASM topology procedural_surface_defs",
+        let eligible = if purpose == DecodePurpose::Measure {
+            if let Some(eligible) = construction_eligibility.get(&surf_ref) {
+                *eligible
+            } else {
+                let eligible = nurbs::core::measurement_construction_eligible(
+                    ctx,
+                    &surf_rec.tokens,
+                    token_table,
+                )?;
+                ctx.insert_hash_map(
+                    &mut construction_eligibility,
+                    surf_ref,
+                    eligible,
+                    "ASM measurement construction eligibility",
+                )?;
+                eligible
+            }
+        } else {
+            true
+        };
+        if eligible {
+            if let Some(procedural) = nurbs::proc_surface::procedural_surface_resolving_refs(
+                ctx,
+                &surf_rec.tokens,
+                token_table,
+            ) {
+                ctx.insert_hash_map(
+                    procedural_surface_defs,
+                    surf_ref,
+                    procedural?,
+                    "ASM topology procedural_surface_defs",
+                )?;
+            }
+        } else {
+            count_kind(
+                ctx,
+                &mut out.stats.other_record_kinds,
+                "measurement-construction-oversized-support",
             )?;
         }
         if let Some(procedural) = procedural_surface_defs.get(&surf_ref) {

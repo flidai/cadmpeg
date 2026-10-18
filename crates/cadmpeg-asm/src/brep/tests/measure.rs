@@ -128,3 +128,297 @@ End-of-ASM-data\n";
     assert_eq!(model.attributes.len(), 1);
     assert_measure_geometry_matches(model, decode(DecodePurpose::Measure));
 }
+
+fn surface_grid(side: u32, origin: f64) -> Vec<Token> {
+    let mut tokens = vec![
+        Token::Ident("nubs".into()),
+        Token::Long(1),
+        Token::Long(1),
+        Token::Enum(0),
+        Token::Enum(0),
+        Token::Enum(0),
+        Token::Enum(0),
+        Token::Long(i64::from(side)),
+        Token::Long(i64::from(side)),
+    ];
+    for _ in 0..2 {
+        for index in 0..side {
+            tokens.extend([Token::Double(f64::from(index)), Token::Long(1)]);
+        }
+    }
+    for v in 0..side {
+        for u in 0..side {
+            tokens.extend([
+                Token::Double(origin + f64::from(u)),
+                Token::Double(f64::from(v)),
+                Token::Double(0.0),
+            ]);
+        }
+    }
+    tokens
+}
+
+fn optional_support_records(support_side: u32) -> Vec<Record> {
+    let record = |index, name: &str, tokens: Vec<Token>| Record {
+        index,
+        name: name.into(),
+        tokens: tokens.into(),
+        offset: 0,
+        len: 0,
+    };
+    let mut construction = vec![
+        Token::SubtypeOpen,
+        Token::Ident("rb_blend_spl_sur".into()),
+        Token::Long(22_300),
+        Token::Str("blend_support_surface".into()),
+        Token::Ident("spline".into()),
+        Token::False,
+        Token::SubtypeOpen,
+        Token::Ident("exact_spl_sur".into()),
+    ];
+    construction.extend(surface_grid(support_side, 0.0));
+    construction.push(Token::SubtypeClose);
+    construction.extend(std::iter::repeat_n(Token::False, 4));
+    construction.extend([
+        Token::Ident("null_curve".into()),
+        Token::Ident("nullbs".into()),
+        Token::Position([0.0; 3]),
+        Token::Ident("nullbs".into()),
+        Token::Str("blend_support_surface".into()),
+        Token::Ident("plane".into()),
+        Token::Position([0.0; 3]),
+        Token::Vector3([0.0, 0.0, 1.0]),
+        Token::Vector3([1.0, 0.0, 0.0]),
+        Token::False,
+    ]);
+    construction.extend(std::iter::repeat_n(Token::False, 4));
+    construction.extend([
+        Token::Ident("null_curve".into()),
+        Token::Ident("nullbs".into()),
+        Token::Position([0.0; 3]),
+        Token::Ident("nullbs".into()),
+        Token::Ident("straight".into()),
+        Token::Position([0.0; 3]),
+        Token::Vector3([1.0, 0.0, 0.0]),
+        Token::False,
+        Token::False,
+        Token::Double(1.0),
+        Token::Double(1.0),
+        Token::Enum(-1),
+    ]);
+    construction.extend(std::iter::repeat_n(Token::False, 4));
+    construction.extend([
+        Token::Long(0),
+        Token::Double(0.0),
+        Token::Double(1.0),
+        Token::Long(0),
+        Token::Enum(0),
+    ]);
+    construction.extend(surface_grid(2, 7.0));
+    construction.push(Token::Double(0.001));
+    construction.extend(std::iter::repeat_n(Token::Long(0), 6));
+    construction.push(Token::False);
+    construction.extend(std::iter::repeat_n(Token::Long(0), 3));
+    construction.push(Token::SubtypeClose);
+    vec![
+        record(
+            0,
+            "body",
+            vec![
+                Token::Ref(-1),
+                Token::Long(0),
+                Token::Ref(-1),
+                Token::Ref(1),
+                Token::Ref(-1),
+                Token::Ref(-1),
+            ],
+        ),
+        record(
+            1,
+            "lump",
+            vec![
+                Token::Ref(-1),
+                Token::Long(0),
+                Token::Ref(-1),
+                Token::Ref(-1),
+                Token::Ref(2),
+                Token::Ref(0),
+            ],
+        ),
+        record(
+            2,
+            "shell",
+            vec![
+                Token::Ref(-1),
+                Token::Long(0),
+                Token::Ref(-1),
+                Token::Ref(-1),
+                Token::Ref(-1),
+                Token::Ref(3),
+                Token::Ref(-1),
+                Token::Ref(1),
+            ],
+        ),
+        record(
+            3,
+            "face",
+            vec![
+                Token::Ref(-1),
+                Token::Long(0),
+                Token::Ref(-1),
+                Token::Ref(-1),
+                Token::Ref(-1),
+                Token::Ref(2),
+                Token::Ref(-1),
+                Token::Ref(4),
+                Token::False,
+                Token::False,
+            ],
+        ),
+        record(
+            4,
+            "spline",
+            vec![
+                Token::Ref(-1),
+                Token::Long(0),
+                Token::Ref(-1),
+                Token::False,
+                Token::SubtypeOpen,
+                Token::Ident("ref".into()),
+                Token::Long(0),
+                Token::SubtypeClose,
+                Token::False,
+                Token::False,
+                Token::False,
+                Token::False,
+            ],
+        ),
+        record(5, "spline", construction),
+    ]
+}
+
+#[test]
+fn measure_skips_oversized_optional_support_but_keeps_owned_cache() {
+    use cadmpeg_core::decode::{DecodeArena, DecodePolicy, ResourceDimension};
+    use cadmpeg_core::CodecError;
+    use cadmpeg_ir::geometry::{
+        ProceduralSurfaceDefinition, SolvedSurfaceGeometry, SurfaceGeometry,
+    };
+    use cadmpeg_ir::math::Point3;
+
+    // A real, complete support grid exceeds the recovery ceiling; the
+    // aliased blend still owns a separate four-pole current face cache.
+    let records = optional_support_records(449);
+    for purpose in [DecodePurpose::Measure, DecodePurpose::Model] {
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        let result = crate::brep::decode_with_header(
+            &ctx,
+            &records,
+            &[],
+            None,
+            "measurement.sat",
+            FORMAT,
+            purpose,
+        );
+        if purpose == DecodePurpose::Model {
+            assert!(matches!(result, Err(CodecError::ResourceLimit(limit))
+                if limit.dimension == ResourceDimension::Codec("ASM surface pole recovery")));
+            assert!(ctx.finish_session().is_err());
+            continue;
+        }
+        let model = result.expect("oversized optional construction is ineligible for Measure");
+        assert_eq!(model.bodies.len(), 1);
+        assert_eq!(model.faces.len(), 1);
+        assert_eq!(model.stats.nurbs_surfaces, 1);
+        assert_eq!(model.surfaces.len(), 1);
+        assert!(model.curves.is_empty());
+        // The retained face cache has an untyped construction marker; the
+        // oversized support and its exact construction are not emitted.
+        assert_eq!(model.procedural_surfaces.len(), 1);
+        assert_eq!(model.procedural_surfaces[0].0, model.surfaces[0].id);
+        assert!(matches!(
+            model.procedural_surfaces[0].1.definition(),
+            ProceduralSurfaceDefinition::Unknown {
+                record: Some(_),
+                cache: None,
+            }
+        ));
+        assert_eq!(
+            model
+                .stats
+                .other_record_kinds
+                .get("measurement-construction-oversized-support"),
+            Some(&1)
+        );
+        let SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(surface)) =
+            &model.surfaces[0].geometry
+        else {
+            panic!("the owner cache remains the measured face surface");
+        };
+        assert_eq!((surface.u_count(), surface.v_count()), (2, 2));
+        assert_eq!(
+            surface.pole(0, 0).unwrap().get(),
+            Point3::new(70.0, 0.0, 0.0)
+        );
+        ctx.finish_session()
+            .expect("eligibility did not poison the session");
+    }
+}
+
+#[test]
+fn measure_eligibility_keeps_small_optional_constructions() {
+    use cadmpeg_core::decode::{DecodeArena, DecodePolicy};
+    let records = optional_support_records(2);
+    for purpose in [DecodePurpose::Model, DecodePurpose::Measure] {
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        let model = crate::brep::decode_with_header(
+            &ctx,
+            &records,
+            &[],
+            None,
+            "measurement.sat",
+            FORMAT,
+            purpose,
+        )
+        .unwrap();
+        assert_eq!(model.faces.len(), 1);
+        assert_eq!(model.stats.nurbs_surfaces, 1);
+        assert_eq!(model.procedural_surfaces.len(), 1);
+        assert!(!model
+            .stats
+            .other_record_kinds
+            .contains_key("measurement-construction-oversized-support"));
+        ctx.finish_session().unwrap();
+    }
+}
+
+#[test]
+fn measure_eligibility_propagates_real_work_and_collection_refusals() {
+    use cadmpeg_core::decode::{DecodeArena, DecodePolicy, ResourceDimension};
+    use cadmpeg_core::CodecError;
+    let records = optional_support_records(449);
+    let table_context = cadmpeg_test_support::service_decode_context();
+    let table = crate::nurbs::toks::SubtypeTable::from_records(&table_context, &records).unwrap();
+    for dimension in [
+        ResourceDimension::WorkUnits,
+        ResourceDimension::CollectionItems,
+    ] {
+        let mut policy = DecodePolicy::service();
+        match dimension {
+            ResourceDimension::WorkUnits => policy.limits.max_work_units = 0,
+            ResourceDimension::CollectionItems => policy.limits.max_collection_items = 0,
+            _ => unreachable!(),
+        }
+        let arena = DecodeArena::new();
+        let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
+        let error =
+            crate::nurbs::core::measurement_construction_eligible(&ctx, &records[4].tokens, &table)
+                .expect_err("an actual admission refusal remains an error");
+        assert!(matches!(error, CodecError::ResourceLimit(limit) if limit.dimension == dimension));
+        assert!(ctx.finish_session().is_err());
+    }
+}

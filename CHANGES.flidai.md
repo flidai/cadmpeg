@@ -33,3 +33,9 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   refusal checks without changing storage ownership. Reference-free records
   retain scan-work admission without allocating a traversal stack. Tests cover
   growth, zero-sized items, collection refusal and scan-work refusal.
+- Measure checks optional construction support populations before pole
+  admission. An oversized support skips only that optional construction,
+  records `measurement-construction-oversized-support`, and retains a valid
+  owned face cache. Model admission and all resource limits stay unchanged.
+  Synthetic tests cover a complete oversized grid, valid cache, aliases and
+  real refusal propagation. Separate upstream candidate; not submitted.

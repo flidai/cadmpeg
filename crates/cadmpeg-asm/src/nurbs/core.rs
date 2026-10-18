@@ -144,6 +144,82 @@ pub(super) fn surface_block(
     Some(Ok((surface, cur.pos())))
 }
 
+/// Inspect optional construction dependencies before admitting their poles.
+/// Actual work and storage refusals still propagate through the session.
+pub(crate) fn measurement_construction_eligible(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    tokens: &[Token],
+    table: &toks::SubtypeTable,
+) -> Result<bool, cadmpeg_core::CodecError> {
+    fn oversized(
+        ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+        tokens: &[Token],
+    ) -> Result<bool, cadmpeg_core::CodecError> {
+        ctx.charge_work(
+            cadmpeg_core::decode::u64_from_index(tokens.len()),
+            "inspect ASM measurement supports",
+        )?;
+        for position in 0..tokens.len() {
+            if toks::marker_at(tokens, position).is_none() {
+                continue;
+            }
+            let mut metadata = ctx.reserve_scoped(0, "inspect ASM measurement knot metadata")?;
+            let population =
+                metadata.with_storage(|| surface_population(ctx, tokens, position).transpose())?;
+            if let Some(population) = population {
+                if cadmpeg_core::decode::u64_from_index(population) > MAX_RECOVERY_SURFACE_POLES {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+    if oversized(ctx, tokens)? {
+        return Ok(false);
+    }
+    let found = cache_from_subtype_refs(ctx, tokens, table, |ctx, scope| {
+        oversized(ctx, scope.tokens()).map(|large| {
+            if large {
+                CacheLookup::Found(())
+            } else {
+                CacheLookup::Missing
+            }
+        })
+    })
+    .transpose()?;
+    Ok(found.is_none())
+}
+
+// Read the typed header and knot tables without admitting any poles. The
+// ordinary decoder retains its hard recovery refusal and geometry checks.
+fn surface_population(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    tokens: &[Token],
+    position: usize,
+) -> Option<Result<usize, cadmpeg_core::CodecError>> {
+    let mut cur = Cur::at(tokens, position + 1);
+    let degrees = [cur.take_long()?, cur.take_long()?];
+    if degrees.iter().any(|degree| !(1..=20).contains(degree)) {
+        return None;
+    }
+    if matches!(cur.peek(), Some(Token::Ident(_))) {
+        cur.bump();
+    }
+    for _ in 0..4 {
+        cur.take_enum()?;
+    }
+    let unique = [
+        usize::try_from(cur.take_long()?).ok()?,
+        usize::try_from(cur.take_long()?).ok()?,
+    ];
+    if unique.contains(&0) {
+        return None;
+    }
+    let (_, u) = propagate_resource!(knots(ctx, &mut cur, unique[0], degrees[0])?);
+    let (_, v) = propagate_resource!(knots(ctx, &mut cur, unique[1], degrees[1])?);
+    Some(Ok(u.saturating_mul(v)))
+}
+
 /// Decode a curve `nubs`/`nurbs` block at token `marker_pos`, returning the
 /// curve and the token index just past the block. Token-space counterpart of
 /// [`decode_curve_block`].
