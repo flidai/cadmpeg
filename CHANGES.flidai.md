@@ -39,3 +39,9 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   owned face cache. Model admission and all resource limits stay unchanged.
   Synthetic tests cover a complete oversized grid, valid cache, aliases and
   real refusal propagation. Separate upstream candidate; not submitted.
+- Variable-blend current-cache selection accepts balanced typed supports
+  without their own surface cache and Boolean-leading radius laws without a
+  calibration enum. These layouts remain ineligible for exact construction
+  emission. Current/stale, named/compact alias, reference-depth and scan-work
+  refusal tests protect cache ownership and admission. Separate upstream
+  bugfix candidate; not submitted.

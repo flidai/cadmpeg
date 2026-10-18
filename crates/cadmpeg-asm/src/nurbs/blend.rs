@@ -400,12 +400,29 @@ pub(super) fn decode_rolling_ball_curve(
     }))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlendPurpose {
+    Construction,
+    CacheSelection,
+}
+
 /// Decode one rolling-ball support side. Token-space counterpart of
 /// [`decode_rolling_ball_side`].
 pub(super) fn rolling_ball_side(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     cur: &mut Cur<'_>,
     reference_context: Option<&SubtypeTable>,
+) -> Option<
+    Result<RollingBallSide<SurfaceGeometry, CurveGeometry, PcurveNurbs>, cadmpeg_core::CodecError>,
+> {
+    rolling_ball_side_for(ctx, cur, reference_context, BlendPurpose::Construction)
+}
+
+fn rolling_ball_side_for(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    cur: &mut Cur<'_>,
+    reference_context: Option<&SubtypeTable>,
+    purpose: BlendPurpose,
 ) -> Option<
     Result<RollingBallSide<SurfaceGeometry, CurveGeometry, PcurveNurbs>, cadmpeg_core::CodecError>,
 > {
@@ -418,8 +435,26 @@ pub(super) fn rolling_ball_side(
         "blend_support_zero_curve" | "blendsupzro" => VariableBlendSupportKind::ZeroCurve,
         _ => return None,
     };
-    let surface =
-        propagate_resource!(optional_rolling_ball_surface(ctx, cur, reference_context)?).value();
+    // Cache ownership depends on the balanced support clause, not on whether
+    // its optional construction has an evaluable surface cache of its own.
+    let surface = if purpose == BlendPurpose::CacheSelection
+        && matches!(cur.peek(), Some(Token::Ident(name)) if name == "spline")
+        && toks::marker_at(cur.toks(), cur.pos() + 1).is_none()
+        && matches!(cur.toks().get(cur.pos() + 3), Some(Token::Ident(name) | Token::SubIdent(name)) if name != "ref")
+    {
+        cur.take_ident()?;
+        cur.take_bool()?;
+        let scope = toks::subtype_span(cur.toks(), cur.pos())?;
+        propagate_resource!(ctx.charge_work(
+            cadmpeg_core::decode::u64_from_index(scope.tokens().len()),
+            "skip ASM variable-blend support"
+        ));
+        cur.set_pos(cur.pos() + scope.tokens().len());
+        surface_ranges(cur)?;
+        None
+    } else {
+        propagate_resource!(optional_rolling_ball_surface(ctx, cur, reference_context)?).value()
+    };
     let saved = cur.pos();
     let curve = if cur.take_ident() == Some("null_curve") {
         None
@@ -718,10 +753,20 @@ fn radius_function_geometry(
     Some(Ok(PcurveGeometry::Nurbs { nurbs: function }))
 }
 
+#[cfg(test)]
 fn variable_blend_value(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     cur: &mut Cur<'_>,
     depth: usize,
+) -> Option<Result<cadmpeg_ir::geometry::VariableBlendValue, cadmpeg_core::CodecError>> {
+    variable_blend_value_for(ctx, cur, depth, BlendPurpose::Construction)
+}
+
+fn variable_blend_value_for(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    cur: &mut Cur<'_>,
+    depth: usize,
+    purpose: BlendPurpose,
 ) -> Option<Result<cadmpeg_ir::geometry::VariableBlendValue, cadmpeg_core::CodecError>> {
     use cadmpeg_ir::geometry::{
         EdgeOffsetDiscriminator, VariableBlendInterpolationPoint, VariableBlendTerminal,
@@ -737,7 +782,15 @@ fn variable_blend_value(
     } else {
         1
     };
-    let calibrated = cur.take_enum()?;
+    // The Boolean-leading encoding omits this field. Only the cache selector
+    // may consume it: the placeholder is never emitted as a construction.
+    let calibrated = if purpose == BlendPurpose::CacheSelection
+        && matches!(cur.peek(), Some(Token::True | Token::False))
+    {
+        0
+    } else {
+        cur.take_enum()?
+    };
     let modern_flag = cur.take_bool()?;
     let payload = match name {
         "fixed_width" => VariableBlendValuePayload::FixedWidth {
@@ -787,10 +840,12 @@ fn variable_blend_value(
             radius: cur.take_f64()? * LEN_TO_MM,
             variable_chamfer: cur.take_enum()?,
             chamfer_type: cur.take_enum()?,
-            nested: Box::new(match variable_blend_value(ctx, cur, depth + 1)? {
-                Ok(value) => value,
-                Err(error) => return Some(Err(error)),
-            }),
+            nested: Box::new(
+                match variable_blend_value_for(ctx, cur, depth + 1, purpose)? {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                },
+            ),
         },
         "interp" => {
             let parameter = cur.take_f64()?;
@@ -881,6 +936,26 @@ pub(super) fn var_blend_spl_sur(
     toks: &[Token],
     reference_context: Option<&SubtypeTable>,
 ) -> Option<Result<ParsedVariableBlend, cadmpeg_core::CodecError>> {
+    parse_variable_blend(ctx, toks, reference_context, BlendPurpose::Construction)
+}
+
+/// Select only the current cache; incomplete construction data never escapes.
+pub(super) fn variable_blend_cache_marker(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    toks: &[Token],
+    reference_context: Option<&SubtypeTable>,
+) -> Result<Option<usize>, cadmpeg_core::CodecError> {
+    parse_variable_blend(ctx, toks, reference_context, BlendPurpose::CacheSelection)
+        .transpose()
+        .map(|decoded| decoded.and_then(|decoded| decoded.current_cache_marker))
+}
+
+fn parse_variable_blend(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    toks: &[Token],
+    reference_context: Option<&SubtypeTable>,
+    purpose: BlendPurpose,
+) -> Option<Result<ParsedVariableBlend, cadmpeg_core::CodecError>> {
     use cadmpeg_ir::geometry::VariableBlendCrossSection;
     let (start, name) = propagate_resource!(toks::find_owned_subtype_marker(
         ctx,
@@ -908,11 +983,11 @@ pub(super) fn var_blend_spl_sur(
     let span = toks::subtype_span(toks, start)?.tokens();
     let mut cur = Cur::at(span, 2);
     let revision = PositiveI64::new(cur.take_long()?)?;
-    let first = match rolling_ball_side(ctx, &mut cur, reference_context)? {
+    let first = match rolling_ball_side_for(ctx, &mut cur, reference_context, purpose)? {
         Ok(side) => side,
         Err(limit) => return Some(Err(limit)),
     };
-    let second = match rolling_ball_side(ctx, &mut cur, reference_context)? {
+    let second = match rolling_ball_side_for(ctx, &mut cur, reference_context, purpose)? {
         Ok(side) => side,
         Err(limit) => return Some(Err(limit)),
     };
@@ -927,14 +1002,14 @@ pub(super) fn var_blend_spl_sur(
         1 => true,
         _ => return None,
     };
-    let first_value = match variable_blend_value(ctx, &mut cur, 0)? {
+    let first_value = match variable_blend_value_for(ctx, &mut cur, 0, purpose)? {
         Ok(value) => value,
         Err(error) => return Some(Err(error)),
     };
     let radii = if two_radii {
         cadmpeg_ir::geometry::VariableBlendRadii::Two {
             first: first_value,
-            second: match variable_blend_value(ctx, &mut cur, 0)? {
+            second: match variable_blend_value_for(ctx, &mut cur, 0, purpose)? {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             },
@@ -956,10 +1031,12 @@ pub(super) fn var_blend_spl_sur(
             }),
             3 => {
                 let radius = if cur.take_bool()? {
-                    Some(Box::new(match variable_blend_value(ctx, &mut cur, 0)? {
-                        Ok(value) => value,
-                        Err(error) => return Some(Err(error)),
-                    }))
+                    Some(Box::new(
+                        match variable_blend_value_for(ctx, &mut cur, 0, purpose)? {
+                            Ok(value) => value,
+                            Err(error) => return Some(Err(error)),
+                        },
+                    ))
                 } else {
                     None
                 };
@@ -1523,6 +1600,91 @@ pub(super) fn compact_rb_blend_spl_sur(
 
 #[cfg(test)]
 mod variable_blend_value_tests {
+    #[test]
+    fn variable_blend_cache_support_skip_refuses_work_and_fuses_session() {
+        use cadmpeg_core::decode::{DecodeArena, DecodeContext, DecodePolicy, ResourceDimension};
+        use cadmpeg_core::CodecError;
+
+        // A compact extrusion with a directrix curve and no surface cache. The
+        // cache selector only needs its balanced typed scope, not its construction.
+        let support = [
+            Token::SubtypeOpen,
+            Token::Ident("cyl_spl_sur".into()),
+            Token::Double(0.0),
+            Token::Double(1.0),
+            Token::Vector3([0.0, 0.0, 1.0]),
+            Token::Position([0.0; 3]),
+            Token::Ident("nubs".into()),
+            Token::Long(1),
+            Token::Enum(0),
+            Token::Long(2),
+            Token::Double(0.0),
+            Token::Long(1),
+            Token::Double(1.0),
+            Token::Long(1),
+            Token::Double(0.0),
+            Token::Double(0.0),
+            Token::Double(0.0),
+            Token::Double(1.0),
+            Token::Double(0.0),
+            Token::Double(0.0),
+            Token::Double(0.001),
+            Token::SubtypeClose,
+        ];
+        let support_work = cadmpeg_core::decode::u64_from_index(support.len());
+        let mut tokens = vec![
+            Token::Str("blend_support_surface".into()),
+            Token::Ident("spline".into()),
+            Token::False,
+        ];
+        tokens.extend(support);
+        tokens.extend([
+            Token::False,
+            Token::False,
+            Token::False,
+            Token::False,
+            Token::Ident("null_curve".into()),
+            Token::Ident("nullbs".into()),
+            Token::Position([0.0; 3]),
+            Token::Ident("nullbs".into()),
+        ]);
+
+        for work_limit in [0, support_work] {
+            let arena = DecodeArena::new();
+            let mut policy = DecodePolicy::service();
+            policy.limits.max_work_units = work_limit;
+            let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy)
+                .expect("test setup and unrefused session");
+            let mut cur = Cur::at(&tokens, 0);
+            let result = super::rolling_ball_side_for(
+                &ctx,
+                &mut cur,
+                None,
+                super::BlendPurpose::CacheSelection,
+            );
+            if work_limit == 0 {
+                let Some(Err(CodecError::ResourceLimit(refusal))) = result else {
+                    panic!("skipping the support must refuse its work charge");
+                };
+                assert_eq!(refusal.dimension, ResourceDimension::WorkUnits);
+                assert_eq!(refusal.operation, "skip ASM variable-blend support");
+                assert_eq!(refusal.used, 0);
+                assert_eq!(refusal.additional, support_work);
+                assert!(
+                    matches!(ctx.finish_session(), Err(CodecError::ResourceLimit(limit)) if limit == refusal)
+                );
+            } else {
+                let side = result
+                    .expect("complete side grammar")
+                    .expect("exact work allowance");
+                assert!(side.surface.is_none());
+                assert_eq!(cur.pos(), tokens.len());
+                ctx.finish_session()
+                    .expect("test setup and unrefused session");
+            }
+        }
+    }
+
     use super::{rolling_ball_third_side, variable_blend_value, UNSET_VARIABLE_BLEND_TANGENT};
     use crate::kernel_header::RefWidth;
     use crate::nurbs::toks::Cur;

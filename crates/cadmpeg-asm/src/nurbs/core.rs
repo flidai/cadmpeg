@@ -294,9 +294,7 @@ pub(super) fn owned_surface_cache(
         let mut admission =
             propagate_resource!(ctx.reserve_scoped(0, "ASM variable-blend cache admission"));
         let cache_marker = propagate_resource!(admission.with_storage(|| {
-            crate::nurbs::blend::var_blend_spl_sur(ctx, tokens, table)
-                .transpose()
-                .map(|decoded| decoded.and_then(|decoded| decoded.current_cache_marker))
+            crate::nurbs::blend::variable_blend_cache_marker(ctx, tokens, table)
         }));
         return surface_block(ctx, tokens, cache_marker?)
             .map(|result| result.map(|(surface, _)| surface));
@@ -1629,5 +1627,135 @@ mod tests {
             panic!("expected collection refusal: {error:?}");
         };
         assert_eq!(limit.dimension, ResourceDimension::CollectionItems);
+    }
+    #[test]
+    fn variable_blend_cache_selection_allows_a_cacheless_spline_support() {
+        use crate::sab::{Record, Token};
+        // A valid compact extrusion with a directrix curve and no surface grid.
+        let support = vec![
+            Token::SubtypeOpen,
+            Token::Ident("cyl_spl_sur".into()),
+            Token::Double(0.0),
+            Token::Double(1.0),
+            Token::Vector3([0.0, 0.0, 1.0]),
+            Token::Position([0.0; 3]),
+            Token::Ident("nubs".into()),
+            Token::Long(1),
+            Token::Enum(0),
+            Token::Long(2),
+            Token::Double(0.0),
+            Token::Long(1),
+            Token::Double(1.0),
+            Token::Long(1),
+            Token::Double(0.0),
+            Token::Double(0.0),
+            Token::Double(0.0),
+            Token::Double(1.0),
+            Token::Double(0.0),
+            Token::Double(0.0),
+            Token::Double(0.001),
+            Token::SubtypeClose,
+        ];
+        for current in [0, 1, 2] {
+            let mut owner = variable_blend_tokens("srf_srf_v_bl_spl_sur", current);
+            let mut embedded = vec![Token::Ident("spline".into()), Token::False];
+            embedded.extend(support.clone());
+            embedded.extend([Token::False, Token::False, Token::False, Token::False]);
+            owner[3] = Token::Str("blend_support_surface".into());
+            owner.splice(4..5, embedded);
+            let records = [Record {
+                index: 0,
+                name: "spline".into(),
+                tokens: owner.clone().into(),
+                offset: 0,
+                len: 0,
+            }];
+            let arena = DecodeArena::new();
+            let (ctx, _) =
+                DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+            let table = SubtypeTable::from_records(&ctx, &records).unwrap();
+            assert!(
+                crate::nurbs::proc_surface::procedural_surface_resolving_refs(
+                    &ctx, &support, &table,
+                )
+                .unwrap()
+                .is_ok(),
+                "the support is a valid exact extrusion",
+            );
+            assert!(super::surface_cache_resolving_refs(&ctx, &support, &table).is_none());
+            assert_variable_blend_cache_only(&ctx, &owner, &table, current);
+            ctx.finish_session().unwrap();
+        }
+    }
+
+    #[test]
+    fn variable_blend_cache_selection_allows_a_legacy_radius_without_calibration() {
+        use crate::sab::{Record, Token};
+        for current in [0, 1, 2] {
+            let mut owner = variable_blend_tokens("srf_srf_v_bl_spl_sur", current);
+            owner[2] = Token::Long(22110);
+            let law = owner
+                .iter()
+                .position(|token| matches!(token, Token::Str(name) if name == "two_ends"))
+                .unwrap();
+            owner[law] = Token::Ident("two_ends".into());
+            assert_eq!(owner.remove(law + 1), Token::Enum(0));
+            assert_eq!(owner[law + 1], Token::True);
+            let records = [Record {
+                index: 0,
+                name: "spline".into(),
+                tokens: owner.clone().into(),
+                offset: 0,
+                len: 0,
+            }];
+            let arena = DecodeArena::new();
+            let (ctx, _) =
+                DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+            let table = SubtypeTable::from_records(&ctx, &records).unwrap();
+            assert_variable_blend_cache_only(&ctx, &owner, &table, current);
+            ctx.finish_session().unwrap();
+        }
+    }
+
+    fn assert_variable_blend_cache_only(
+        ctx: &DecodeContext<'_>,
+        owner: &[crate::sab::Token],
+        table: &SubtypeTable,
+        current: i64,
+    ) {
+        use crate::sab::Token;
+        for payload in [
+            owner.to_vec(),
+            vec![
+                Token::SubtypeOpen,
+                Token::Ident("ref".into()),
+                Token::Long(0),
+                Token::SubtypeClose,
+            ],
+            vec![Token::SubtypeOpen, Token::Long(0), Token::SubtypeClose],
+        ] {
+            assert!(
+                crate::nurbs::proc_surface::procedural_surface_resolving_refs(ctx, &payload, table)
+                    .is_none(),
+                "cache selection must not publish an unsupported exact construction",
+            );
+            let scope = crate::nurbs::toks::subtype_span(&payload, 0).unwrap();
+            for cache in [
+                super::surface_cache_resolving_refs(ctx, &payload, table),
+                super::owned_surface_cache_resolving_refs(ctx, scope, table),
+            ] {
+                if current == 0 {
+                    assert!(cache.is_none(), "a stale cache must stay unavailable");
+                } else {
+                    let surface = cache.unwrap().unwrap();
+                    assert_eq!(surface.u_count(), 2);
+                    assert_eq!(surface.v_count(), 2);
+                    assert_eq!(
+                        surface.poles()[0].get(),
+                        cadmpeg_ir::math::Point3::new(70., 0., 0.)
+                    );
+                }
+            }
+        }
     }
 }
