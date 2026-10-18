@@ -1106,7 +1106,22 @@ fn parse_variable_blend(
         cur.set_pos(post_end);
         Some(post)
     };
-    let post_pcurve = propagate_resource!(nullable_embedded_pcurve(ctx, &mut cur)?).value();
+    let post_start = cur.pos();
+    let post_pcurve = match nullable_embedded_pcurve(ctx, &mut cur) {
+        Some(Err(error)) => return Some(Err(error)),
+        Some(Ok(pcurve)) if purpose == BlendPurpose::Construction || cur.at_scope_end() => {
+            pcurve.value()
+        }
+        _ if purpose == BlendPurpose::CacheSelection => {
+            // Some saved layouts end in a 3D curve rather than a pcurve.
+            // Select the face cache without publishing that unsupported construction.
+            cur.set_pos(post_start);
+            let (_, end) = propagate_resource!(curve_block(ctx, span, cur.pos())?);
+            cur.set_pos(end);
+            None
+        }
+        _ => return None,
+    };
     cur.at_scope_end().then_some(())?;
     let cache = match cache.into_form()? {
         cadmpeg_ir::geometry::RevisionCacheForm::SolvedCache { fit_tolerance } => {

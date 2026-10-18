@@ -45,3 +45,8 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   emission. Current/stale, named/compact alias, reference-depth and scan-work
   refusal tests protect cache ownership and admission. Separate upstream
   bugfix candidate; not submitted.
+- Variable-blend cache selection accepts a terminal 3D curve only when it
+  consumes the complete remaining scope; the exact construction still requires
+  a pcurve. Current/stale and named/compact alias tests reject extra tail fields.
+  Resource refusals propagate without trying another layout. Separate upstream
+  bugfix candidate; not submitted.

@@ -1430,6 +1430,89 @@ mod tests {
     }
 
     #[test]
+    fn variable_blend_terminal_curve_keeps_only_current_cache() {
+        use crate::sab::{Record, Token};
+        for current in [0, 1, 2] {
+            for extra_tail in [false, true] {
+                let mut owner = variable_blend_tokens("srf_srf_v_bl_spl_sur", current);
+                let post = owner.len() - 2;
+                assert!(matches!(&owner[post], Token::Ident(name) if name == "nullbs"));
+                owner.splice(
+                    post..=post,
+                    [
+                        Token::Ident("nubs".into()),
+                        Token::Long(1),
+                        Token::Enum(0),
+                        Token::Long(2),
+                        Token::Double(0.0),
+                        Token::Long(1),
+                        Token::Double(1.0),
+                        Token::Long(1),
+                        Token::Double(9.0),
+                        Token::Double(1.0),
+                        Token::Double(2.0),
+                        Token::Double(10.0),
+                        Token::Double(3.0),
+                        Token::Double(4.0),
+                    ],
+                );
+                if extra_tail {
+                    owner.insert(owner.len() - 1, Token::Long(99));
+                }
+                let records = [Record {
+                    index: 0,
+                    name: "spline".into(),
+                    tokens: owner.clone().into(),
+                    offset: 0,
+                    len: 0,
+                }];
+                let arena = DecodeArena::new();
+                let (ctx, _) =
+                    DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+                let table = SubtypeTable::from_records(&ctx, &records).unwrap();
+                for payload in [
+                    owner,
+                    vec![
+                        Token::SubtypeOpen,
+                        Token::Ident("ref".into()),
+                        Token::Long(0),
+                        Token::SubtypeClose,
+                    ],
+                    vec![Token::SubtypeOpen, Token::Long(0), Token::SubtypeClose],
+                ] {
+                    assert!(
+                        crate::nurbs::proc_surface::procedural_surface_resolving_refs(
+                            &ctx, &payload, &table,
+                        )
+                        .is_none(),
+                        "the terminal 3D curve cannot be emitted as a pcurve",
+                    );
+                    let scope = crate::nurbs::toks::subtype_span(&payload, 0).unwrap();
+                    for cache in [
+                        super::surface_cache_resolving_refs(&ctx, &payload, &table),
+                        super::owned_surface_cache_resolving_refs(&ctx, scope, &table),
+                    ] {
+                        if current == 0 || extra_tail {
+                            assert!(
+                                cache.is_none(),
+                                "stale or malformed cache stays unavailable"
+                            );
+                        } else {
+                            let surface = cache.unwrap().unwrap();
+                            assert_eq!((surface.u_count(), surface.v_count()), (2, 2));
+                            assert_eq!(
+                                surface.poles()[0].get(),
+                                cadmpeg_ir::math::Point3::new(70., 0., 0.),
+                            );
+                        }
+                    }
+                }
+                ctx.finish_session().unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn untyped_variable_blend_cache_is_rejected_for_owner_and_alias() {
         use crate::sab::{Record, Token};
         for name in crate::nurbs::blend::VARIABLE_BLEND_NAMES {
