@@ -531,6 +531,9 @@ struct WireShellTopology {
 pub enum DecodePurpose {
     /// Transfer complete neutral geometry and retained native records.
     Model,
+    /// Transfer complete topology and geometry for measurement, without
+    /// attributes, passthrough records, residual counts, or source annotations.
+    Measure,
     /// Transfer stable topology plus measurements used by history binding.
     History,
 }
@@ -741,12 +744,17 @@ pub fn decode_with_header(
             format,
         },
     )?;
-    let emitted_attributes = emit_attributes(ctx, &mut out, records, &by_index, &reach, format)?;
+    let emitted_attributes = if purpose == DecodePurpose::Measure {
+        HashSet::new()
+    } else {
+        emit_attributes(ctx, &mut out, records, &by_index, &reach, format)?
+    };
     if purpose == DecodePurpose::Model {
         emit_passthrough_unknowns(ctx, &mut out, records, bytes, &reach, format)?;
         count_other_records(ctx, &mut out, records, &reach, &emitted_attributes)?;
         emit_annotation_records(ctx, &mut out, records, &by_index, &carriers, stream, format)?;
-
+    }
+    if purpose != DecodePurpose::History {
         classify_body_kinds(ctx, &mut out)?;
         clamp_edge_ranges_to_carrier_domains(ctx, &mut out)?;
     }

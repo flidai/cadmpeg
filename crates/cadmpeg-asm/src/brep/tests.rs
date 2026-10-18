@@ -4,6 +4,8 @@
 //! procedural carrier classification.
 use cadmpeg_test_support::edit;
 
+mod measure;
+
 use super::emit::{emit_attributes, emit_edges, CurveSenseRefs};
 use super::geometry::{
     analytic_procedural_surface as decode_analytic_procedural_surface,
@@ -666,6 +668,7 @@ fn saved_top_level_edge_projects_as_a_wire_body() {
     assert_eq!(brep.vertices.len(), 2);
     assert_eq!(brep.points.len(), 2);
     assert_eq!(brep.curves.len(), 1);
+    measure::assert_wire_geometry_matches(&ctx, records, &bytes, brep);
 }
 
 #[test]
