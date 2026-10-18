@@ -486,6 +486,39 @@ pub fn pcurve_uv_with_precision<'ctx, 'arena: 'ctx>(
     let result = FiniteReal::new(parameter)
         .ok_or(EvaluationFailure::NoValue)
         .and_then(|parameter| {
+            if precision == super::EvalPrecision::Fast {
+                if let PcurveGeometry::Nurbs { nurbs } = geometry {
+                    use crate::geometry::pcurve::PcurveNurbsPoles;
+                    let _depth = scratch.enter().ok_or(EvaluationFailure::NoValue)?;
+                    let poles = nurbs.pole_rows();
+                    return super::nurbs_curve_point_evaluation(
+                        &scratch,
+                        nurbs.degree(),
+                        nurbs.knots(),
+                        poles.count(),
+                        |index| match poles {
+                            PcurveNurbsPoles::Polynomial { points } => {
+                                points.get(index).copied().map(super::planar_pole)
+                            }
+                            PcurveNurbsPoles::Rational { points } => {
+                                points.get(index).map(|pole| super::planar_pole(pole.point))
+                            }
+                        },
+                        |index| match poles {
+                            PcurveNurbsPoles::Polynomial { .. } => None,
+                            PcurveNurbsPoles::Rational { points } => {
+                                points.get(index).map(|pole| pole.weight.get())
+                            }
+                        },
+                        parameter,
+                    )
+                    .map(|point| {
+                        let [u, v, _] = point.coordinates();
+                        FinitePoint2::from_coordinates(u, v)
+                    })
+                    .map_err(|failure| failure.map(|point| Point2::new(point.x, point.y)));
+                }
+            }
             let evaluated = super::pcurve_uv_differential(&scratch, geometry, parameter)
                 .ok_or(EvaluationFailure::NoValue)?;
             if let Some(limit) = evaluated.resource {

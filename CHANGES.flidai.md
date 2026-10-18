@@ -11,7 +11,8 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
 - `crates/cadmpeg-ir/src/eval.rs`, `eval/{basis,decode,rational}.rs` and their
   tests: add opt-in `EvalPrecision::Fast` to measurement entry points. Use the
   0.5 binary64 basis recurrence, ordered homogeneous sums, rational first
-  partials, analytic offsets and inverse parameters. Existing entry points
+  partials, analytic cross products, offsets and inverse parameters. Direct
+  NURBS pcurve point sampling borrows weights and omits unused derivatives. Existing entry points
   keep exact evaluation. Inline storage and resource refusal remain active.
   Fast can lose accuracy or finite values through cancellation or intermediate
   overflow; it is intended for rounded measurements, not exact predicates.

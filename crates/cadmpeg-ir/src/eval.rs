@@ -181,7 +181,7 @@ pub fn analytic_surface_parameters_solved_with_precision(
             )
             .ok()
         };
-        let transverse = axis.cross(reference);
+        let transverse = cross_with_precision(axis, reference, precision);
         (project(reference), project(transverse), project(axis))
     };
     let finite = ExtendedReal::from_finite;
@@ -1735,6 +1735,17 @@ pub fn nurbs_surface_parameter_within_nonnegative_tolerance_with_budget(
         return Ok(None);
     };
     Ok((distance.is_finite() && distance <= tolerance).then_some(parameters))
+}
+
+fn cross_with_precision(first: Vector3, second: Vector3, precision: EvalPrecision) -> Vector3 {
+    match precision {
+        EvalPrecision::Exact => first.cross(second),
+        EvalPrecision::Fast => Vector3::new(
+            first.y * second.z - first.z * second.y,
+            first.z * second.x - first.x * second.z,
+            first.x * second.y - first.y * second.x,
+        ),
+    }
 }
 
 /// `base + Σ factorᵢ · directionᵢ` in model space.
@@ -6014,7 +6025,10 @@ fn curve_point_evaluation(
                 center,
                 &[
                     (radius * t.cos(), *ref_direction),
-                    (radius * t.sin(), axis.cross(*ref_direction)),
+                    (
+                        radius * t.sin(),
+                        cross_with_precision(*axis, *ref_direction, scratch.precision),
+                    ),
                 ],
             ))
         }
@@ -6029,7 +6043,10 @@ fn curve_point_evaluation(
                 center,
                 &[
                     (major_radius * t.cos(), *major_direction),
-                    (minor_radius * t.sin(), axis.cross(*major_direction)),
+                    (
+                        minor_radius * t.sin(),
+                        cross_with_precision(*axis, *major_direction, scratch.precision),
+                    ),
                 ],
             ))
         }
@@ -6051,7 +6068,10 @@ fn curve_point_evaluation(
                 vertex,
                 &[
                     (axial.get(), *major_direction),
-                    (transverse.get(), axis.cross(*major_direction)),
+                    (
+                        transverse.get(),
+                        cross_with_precision(*axis, *major_direction, scratch.precision),
+                    ),
                 ],
             ))
         }
@@ -6071,7 +6091,10 @@ fn curve_point_evaluation(
                     center,
                     &[
                         (major_cosh.get(), *major_direction),
-                        (minor_sinh.get(), axis.cross(*major_direction)),
+                        (
+                            minor_sinh.get(),
+                            cross_with_precision(*axis, *major_direction, scratch.precision),
+                        ),
                     ],
                 )),
                 (major_cosh, minor_sinh) => {
@@ -6082,7 +6105,10 @@ fn curve_point_evaluation(
                         center,
                         &[
                             (plain(major_cosh), *major_direction),
-                            (plain(minor_sinh), axis.cross(*major_direction)),
+                            (
+                                plain(minor_sinh),
+                                cross_with_precision(*axis, *major_direction, scratch.precision),
+                            ),
                         ],
                     )))
                 }
@@ -6462,7 +6488,7 @@ fn analytic_surface_second_partials_with_precision(
             let origin = plane_surface.origin().get();
             let normal = plane_surface.frame().axis().as_raw();
             let u_axis = plane_surface.frame().reference().as_raw();
-            let v_axis = normal.cross(*u_axis);
+            let v_axis = cross_with_precision(*normal, *u_axis, precision);
             Some(SurfaceSecondPartials {
                 point: offset(origin, &[(u, *u_axis), (v, v_axis)]),
                 du: *u_axis,
@@ -6477,7 +6503,7 @@ fn analytic_surface_second_partials_with_precision(
             let axis = cylinder_surface.frame().axis().as_raw();
             let ref_direction = cylinder_surface.frame().reference().as_raw();
             let radius = cylinder_surface.radius().get();
-            let transverse = axis.cross(*ref_direction);
+            let transverse = cross_with_precision(*axis, *ref_direction, precision);
             let cosine = u.cos();
             let sine = u.sin();
             Some(SurfaceSecondPartials {
@@ -6509,7 +6535,7 @@ fn analytic_surface_second_partials_with_precision(
             let radius = cone_surface.radius().get();
             let ratio = cone_surface.ratio().get();
             let half_angle = cone_surface.half_angle().get();
-            let transverse = axis.cross(*ref_direction);
+            let transverse = cross_with_precision(*axis, *ref_direction, precision);
             let cosine = u.cos();
             let sine = u.sin();
             let radial_slope = half_angle.tan();
@@ -6548,7 +6574,7 @@ fn analytic_surface_second_partials_with_precision(
             let axis = sphere_surface.frame().axis().as_raw();
             let ref_direction = sphere_surface.frame().reference().as_raw();
             let radius = sphere_surface.radius().get();
-            let transverse = axis.cross(*ref_direction);
+            let transverse = cross_with_precision(*axis, *ref_direction, precision);
             let u_cosine = u.cos();
             let u_sine = u.sin();
             let v_cosine = v.cos();
@@ -6592,7 +6618,7 @@ fn analytic_surface_second_partials_with_precision(
             let ref_direction = torus_surface.frame().reference().as_raw();
             let major_radius = torus_surface.major_radius().get();
             let minor_radius = torus_surface.minor_radius().get();
-            let transverse = axis.cross(*ref_direction);
+            let transverse = cross_with_precision(*axis, *ref_direction, precision);
             let u_cosine = u.cos();
             let u_sine = u.sin();
             let v_cosine = v.cos();

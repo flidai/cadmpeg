@@ -172,6 +172,92 @@ fn legacy_offset(mut base: Point3, terms: &[(f64, Vector3)]) -> Point3 {
     base
 }
 
+fn legacy_cross(first: Vector3, second: Vector3) -> Vector3 {
+    Vector3::new(
+        first.y * second.z - first.z * second.y,
+        first.z * second.x - first.x * second.z,
+        first.x * second.y - first.y * second.x,
+    )
+}
+
+#[test]
+fn fast_analytic_cross_products_keep_v05_rounding() {
+    use crate::scalar::{NonZeroLength, PositiveLength};
+    use crate::units::{OrthonormalFrame3, UnitVector3};
+
+    // Cancellation in this oblique frame triggers the default cross product's
+    // exact-product fallback. Version 0.5 rounds the two products separately.
+    let axis = Vector3::new(
+        0.348_850_675_847_246_2,
+        0.464_944_367_939_430_5,
+        0.813_713_672_419_434_7,
+    );
+    let reference = Vector3::new(
+        0.488_355_775_190_668_64,
+        0.650_875_239_596_840_2,
+        -0.581_265_911_023_239_8,
+    );
+    let transverse = legacy_cross(axis, reference);
+    let exact_transverse = axis.cross(reference);
+    assert_ne!(transverse.z.to_bits(), exact_transverse.z.to_bits());
+    let frame = OrthonormalFrame3::from_units(
+        UnitVector3::new(axis).unwrap(),
+        UnitVector3::new(reference).unwrap(),
+    )
+    .unwrap();
+    let origin = FinitePoint3::new(Point3::new(0.0, 0.0, 0.0)).unwrap();
+    let radius = PositiveLength::new(1.0).unwrap();
+    let circle = SolvedCurveGeometry::Circle(CircleCurve::new(origin, frame, radius));
+    let sphere = SolvedSurfaceGeometry::Sphere(SphereSurface::new(
+        origin,
+        frame,
+        NonZeroLength::new(1.0).unwrap(),
+    ));
+    let mut curve_differs_from_exact = false;
+    for t in [-2.7_f64, 0.13, 0.71, std::f64::consts::FRAC_PI_2, 3.9] {
+        let expected = legacy_offset(origin.get(), &[(t.cos(), reference), (t.sin(), transverse)]);
+        let fast =
+            decode::curve_point_solved_with_precision(Standard, &circle, t, EvalPrecision::Fast)
+                .unwrap();
+        let exact = decode::curve_point_solved(Standard, &circle, t).unwrap();
+        assert_eq!(bits(coordinates(fast.get())), bits(coordinates(expected)));
+        curve_differs_from_exact |= bits(coordinates(fast.get())) != bits(coordinates(exact.get()));
+    }
+    assert!(curve_differs_from_exact);
+
+    let SolvedSurfaceGeometry::Sphere(carrier) = &sphere else {
+        unreachable!()
+    };
+    let axis = *carrier.frame().axis().as_raw();
+    let reference = *carrier.frame().reference().as_raw();
+    let transverse = legacy_cross(axis, reference);
+    let exact_transverse = axis.cross(reference);
+    let mut inverse_detects_cross_rounding = false;
+    let mut inverse_differs_from_exact = false;
+    for point in [
+        Point3::new(1.0, 2.0, 3.0),
+        Point3::new(4.68, -0.162_462_015_215_154_2, 1_000_000_000_036.0),
+        Point3::new(-1.3, 0.9, -0.2),
+    ] {
+        let project = |direction: Vector3| {
+            point.x * direction.x + point.y * direction.y + point.z * direction.z
+        };
+        let (x, y, z) = (project(reference), project(transverse), project(axis));
+        let expected = [y.atan2(x), z.atan2(x.hypot(y))];
+        let wrong_y = project(exact_transverse);
+        let wrong_cross = [wrong_y.atan2(x), z.atan2(x.hypot(wrong_y))];
+        let fast =
+            analytic_surface_parameters_solved_with_precision(&sphere, point, EvalPrecision::Fast)
+                .unwrap();
+        let exact = analytic_surface_parameters_solved(&sphere, point).unwrap();
+        assert_eq!(bits([fast.u, fast.v]), bits(expected));
+        inverse_detects_cross_rounding |= bits(expected) != bits(wrong_cross);
+        inverse_differs_from_exact |= bits([fast.u, fast.v]) != bits([exact.u, exact.v]);
+    }
+    assert!(inverse_detects_cross_rounding);
+    assert!(inverse_differs_from_exact);
+}
+
 #[test]
 fn fast_basis_matches_v05_at_knots_and_above_inline_support() {
     for degree in [0, 1, 2, 3, 8, 15, 16, 23] {
