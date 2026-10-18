@@ -50,6 +50,7 @@ impl<T> std::ops::DerefMut for SupportValues<T> {
 /// Scratch admission shared by one evaluation and its recursive calls.
 pub(super) struct Scratch<'ctx, 'arena> {
     pub(super) admission: EvaluationAdmission<'ctx, 'arena>,
+    pub(super) precision: super::EvalPrecision,
     independent_depth: Cell<usize>,
     storage: RefCell<Option<ScopedReservation<'ctx>>>,
     refusal: RefCell<Option<ResourceLimit>>,
@@ -59,10 +60,16 @@ impl<'ctx, 'arena> Scratch<'ctx, 'arena> {
     pub(super) fn new(admission: impl Into<EvaluationAdmission<'ctx, 'arena>>) -> Self {
         Self {
             admission: admission.into(),
+            precision: super::EvalPrecision::Exact,
             independent_depth: Cell::new(0),
             storage: RefCell::new(None),
             refusal: RefCell::new(None),
         }
+    }
+
+    pub(super) fn with_precision(mut self, precision: super::EvalPrecision) -> Self {
+        self.precision = precision;
+        self
     }
 
     pub(super) fn admit<T>(&self, result: Result<T, ResourceLimit>) -> Option<T> {
@@ -309,7 +316,22 @@ pub fn curve_point<'ctx, 'arena: 'ctx>(
     geometry: &CurveGeometry,
     parameter: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
-    let scratch = Scratch::new(admission);
+    curve_point_with_precision(
+        admission,
+        geometry,
+        parameter,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn curve_point_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    geometry: &CurveGeometry,
+    parameter: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let result = geometry
         .solved()
         .ok_or(EvaluationFailure::NoValue)
@@ -331,7 +353,22 @@ pub fn nurbs_curve_point_at<'ctx, 'arena: 'ctx>(
     curve: &NurbsCurve,
     parameter: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
-    let scratch = Scratch::new(admission);
+    nurbs_curve_point_at_with_precision(
+        admission,
+        curve,
+        parameter,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn nurbs_curve_point_at_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    curve: &NurbsCurve,
+    parameter: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let poles = curve.pole_rows();
     let result = FiniteReal::new(parameter)
         .ok_or(EvaluationFailure::NoValue)
@@ -383,7 +420,18 @@ pub fn surface_point<'ctx, 'arena: 'ctx>(
     u: f64,
     v: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
-    let scratch = Scratch::new(admission);
+    surface_point_with_precision(admission, geometry, u, v, crate::eval::EvalPrecision::Exact)
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn surface_point_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    geometry: &SurfaceGeometry,
+    u: f64,
+    v: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let result = geometry
         .solved()
         .ok_or(EvaluationFailure::NoValue)
@@ -419,7 +467,22 @@ pub fn pcurve_uv<'ctx, 'arena: 'ctx>(
     geometry: &PcurveGeometry,
     parameter: f64,
 ) -> Result<FinitePoint2, EvaluationFailure<Point2>> {
-    let scratch = Scratch::new(admission);
+    pcurve_uv_with_precision(
+        admission,
+        geometry,
+        parameter,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn pcurve_uv_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    geometry: &PcurveGeometry,
+    parameter: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint2, EvaluationFailure<Point2>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let result = FiniteReal::new(parameter)
         .ok_or(EvaluationFailure::NoValue)
         .and_then(|parameter| {
@@ -543,7 +606,22 @@ pub fn curve_point_solved<'ctx, 'arena: 'ctx>(
     geometry: &SolvedCurveGeometry,
     parameter: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
-    let scratch = Scratch::new(admission);
+    curve_point_solved_with_precision(
+        admission,
+        geometry,
+        parameter,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn curve_point_solved_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    geometry: &SolvedCurveGeometry,
+    parameter: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let result = super::curve_point_evaluation(&scratch, geometry, parameter);
     scratch.settle(result)
 }
@@ -563,7 +641,24 @@ pub fn surface_point_solved<'ctx, 'arena: 'ctx>(
     u: f64,
     v: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
-    let scratch = Scratch::new(admission);
+    surface_point_solved_with_precision(
+        admission,
+        geometry,
+        u,
+        v,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn surface_point_solved_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    geometry: &SolvedSurfaceGeometry,
+    u: f64,
+    v: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let result = super::surface_point_evaluation(&scratch, geometry, u, v);
     scratch.settle(result)
 }
@@ -583,7 +678,18 @@ pub fn nurbs_surface_point<'ctx, 'arena: 'ctx>(
     u: f64,
     v: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
-    let scratch = Scratch::new(admission);
+    nurbs_surface_point_with_precision(admission, surface, u, v, crate::eval::EvalPrecision::Exact)
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn nurbs_surface_point_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    surface: &crate::geometry::nurbs::NurbsSurface,
+    u: f64,
+    v: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let scratch = Scratch::new(admission).with_precision(precision);
     let result = scratch
         .admission
         .independent_cost(super::nurbs_surface_evaluation_cost(surface))

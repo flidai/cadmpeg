@@ -49,6 +49,18 @@ pub mod admission;
 /// Evaluation under the caller decode resource limits.
 pub mod decode;
 
+/// Arithmetic selected by the `_with_precision` evaluation entry points.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum EvalPrecision {
+    /// Exactly rounded sums with extended exponent range.
+    #[default]
+    Exact,
+    /// Binary64 recurrences and ordered sums, as in version 0.5.
+    /// Intermediate overflow and cancellation can lose values or accuracy.
+    /// Secondary operations outside the measurement kernels can retain exact arithmetic.
+    Fast,
+}
+
 mod basis;
 mod bezier;
 mod depth;
@@ -134,8 +146,28 @@ pub fn analytic_surface_parameters_solved(
     geometry: &SolvedSurfaceGeometry,
     point: Point3,
 ) -> Option<FinitePoint2> {
+    analytic_surface_parameters_solved_with_precision(
+        geometry,
+        point,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn analytic_surface_parameters_solved_with_precision(
+    geometry: &SolvedSurfaceGeometry,
+    point: Point3,
+    precision: crate::eval::EvalPrecision,
+) -> Option<FinitePoint2> {
     let components = |origin: Point3, axis: Vector3, reference: Vector3| {
         let project = |direction: Vector3| {
+            if precision == EvalPrecision::Fast {
+                let delta =
+                    Vector3::new(point.x - origin.x, point.y - origin.y, point.z - origin.z);
+                return FiniteReal::new(
+                    delta.x * direction.x + delta.y * direction.y + delta.z * direction.z,
+                );
+            }
             crate::math::sum::finite_dot(
                 [point.x, point.y, point.z, -origin.x, -origin.y, -origin.z],
                 [
@@ -167,6 +199,12 @@ pub fn analytic_surface_parameters_solved(
             let ref_direction = cylinder_surface.frame().reference().as_raw();
             let radius = NonZeroLength::from(cylinder_surface.radius());
             let (x, y, v) = components(origin, *axis, *ref_direction);
+            if precision == EvalPrecision::Fast {
+                return FinitePoint2::new(Point2::new(
+                    (y?.get() / radius.get()).atan2(x?.get() / radius.get()),
+                    v?.get(),
+                ));
+            }
             let angle = finite(y?).over(radius).atan2(finite(x?).over(radius));
             Some(FinitePoint2::from_coordinates(angle, v?))
         }
@@ -194,6 +232,12 @@ pub fn analytic_surface_parameters_solved(
             let ref_direction = sphere_surface.frame().reference().as_raw();
             let (x, y, z) = components(center, *axis, *ref_direction);
             let (x, y, z) = (x?, y?, z?);
+            if precision == EvalPrecision::Fast {
+                return FinitePoint2::new(Point2::new(
+                    y.get().atan2(x.get()),
+                    z.get().atan2(x.get().hypot(y.get())),
+                ));
+            }
             Some(FinitePoint2::from_coordinates(
                 y.atan2(x),
                 finite(z).atan2(ExtendedReal::hypot(x, y)),
@@ -207,6 +251,13 @@ pub fn analytic_surface_parameters_solved(
             let minor_radius = torus_surface.minor_radius();
             let (x, y, z) = components(center, *axis, *ref_direction);
             let (x, y, z) = (x?, y?, z?);
+            if precision == EvalPrecision::Fast {
+                return FinitePoint2::new(Point2::new(
+                    y.get().atan2(x.get()),
+                    (z.get() / minor_radius.get())
+                        .atan2((x.get().hypot(y.get()) - major_radius.get()) / minor_radius.get()),
+                ));
+            }
             Some(FinitePoint2::from_coordinates(
                 y.atan2(x),
                 finite(z).over(minor_radius).atan2(
@@ -1688,6 +1739,22 @@ pub fn nurbs_surface_parameter_within_nonnegative_tolerance_with_budget(
 
 /// `base + Σ factorᵢ · directionᵢ` in model space.
 fn offset(base: Point3, terms: &[(f64, Vector3)]) -> Point3 {
+    offset_with_precision(base, terms, EvalPrecision::Exact)
+}
+
+fn offset_with_precision(
+    mut base: Point3,
+    terms: &[(f64, Vector3)],
+    precision: EvalPrecision,
+) -> Point3 {
+    if precision == EvalPrecision::Fast {
+        for (factor, direction) in terms {
+            base.x += factor * direction.x;
+            base.y += factor * direction.y;
+            base.z += factor * direction.z;
+        }
+        return base;
+    }
     let coordinate = |base: f64, component: fn(&Vector3) -> f64| match crate::math::sum::product_sum(
         std::iter::once(Some([1.0, base])).chain(
             terms
@@ -2432,8 +2499,29 @@ pub fn nurbs_pcurve_uv(
     weights: Option<&[f64]>,
     t: f64,
 ) -> Result<FinitePoint2, EvaluationFailure<Point2>> {
+    nurbs_pcurve_uv_with_precision(
+        ctx,
+        degree,
+        knots,
+        control_points,
+        weights,
+        t,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn nurbs_pcurve_uv_with_precision(
+    ctx: &DecodeContext<'_>,
+    degree: u32,
+    knots: &[f64],
+    control_points: &[Point2],
+    weights: Option<&[f64]>,
+    t: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<FinitePoint2, EvaluationFailure<Point2>> {
     ctx.charge_work_limit(0, "IR raw NURBS pcurve evaluation")?;
-    let scratch = decode::Scratch::new(ctx);
+    let scratch = decode::Scratch::new(ctx).with_precision(precision);
     let result = FiniteReal::new(t)
         .ok_or(EvaluationFailure::NoValue)
         .and_then(|t| {
@@ -3085,6 +3173,21 @@ fn nurbs_surface_local_unsettled<'a>(
     u_at: f64,
     v_at: f64,
 ) -> Result<NurbsSurfaceLocal<'a>, EvaluationFailure<Point3>> {
+    let periodic_parameter =
+        |knots: &[f64], degree: usize, count: usize, periodic: bool, parameter: FiniteReal| {
+            if scratch.precision == EvalPrecision::Fast {
+                let start = *knots.get(degree)?;
+                let end = *knots.get(count)?;
+                if !periodic || (start..=end).contains(&parameter.get()) {
+                    return Some(parameter);
+                }
+                let period = end - start;
+                return (period.is_finite() && period > 0.0)
+                    .then(|| start + (parameter.get() - start).rem_euclid(period))
+                    .and_then(FiniteReal::new);
+            }
+            periodic_parameter(knots, degree, count, periodic, parameter)
+        };
     let no_value = EvaluationFailure::NoValue;
     let unreached = EvaluationFailure::NonFinite(Point3::new(f64::NAN, f64::NAN, f64::NAN));
     let u_degree = usize::try_from(surface.u_degree()).map_err(|_| no_value)?;
@@ -3678,7 +3781,24 @@ pub fn nurbs_surface_partials<'ctx, 'arena: 'ctx>(
     u_at: f64,
     v_at: f64,
 ) -> Result<SurfacePartials<FinitePoint3, FiniteVector3>, EvaluationFailure<Point3>> {
-    let scratch = decode::Scratch::new(admission);
+    nurbs_surface_partials_with_precision(
+        admission,
+        surface,
+        u_at,
+        v_at,
+        crate::eval::EvalPrecision::Exact,
+    )
+}
+
+/// Evaluate with the selected arithmetic precision and the same resource policy.
+pub fn nurbs_surface_partials_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<admission::EvaluationAdmission<'ctx, 'arena>>,
+    surface: &NurbsSurface,
+    u_at: f64,
+    v_at: f64,
+    precision: crate::eval::EvalPrecision,
+) -> Result<SurfacePartials<FinitePoint3, FiniteVector3>, EvaluationFailure<Point3>> {
+    let scratch = decode::Scratch::new(admission).with_precision(precision);
     let result = (|| nurbs_surface_first_order(&scratch, surface, u_at, v_at)?.partials())();
     scratch.settle(result)
 }
@@ -5863,6 +5983,8 @@ fn curve_point_evaluation(
     geometry: &SolvedCurveGeometry,
     t: f64,
 ) -> Result<FinitePoint3, EvaluationFailure<Point3>> {
+    let offset =
+        |base, terms: &[(f64, Vector3)]| offset_with_precision(base, terms, scratch.precision);
     match geometry {
         SolvedCurveGeometry::Nurbs(nurbs) => scratch
             .admission
@@ -5968,8 +6090,15 @@ fn curve_point_evaluation(
         }
         SolvedCurveGeometry::Degenerate(degenerate_curve) => Ok(degenerate_curve.point()),
         SolvedCurveGeometry::Nurbs(nurbs) => {
-            let parameter =
-                map_nurbs_curve_parameter(nurbs, parameter()?).ok_or(EvaluationFailure::NoValue)?;
+            let parameter = if scratch.precision == EvalPrecision::Fast && nurbs.periodic() {
+                let [lower, upper] = nurbs_curve_parameter_domain(nurbs)
+                    .ok_or(EvaluationFailure::NoValue)?
+                    .endpoints();
+                FiniteReal::new(lower + (parameter()?.get() - lower).rem_euclid(upper - lower))
+            } else {
+                map_nurbs_curve_parameter(nurbs, parameter()?)
+            }
+            .ok_or(EvaluationFailure::NoValue)?;
             let poles = nurbs.pole_rows();
             nurbs_curve_point_evaluation(
                 scratch,
@@ -6033,7 +6162,7 @@ fn surface_point_evaluation(
                 surface_point_evaluation(scratch, placed.basis(), u, v),
             )
         }
-        _ => analytic_surface_second_partials(geometry, u, v)
+        _ => analytic_surface_second_partials_with_precision(geometry, u, v, scratch.precision)
             .map_or(Err(EvaluationFailure::NoValue), |partials| {
                 admit_point(partials.point)
             }),
@@ -6317,6 +6446,16 @@ fn analytic_surface_second_partials(
     u: f64,
     v: f64,
 ) -> Option<SurfaceSecondPartials> {
+    analytic_surface_second_partials_with_precision(geometry, u, v, EvalPrecision::Exact)
+}
+
+fn analytic_surface_second_partials_with_precision(
+    geometry: &SolvedSurfaceGeometry,
+    u: f64,
+    v: f64,
+    precision: EvalPrecision,
+) -> Option<SurfaceSecondPartials> {
+    let offset = |base, terms: &[(f64, Vector3)]| offset_with_precision(base, terms, precision);
     let zero = Vector3::new(0.0, 0.0, 0.0);
     match geometry {
         SolvedSurfaceGeometry::Plane(plane_surface) => {
@@ -8959,6 +9098,8 @@ fn pcurve_uv_unsettled(
     geometry: &PcurveGeometry,
     parameter: FiniteReal,
 ) -> Option<PcurveEvaluation> {
+    let offset2 =
+        |base, terms: &[(f64, Point2)]| offset2_with_precision(base, terms, scratch.precision);
     let _depth = scratch.enter()?;
     let t = parameter.get();
     let pair = match geometry {
@@ -9586,7 +9727,18 @@ fn states_pcurve_acceleration(geometry: &PcurveGeometry) -> bool {
     }
 }
 
-fn offset2(base: Point2, terms: &[(f64, Point2)]) -> Point2 {
+fn offset2_with_precision(
+    mut base: Point2,
+    terms: &[(f64, Point2)],
+    precision: EvalPrecision,
+) -> Point2 {
+    if precision == EvalPrecision::Fast {
+        for (factor, direction) in terms {
+            base.u += factor * direction.u;
+            base.v += factor * direction.v;
+        }
+        return base;
+    }
     let coordinate = |base: f64, component: fn(&Point2) -> f64| match crate::math::sum::product_sum(
         std::iter::once(Some([1.0, base])).chain(
             terms
@@ -9720,3 +9872,6 @@ fn surface_jet<'ctx, 'arena: 'ctx>(
 
 #[cfg(test)]
 mod numerical_range_tests;
+
+#[cfg(test)]
+mod precision_tests;

@@ -32,6 +32,7 @@ impl<I: Iterator> Iterator for SumTerms<'_, '_, '_, I> {
 pub(super) struct Homogeneous {
     values: [Option<ScaledValue>; 4],
     constant: [Option<FiniteReal>; 3],
+    fast: Option<[f64; 4]>,
 }
 
 impl Homogeneous {
@@ -45,6 +46,26 @@ impl Homogeneous {
             scratch,
             input_sized,
         };
+        if scratch.precision == super::EvalPrecision::Fast {
+            let mut values = [0.0; 4];
+            for term in terms {
+                let Some((basis, weight, point)) = term else {
+                    scratch.unless_refused()?;
+                    return Ok(None);
+                };
+                let factor = basis[0] * basis[1] * weight;
+                for (value, coordinate) in values[..3].iter_mut().zip([point.x, point.y, point.z]) {
+                    *value += factor * coordinate;
+                }
+                values[3] += factor;
+            }
+            scratch.unless_refused()?;
+            return Ok(Some(Self {
+                values: [None; 4],
+                constant: [None; 3],
+                fast: Some(values),
+            }));
+        }
         let mut values = [None; 4];
         for (axis, value) in values.iter_mut().enumerate() {
             let sum = product_sum(terms.clone().map(|term| {
@@ -84,7 +105,11 @@ impl Homogeneous {
             first = false;
         }
         scratch.unless_refused()?;
-        Ok(Some(Self { values, constant }))
+        Ok(Some(Self {
+            values,
+            constant,
+            fast: None,
+        }))
     }
 
     /// Keep source weights when they remain normal. Otherwise choose one
@@ -178,6 +203,22 @@ impl Homogeneous {
         base: Self,
         subtract: &[(Self, [FiniteReal; 3])],
     ) -> Option<[Result<FiniteReal, f64>; 3]> {
+        if let Some(values) = self.fast {
+            let denominator = base.fast?[3];
+            if denominator == 0.0 {
+                return None;
+            }
+            let mut lanes = [Ok(FiniteReal::ZERO); 3];
+            for (axis, lane) in lanes.iter_mut().enumerate() {
+                let mut numerator = values[axis];
+                for (weight, factor) in subtract {
+                    numerator -= factor[axis].get() * weight.fast?[3];
+                }
+                let value = numerator / denominator;
+                *lane = FiniteReal::new(value).ok_or(value);
+            }
+            return Some(lanes);
+        }
         let denominator = base.values[3]?;
         let mut lanes = [Ok(FiniteReal::ZERO); 3];
         for (axis, lane) in lanes.iter_mut().enumerate() {
