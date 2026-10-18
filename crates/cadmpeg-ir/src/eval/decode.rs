@@ -86,6 +86,7 @@ impl<'ctx, 'arena> Scratch<'ctx, 'arena> {
     }
 
     /// The resource refusal recorded by an allocation, charge or evaluation.
+    #[inline]
     pub(super) fn refused(&self) -> Option<ResourceLimit> {
         if let Some(limit) = *self.refusal.borrow() {
             return Some(limit);

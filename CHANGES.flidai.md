@@ -55,3 +55,7 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   avoiding repeated delimiter scans. Inline cache storage remains accounted
   by the definition vector reservation. Tests cover nested/malformed scopes,
   Send/Sync and independent-context refusals after warming the cache.
+- Fast surface traversal selects polynomial or rational rows once, then bounds
+  each active row once before ordered accumulation. This avoids repeated grid
+  dispatch and pole lookup without changing work admission or arithmetic.
+  Frozen 0.5 point/partial tests cover both grid forms.

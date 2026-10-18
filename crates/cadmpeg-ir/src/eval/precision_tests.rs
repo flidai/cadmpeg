@@ -450,80 +450,92 @@ fn fast_surface_point_and_partials_match_v05() {
     let weights: Vec<Vec<_>> = (0..3)
         .map(|u| (0..3).map(|v| 0.7 + f64::from(u + 2 * v) * 0.13).collect())
         .collect();
-    let surface = NurbsSurface::from_lanes(
-        &ctx,
-        NurbsSurfaceAxis::new(2, knots.clone(), false),
-        NurbsSurfaceAxis::new(2, knots.clone(), false),
-        NurbsSurfaceLanes::new(poles.clone(), Some(weights.clone())),
-        false,
-    )
-    .unwrap()
-    .unwrap();
-    for (u, v) in [
-        (0.0, 0.0),
-        (0.13, 0.67),
-        (0.5, 0.5),
-        (0.91, 0.27),
-        (1.0, 1.0),
-    ] {
-        let expected = legacy_surface(&knots, &poles, &weights, u, v);
-        let point = decode::nurbs_surface_point_with_precision(
-            Standard,
-            &surface,
-            u,
-            v,
-            EvalPrecision::Fast,
+    for rational in [false, true] {
+        let weights = if rational {
+            weights.clone()
+        } else {
+            vec![vec![1.0; 3]; 3]
+        };
+        let surface = NurbsSurface::from_lanes(
+            &ctx,
+            NurbsSurfaceAxis::new(2, knots.clone(), false),
+            NurbsSurfaceAxis::new(2, knots.clone(), false),
+            NurbsSurfaceLanes::new(poles.clone(), rational.then(|| weights.clone())),
+            false,
         )
+        .unwrap()
         .unwrap();
-        assert_eq!(bits(coordinates(point.get())), bits(expected[0]));
-        let partials =
-            nurbs_surface_partials_with_precision(Standard, &surface, u, v, EvalPrecision::Fast)
-                .unwrap();
-        assert_eq!(bits(coordinates(partials.point.get())), bits(expected[0]));
-        assert_eq!(
-            bits([partials.du.x, partials.du.y, partials.du.z]),
-            bits(expected[1])
-        );
-        assert_eq!(
-            bits([partials.dv.x, partials.dv.y, partials.dv.z]),
-            bits(expected[2])
-        );
-        let solved = SolvedSurfaceGeometry::Nurbs(surface.clone());
-        assert_eq!(
-            decode::surface_point_solved_with_precision(
+        for (u, v) in [
+            (0.0, 0.0),
+            (0.13, 0.67),
+            (0.5, 0.5),
+            (0.91, 0.27),
+            (1.0, 1.0),
+        ] {
+            let expected = legacy_surface(&knots, &poles, &weights, u, v);
+            let point = decode::nurbs_surface_point_with_precision(
+                Standard,
+                &surface,
+                u,
+                v,
+                EvalPrecision::Fast,
+            )
+            .unwrap();
+            assert_eq!(bits(coordinates(point.get())), bits(expected[0]));
+            let partials = nurbs_surface_partials_with_precision(
+                Standard,
+                &surface,
+                u,
+                v,
+                EvalPrecision::Fast,
+            )
+            .unwrap();
+            assert_eq!(bits(coordinates(partials.point.get())), bits(expected[0]));
+            assert_eq!(
+                bits([partials.du.x, partials.du.y, partials.du.z]),
+                bits(expected[1])
+            );
+            assert_eq!(
+                bits([partials.dv.x, partials.dv.y, partials.dv.z]),
+                bits(expected[2])
+            );
+            let solved = SolvedSurfaceGeometry::Nurbs(surface.clone());
+            assert_eq!(
+                decode::surface_point_solved_with_precision(
+                    Standard,
+                    &solved,
+                    u,
+                    v,
+                    EvalPrecision::Fast
+                )
+                .unwrap(),
+                point
+            );
+            exact_default!(
+                decode::nurbs_surface_point,
+                decode::nurbs_surface_point_with_precision,
+                Standard,
+                &surface,
+                u,
+                v
+            );
+            exact_default!(
+                decode::surface_point_solved,
+                decode::surface_point_solved_with_precision,
                 Standard,
                 &solved,
                 u,
-                v,
-                EvalPrecision::Fast
-            )
-            .unwrap(),
-            point
-        );
-        exact_default!(
-            decode::nurbs_surface_point,
-            decode::nurbs_surface_point_with_precision,
-            Standard,
-            &surface,
-            u,
-            v
-        );
-        exact_default!(
-            decode::surface_point_solved,
-            decode::surface_point_solved_with_precision,
-            Standard,
-            &solved,
-            u,
-            v
-        );
-        exact_default!(
-            nurbs_surface_partials,
-            nurbs_surface_partials_with_precision,
-            Standard,
-            &surface,
-            u,
-            v
-        );
+                v
+            );
+            exact_default!(
+                nurbs_surface_partials,
+                nurbs_surface_partials_with_precision,
+                Standard,
+                &surface,
+                u,
+                v
+            );
+        }
     }
 }
 

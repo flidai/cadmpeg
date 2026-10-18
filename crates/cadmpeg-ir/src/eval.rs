@@ -3051,14 +3051,24 @@ fn nurbs_local_sum(
             "IR homogeneous pole traversal",
         )?;
         let mut sum = rational::FastHomogeneous::default();
-        for (i, &u_value) in u_values.iter().enumerate() {
-            for (j, &v_value) in v_values.iter().enumerate() {
-                let (pole_u, pole_v) = (u_span - u_degree + i, v_span - v_degree + j);
-                sum.add(
-                    [u_value, v_value],
-                    surface.weight(pole_u, pole_v).map_or(1.0, NonZeroReal::get),
-                    surface.pole(pole_u, pole_v)?,
-                );
+        let u_start = u_span.checked_sub(u_degree)?;
+        let v_start = v_span.checked_sub(v_degree)?;
+        let u_end = u_start.checked_add(u_values.len())?;
+        let v_end = v_start.checked_add(v_values.len())?;
+        match surface.pole_grid() {
+            crate::geometry::nurbs::NurbsPoleGrid::Polynomial { rows } => {
+                for (&u_value, row) in u_values.iter().zip(rows.get(u_start..u_end)?) {
+                    for (&v_value, &point) in v_values.iter().zip(row.get(v_start..v_end)?) {
+                        sum.add([u_value, v_value], 1.0, point);
+                    }
+                }
+            }
+            crate::geometry::nurbs::NurbsPoleGrid::Rational { rows } => {
+                for (&u_value, row) in u_values.iter().zip(rows.get(u_start..u_end)?) {
+                    for (&v_value, pole) in v_values.iter().zip(row.get(v_start..v_end)?) {
+                        sum.add([u_value, v_value], pole.weight.get(), pole.point);
+                    }
+                }
             }
         }
         return Some(sum.finish());

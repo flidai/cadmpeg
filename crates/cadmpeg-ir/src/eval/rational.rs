@@ -212,6 +212,7 @@ impl Homogeneous {
     /// A zero base weight, and a correction outside the accumulator's range,
     /// leave no value. Each lane is its coordinate, or the signed infinity of
     /// a quotient that overflows.
+    #[inline]
     pub(super) fn project(
         self,
         base: Self,
