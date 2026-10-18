@@ -870,6 +870,8 @@ pub(super) const VARIABLE_BLEND_NAMES: &[&str] = &[
 ];
 
 pub(super) struct ParsedVariableBlend {
+    /// A saved upper bound is supported for cache recovery, not exact construction emission.
+    pub(super) v_upper: Option<f64>,
     pub(super) surface: DecodedProceduralSurface,
     pub(super) current_cache_marker: Option<usize>,
 }
@@ -982,9 +984,7 @@ pub(super) fn var_blend_spl_sur(
         cur.take_optional_range_value()?.value(),
         cur.take_optional_range_value()?.value(),
     ];
-    let [v_lower, None] = v_range else {
-        return None;
-    };
+    let [v_lower, v_upper] = v_range;
     let shape_prefix = cur.take_long()?;
     let shape_parameter = cur.take_f64()?;
     let shape_length = cur.take_f64()? * LEN_TO_MM;
@@ -1051,6 +1051,7 @@ pub(super) fn var_blend_spl_sur(
     let current_cache_marker =
         matches!(cache, VariableBlendCache::Current { .. }).then_some(cache_marker);
     Some(Ok(ParsedVariableBlend {
+        v_upper,
         current_cache_marker,
         surface: DecodedProceduralSurface::revision(
             DecodedProceduralSurfaceDefinition::VariableBlend(Box::new(EmbeddedVariableBlend {

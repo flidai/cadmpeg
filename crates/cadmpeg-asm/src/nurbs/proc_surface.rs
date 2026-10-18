@@ -4803,8 +4803,10 @@ fn procedural_resolving_refs(
         .or_else(|| off_spl_sur(ctx, toks, Some(table)))
         .or_else(|| cyl_spl_sur(ctx, toks, Some(table)))
         .or_else(|| {
-            var_blend_spl_sur(ctx, toks, Some(table))
-                .map(|result| result.map(|parsed| parsed.surface))
+            var_blend_spl_sur(ctx, toks, Some(table)).and_then(|result| match result {
+                Ok(parsed) => parsed.v_upper.is_none().then_some(Ok(parsed.surface)),
+                Err(error) => Some(Err(error)),
+            })
         })
         .or_else(|| vertex_blend_spl_sur(ctx, toks, Some(table)))
         .or_else(|| full_rb_blend_spl_sur(ctx, toks, table))

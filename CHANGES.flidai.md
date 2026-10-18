@@ -19,3 +19,9 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
 - Fast surface sums traverse the active net directly and admit its work in one
   charge, sharing the ordered accumulator with curve sums. Standard evaluation
   skips no-op basis work accounting; admitted evaluation retains its limits.
+- `crates/cadmpeg-asm/src/nurbs/{blend,core,proc_surface}.rs`: recover a
+  variable-blend current NURBS cache when its optional upper V bound is present.
+  Retain that bound while parsing, but withhold exact construction emission
+  because the construction carrier cannot represent it. Synthetic tests cover
+  current/stale caches and named/compact aliases. Separate upstream bugfix
+  candidate; not submitted upstream.

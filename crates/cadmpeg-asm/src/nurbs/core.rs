@@ -1294,6 +1294,68 @@ mod tests {
     }
 
     #[test]
+    fn variable_blend_upper_bound_recovers_only_current_cache_for_owner_and_alias() {
+        use crate::sab::{Record, Token};
+        for current in [0, 1, 2] {
+            let mut owner = variable_blend_tokens("srf_srf_v_bl_spl_sur", current);
+            let marker = owner
+                .iter()
+                .position(|token| matches!(token, Token::Ident(name) if name == "nubs"))
+                .unwrap();
+            // The optional upper V bound precedes the four shape fields and cache enum.
+            let upper = marker - 6;
+            assert_eq!(owner[upper], Token::False);
+            owner.splice(upper..=upper, [Token::True, Token::Double(1.0)]);
+            let records = [Record {
+                index: 0,
+                name: "spline".into(),
+                tokens: owner.clone().into(),
+                offset: 0,
+                len: 0,
+            }];
+            let arena = DecodeArena::new();
+            let (ctx, _) =
+                DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+            let table = SubtypeTable::from_records(&ctx, &records).unwrap();
+            for payload in [
+                owner,
+                vec![
+                    Token::SubtypeOpen,
+                    Token::Ident("ref".into()),
+                    Token::Long(0),
+                    Token::SubtypeClose,
+                ],
+                vec![Token::SubtypeOpen, Token::Long(0), Token::SubtypeClose],
+            ] {
+                // The exact-construction IR cannot retain this upper bound yet.
+                assert!(
+                    crate::nurbs::proc_surface::procedural_surface_resolving_refs(
+                        &ctx, &payload, &table,
+                    )
+                    .is_none()
+                );
+                let scope = crate::nurbs::toks::subtype_span(&payload, 0).unwrap();
+                for cache in [
+                    super::surface_cache_resolving_refs(&ctx, &payload, &table),
+                    super::owned_surface_cache_resolving_refs(&ctx, scope, &table),
+                ] {
+                    if current == 0 {
+                        assert!(cache.is_none(), "stale cache must remain unavailable");
+                    } else {
+                        let surface = cache.unwrap().unwrap();
+                        assert_eq!(surface.u_count(), 2);
+                        assert_eq!(surface.v_count(), 2);
+                        assert_eq!(
+                            surface.poles()[0].get(),
+                            cadmpeg_ir::math::Point3::new(70., 0., 0.),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn untyped_variable_blend_cache_is_rejected_for_owner_and_alias() {
         use crate::sab::{Record, Token};
         for name in crate::nurbs::blend::VARIABLE_BLEND_NAMES {
