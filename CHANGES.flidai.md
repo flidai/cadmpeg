@@ -59,3 +59,20 @@ Based on upstream `v0.6.1`. Modified files retain the upstream Apache-2.0 licens
   each active row once before ordered accumulation. This avoids repeated grid
   dispatch and pole lookup without changing work admission or arithmetic.
   Frozen 0.5 point/partial tests cover both grid forms.
+- `Cargo.toml`, `Cargo.lock` and `crates/cadmpeg-fuzz/{Cargo.toml,Cargo.lock}`:
+  move ZIP readers and fixture writers to ZIP 9.0.5. Keep workspace deflate
+  and Zstandard support; the fuzz workspace retains its deflate-only feature
+  selection. No decoder or measurement arithmetic changes.
+- `crates/cadmpeg-container/src/archive.rs` and
+  `crates/cadmpeg-protein/src/lib.rs`,
+  `crates/cadmpeg-codec-f3d/src/integration_tests/optional_payloads.rs`: handle
+  ZIP 9's fallible decoded-name APIs. Invalid indexed names remain errors.
+- `crates/cadmpeg-codec-f3d/src/{materials.rs,writer/patch/mod.rs}`:
+  propagate decoded-name failures when rewriting ZIP members.
+- ZIP fixture readers in `crates/cadmpeg-codec-f3d/src/{decode/tests/{container,
+  header_recovery}.rs,test_support/assembly_test.rs}`,
+  `crates/cadmpeg-codec-freecad/src/{container/tests.rs,element_map/tests.rs,
+  golden_tests.rs,test_support/test_archive.rs,writer/tests/targets.rs}` and
+  `crates/cadmpeg/tests/cli/convert.rs` use ZIP 9's decoded-name results.
+- Both lockfiles select patched Zstandard 0.14.3 and remove the ZIP 8
+  dependency on Zstandard 0.13.

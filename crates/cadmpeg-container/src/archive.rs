@@ -179,7 +179,7 @@ impl<'bytes, 'ctx> ZipIndex<'bytes, 'ctx> {
         };
         let directory_bytes = admitted.metadata_bytes;
         let input_bytes = cadmpeg_core::decode::u64_from_index(bytes.len());
-        // zip 8.6 keeps fixed metadata in its builder and final index. Each
+        // zip 9 keeps fixed metadata in its builder and final index. Each
         // record is below 1 KiB and each central entry occupies at least 46
         // bytes. Names, comments, extras, parsed vectors and index tables fit
         // the remaining factor in this 64-byte-per-directory-byte peak bound.
@@ -251,11 +251,14 @@ impl<'a> ArchiveSnapshot<'a> {
         for ordinal in 0..archive.len() {
             let name = archive
                 .name_for_index(ordinal)
-                .ok_or_else(|| CodecError::malformed("ZIP indexed name is absent"))?;
+                .ok_or_else(|| CodecError::malformed("ZIP indexed name is absent"))?
+                .map_err(|error| {
+                    CodecError::malformed(format_args!("invalid ZIP name: {error}"))
+                })?;
             let name_len = cadmpeg_core::decode::u64_from_index(name.len());
             ctx.charge_retained(name_len, "ZIP entry record name")?;
             ctx.charge_retained(name_len, "ZIP duplicate name")?;
-            if !names.insert(name.to_owned()) {
+            if !names.insert(name.to_string()) {
                 return Err(CodecError::malformed(format_args!(
                     "duplicate ZIP entry name {name}"
                 )));
@@ -264,7 +267,7 @@ impl<'a> ArchiveSnapshot<'a> {
                 ctx,
                 root.window(),
                 central,
-                name.to_owned(),
+                name.into_owned(),
                 archive.offset(),
                 archive_central_start,
             )?;
@@ -316,11 +319,14 @@ impl<'a> ArchiveSnapshot<'a> {
             Admission::Unreadable(error) => return Err(error),
         };
         for candidate in index.archive.file_names() {
+            let candidate = candidate.map_err(|error| {
+                CodecError::malformed(format_args!("invalid ZIP name: {error}"))
+            })?;
             ctx.charge_work(
                 cadmpeg_core::decode::u64_from_index(candidate.len()),
                 "ZIP name probe comparison",
             )?;
-            if matches(candidate) {
+            if matches(&candidate) {
                 return Ok(true);
             }
         }
