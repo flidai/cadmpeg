@@ -1538,4 +1538,74 @@ mod tests {
         assert_eq!(limit.dimension, ResourceDimension::RecursionDepth);
         assert_eq!(limit.operation, "admit ASM variable-blend cache");
     }
+
+    #[test]
+    fn variable_blend_cache_selection_allows_a_legacy_radius_without_calibration() {
+        use crate::sab::{Record, Token};
+        for current in [0, 1, 2] {
+            let mut owner = variable_blend_tokens("srf_srf_v_bl_spl_sur", current);
+            owner[2] = Token::Long(22110);
+            let law = owner
+                .iter()
+                .position(|token| matches!(token, Token::Str(name) if name == "two_ends"))
+                .unwrap();
+            owner[law] = Token::Ident("two_ends".into());
+            assert_eq!(owner.remove(law + 1), Token::Enum(0));
+            assert_eq!(owner[law + 1], Token::True);
+            let records = [Record {
+                index: 0,
+                name: "spline".into(),
+                tokens: owner.clone().into(),
+                offset: 0,
+                len: 0,
+            }];
+            let arena = DecodeArena::new();
+            let (ctx, _) =
+                DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+            let table = SubtypeTable::from_records(&records);
+            assert_variable_blend_cache_only(&ctx, &owner, &table, current);
+            ctx.finish_session().unwrap();
+        }
+    }
+    fn assert_variable_blend_cache_only(
+        ctx: &DecodeContext<'_>,
+        owner: &[crate::sab::Token],
+        table: &SubtypeTable,
+        current: i64,
+    ) {
+        use crate::sab::Token;
+        for payload in [
+            owner.to_vec(),
+            vec![
+                Token::SubtypeOpen,
+                Token::Ident("ref".into()),
+                Token::Long(0),
+                Token::SubtypeClose,
+            ],
+            vec![Token::SubtypeOpen, Token::Long(0), Token::SubtypeClose],
+        ] {
+            assert!(
+                crate::nurbs::proc_surface::procedural_surface_resolving_refs(ctx, &payload, table)
+                    .is_none(),
+                "cache selection must not publish an unsupported exact construction",
+            );
+            let scope = crate::nurbs::toks::subtype_span(&payload, 0).unwrap();
+            for cache in [
+                super::surface_cache_resolving_refs(ctx, &payload, table),
+                super::owned_surface_cache_resolving_refs(ctx, scope, table),
+            ] {
+                if current == 0 {
+                    assert!(cache.is_none(), "a stale cache must stay unavailable");
+                } else {
+                    let surface = cache.unwrap().unwrap();
+                    assert_eq!(surface.u_count(), 2);
+                    assert_eq!(surface.v_count(), 2);
+                    assert_eq!(
+                        surface.poles()[0].get(),
+                        cadmpeg_ir::math::Point3::new(70., 0., 0.)
+                    );
+                }
+            }
+        }
+    }
 }
