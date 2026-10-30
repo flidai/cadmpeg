@@ -516,6 +516,7 @@ fn saved_top_level_edge_projects_as_a_wire_body() {
     assert_eq!(brep.vertices.len(), 2);
     assert_eq!(brep.points.len(), 2);
     assert_eq!(brep.curves.len(), 1);
+    measure::assert_wire_geometry_matches(&ctx, records, &bytes, brep);
 }
 
 /// A cone closed by a disk. The apex loop is one null-curve edge whose two
@@ -1533,6 +1534,7 @@ fn collapsed_edges_need_one_vertex_and_a_point_carrier() {
 }
 
 mod attribute_limits;
+mod measure;
 
 #[test]
 fn a_body_of_single_sided_loopless_faces_is_a_solid() {
