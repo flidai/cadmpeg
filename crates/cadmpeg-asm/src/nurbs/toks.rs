@@ -443,8 +443,9 @@ pub(super) fn find_owned_intcurve_subtype(toks: &[Token], modern: &str) -> Optio
 
 /// A balanced subtype scope in token space.
 ///
-/// `subtype_span` is the only constructor: the field is private and the type
-/// has no `From` and no `Deref`. Every value therefore states one scope whose
+/// Every scope is proved by `subtype_span`, directly or through the subtype
+/// table's cached length. The field is private and the type has no `From` and
+/// no `Deref`. Every value therefore states one scope whose
 /// every `SubtypeClose` has a matching open within the span, and whose final
 /// token is the close that balances it. The walks that refuse an unbalanced
 /// stream are total over this type.
@@ -474,7 +475,8 @@ impl<'a> SubtypeScope<'a> {
     /// first of these is the identifier that names it, and the rest are the
     /// fields the construction states.
     ///
-    /// Total: `subtype_span` is the only constructor. It refuses unless the
+    /// Total: `subtype_span` proves every scope, directly or through the subtype
+    /// table's cached length. It refuses unless the
     /// token at `start` is the scope's own `SubtypeOpen`, and it builds
     /// `tokens` as `toks[start..=pos]` with `pos > start`, so the slice holds
     /// at least the opening and the closing delimiter and this range is in
@@ -603,10 +605,26 @@ pub fn payload_subtype_toks<'r>(
 /// definition's token index within them, so resolution needs no side channel
 /// back to the record table.
 pub struct SubtypeTable {
-    defs: Vec<(std::sync::Arc<[Token]>, usize)>,
+    defs: Vec<SubtypeDefinition>,
     /// The stream's ASM save format version from the `asmheader` record. Tokens
     /// omit this value, so the table carries it into token-space decoders.
     save_format_version: Option<u32>,
+}
+
+struct SubtypeDefinition {
+    tokens: std::sync::Arc<[Token]>,
+    token_pos: usize,
+    scope_len: std::sync::OnceLock<Option<usize>>,
+}
+
+impl SubtypeDefinition {
+    fn new(tokens: std::sync::Arc<[Token]>, token_pos: usize) -> Self {
+        Self {
+            tokens,
+            token_pos,
+            scope_len: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 impl SubtypeTable {
@@ -620,7 +638,7 @@ impl SubtypeTable {
                         record.tokens.get(pos + 1)
                     {
                         if name != "ref" {
-                            defs.push((record.tokens.clone(), pos));
+                            defs.push(SubtypeDefinition::new(record.tokens.clone(), pos));
                         }
                     }
                 }
@@ -636,7 +654,10 @@ impl SubtypeTable {
     /// Each pair names the owning payload and its opening subtype token.
     pub fn from_definitions(defs: Vec<(std::sync::Arc<[Token]>, usize)>) -> Self {
         Self {
-            defs,
+            defs: defs
+                .into_iter()
+                .map(|(tokens, pos)| SubtypeDefinition::new(tokens, pos))
+                .collect(),
             save_format_version: None,
         }
     }
@@ -655,8 +676,16 @@ impl SubtypeTable {
 
     /// The balanced scope of definition `index`, sliced from its owning record.
     pub(super) fn span(&self, index: usize) -> Option<SubtypeScope<'_>> {
-        let (tokens, token_pos) = self.defs.get(index)?;
-        subtype_span(tokens, *token_pos)
+        let definition = self.defs.get(index)?;
+        let length = (*definition.scope_len.get_or_init(|| {
+            subtype_span(&definition.tokens, definition.token_pos).map(|scope| scope.tokens().len())
+        }))?;
+        let end = definition.token_pos.checked_add(length)?;
+        // The cached length comes only from subtype_span over these immutable
+        // tokens, so the same slice retains its proof of balanced delimiters.
+        Some(SubtypeScope {
+            tokens: definition.tokens.get(definition.token_pos..end)?,
+        })
     }
 }
 
@@ -849,6 +878,74 @@ mod tests {
     use crate::kernel_header::RefWidth;
     use crate::nurbs::reader::BsplineMarker;
     use crate::sab::Token;
+
+    #[test]
+    fn subtype_table_caches_balanced_nested_scope_lengths() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<super::SubtypeTable>();
+
+        let record = crate::sab::Record {
+            index: 0,
+            name: "spline".into(),
+            tokens: vec![
+                Token::Long(9),
+                Token::SubtypeOpen,
+                Token::Ident("owner".into()),
+                Token::SubtypeOpen,
+                Token::Ident("child".into()),
+                Token::Double(42.0),
+                Token::SubtypeClose,
+                Token::SubtypeClose,
+                Token::Long(10),
+            ]
+            .into(),
+            offset: 0,
+            len: 0,
+        };
+        let table = super::SubtypeTable::from_records(std::slice::from_ref(&record));
+        assert!(table.defs[0].scope_len.get().is_none());
+        assert!(table.defs[1].scope_len.get().is_none());
+        for _ in 0..2 {
+            assert_eq!(
+                table.span(0).expect("balanced owner").tokens(),
+                &record.tokens[1..8]
+            );
+            assert_eq!(
+                table.span(1).expect("balanced child").tokens(),
+                &record.tokens[3..7]
+            );
+        }
+        assert_eq!(table.defs[0].scope_len.get(), Some(&Some(7)));
+        assert_eq!(table.defs[1].scope_len.get(), Some(&Some(4)));
+        assert!(table.span(2).is_none());
+    }
+
+    #[test]
+    fn subtype_table_caches_an_unbalanced_definition_as_missing() {
+        let record = crate::sab::Record {
+            index: 0,
+            name: "spline".into(),
+            tokens: vec![
+                Token::SubtypeOpen,
+                Token::Ident("owner".into()),
+                Token::SubtypeOpen,
+                Token::Ident("child".into()),
+                Token::SubtypeClose,
+            ]
+            .into(),
+            offset: 0,
+            len: 0,
+        };
+        let table = super::SubtypeTable::from_records(std::slice::from_ref(&record));
+        assert!(table.defs[0].scope_len.get().is_none());
+        assert!(table.span(0).is_none());
+        assert_eq!(table.defs[0].scope_len.get(), Some(&None));
+        assert!(table.span(0).is_none());
+        assert_eq!(
+            table.span(1).expect("balanced child").tokens(),
+            &record.tokens[2..5]
+        );
+    }
 
     #[test]
     fn subtype_reference_walk_refuses_depth_before_following_next_definition() {
