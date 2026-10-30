@@ -74,13 +74,14 @@ pub(super) fn bspline_basis(
     } else {
         decode::SupportValues::Heap(scratch.filled(support, 0.0)?)
     };
-    scratch.admit(fill_bspline_basis(
+    scratch.admit(fill_bspline_basis_with_precision(
         scratch.admission,
         knots,
         degree,
         span,
         t,
         &mut values,
+        scratch.precision,
     ))??;
     Some(values)
 }
@@ -95,6 +96,26 @@ pub(super) fn fill_bspline_basis<'ctx, 'arena: 'ctx>(
     span: usize,
     t: f64,
     values: &mut [f64],
+) -> Result<Option<()>, EvaluationRefusal> {
+    fill_bspline_basis_with_precision(
+        admission,
+        knots,
+        degree,
+        span,
+        t,
+        values,
+        super::EvalPrecision::Exact,
+    )
+}
+
+pub(super) fn fill_bspline_basis_with_precision<'ctx, 'arena: 'ctx>(
+    admission: impl Into<EvaluationAdmission<'ctx, 'arena>>,
+    knots: &[f64],
+    degree: usize,
+    span: usize,
+    t: f64,
+    values: &mut [f64],
+    precision: super::EvalPrecision,
 ) -> Result<Option<()>, EvaluationRefusal> {
     let admission = admission.into();
     admission.work(0)?;
@@ -113,6 +134,19 @@ pub(super) fn fill_bspline_basis<'ctx, 'arena: 'ctx>(
                 admission.work(1)?;
             }
             let value = values[r];
+            if precision == super::EvalPrecision::Fast {
+                let right = knots[span + r + 1] - t;
+                let left = t - knots[span + 1 - j + r];
+                let denominator = right + left;
+                let factor = if denominator == 0.0 {
+                    0.0
+                } else {
+                    value / denominator
+                };
+                values[r] = saved + right * factor;
+                saved = left * factor;
+                continue;
+            }
             // Each knot distance is admitted where it is formed.
             let right = FiniteReal::new(knots[span + r + 1] - t);
             let left = FiniteReal::new(t - knots[span + 1 - j + r]);
@@ -163,6 +197,7 @@ pub(super) fn fill_bspline_basis<'ctx, 'arena: 'ctx>(
 }
 
 /// Inspect the finite range of a basis, admitting input-sized visits first.
+#[inline]
 pub(super) fn all_finite(scratch: &decode::Scratch<'_, '_>, values: &[f64]) -> Option<bool> {
     scratch.work(0)?;
     for value in values {

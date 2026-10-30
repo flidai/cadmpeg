@@ -239,6 +239,7 @@ impl<'ctx, 'arena> EvaluationAdmission<'ctx, 'arena> {
     /// Count evaluation steps against a session or standalone slice. A slice
     /// that cannot cover them is [`EvaluationRefusal::WorkExhausted`] unless
     /// the session refused behind it; the session stays unrefused.
+    #[inline]
     pub(super) fn work(self, count: usize) -> Result<(), EvaluationRefusal> {
         match self {
             Self::WorkSlice(EvaluationWorkSlice {

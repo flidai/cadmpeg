@@ -49,6 +49,29 @@ fn charge_traversal(
 pub(super) struct Homogeneous {
     values: [Option<ScaledValue>; 4],
     constant: [Option<FiniteReal>; 3],
+    fast: Option<[f64; 4]>,
+}
+
+/// Ordered binary64 accumulation, shared by curve and surface traversal.
+#[derive(Default)]
+pub(super) struct FastHomogeneous([f64; 4]);
+
+impl FastHomogeneous {
+    pub(super) fn add(&mut self, basis: [f64; 2], weight: f64, point: FinitePoint3) {
+        let factor = basis[0] * basis[1] * weight;
+        self.0[0] += factor * point.x;
+        self.0[1] += factor * point.y;
+        self.0[2] += factor * point.z;
+        self.0[3] += factor;
+    }
+
+    pub(super) fn finish(self) -> Homogeneous {
+        Homogeneous {
+            values: [None; 4],
+            constant: [None; 3],
+            fast: Some(self.0),
+        }
+    }
 }
 
 impl Homogeneous {
@@ -72,6 +95,18 @@ impl Homogeneous {
             input_sized,
             charged: 0,
         };
+        if scratch.precision == super::EvalPrecision::Fast {
+            let mut sum = FastHomogeneous::default();
+            for term in terms {
+                let Some((basis, weight, point)) = term else {
+                    scratch.unless_refused()?;
+                    return Ok(None);
+                };
+                sum.add(basis, weight, point);
+            }
+            scratch.unless_refused()?;
+            return Ok(Some(sum.finish()));
+        }
         let mut traversal = terms.clone();
         let mut lanes = LaneProductSums::<4>::default();
         let mut constant = [None; 3];
@@ -134,7 +169,11 @@ impl Homogeneous {
             };
         }
         charge_traversal(scratch, traversal_work)?;
-        Ok(Some(Self { values, constant }))
+        Ok(Some(Self {
+            values,
+            constant,
+            fast: None,
+        }))
     }
 
     /// Keep source weights when they remain normal. Otherwise choose one
@@ -222,11 +261,28 @@ impl Homogeneous {
     /// A zero base weight, and a correction outside the accumulator's range,
     /// leave no value. Each lane is its coordinate, or the signed infinity of
     /// a quotient that overflows.
+    #[inline]
     pub(super) fn project(
         self,
         base: Self,
         subtract: &[(Self, [FiniteReal; 3])],
     ) -> Option<[Result<FiniteReal, f64>; 3]> {
+        if let Some(values) = self.fast {
+            let denominator = base.fast?[3];
+            if denominator == 0.0 {
+                return None;
+            }
+            let mut lanes = [Ok(FiniteReal::ZERO); 3];
+            for (axis, lane) in lanes.iter_mut().enumerate() {
+                let mut numerator = values[axis];
+                for (weight, factor) in subtract {
+                    numerator -= factor[axis].get() * weight.fast?[3];
+                }
+                let value = numerator / denominator;
+                *lane = FiniteReal::new(value).ok_or(value);
+            }
+            return Some(lanes);
+        }
         let denominator = base.values[3]?;
         let mut lanes = [Ok(FiniteReal::ZERO); 3];
         for (axis, lane) in lanes.iter_mut().enumerate() {

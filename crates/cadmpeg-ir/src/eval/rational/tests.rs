@@ -13,6 +13,7 @@ fn weight_sum(weight: Option<crate::math::sum::ScaledValue>) -> Homogeneous {
     Homogeneous {
         values: [None, None, None, weight],
         constant: [None; 3],
+        fast: None,
     }
 }
 

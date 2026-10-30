@@ -57,5 +57,9 @@ pub(super) fn sum(
         first = false;
     }
     scratch.unless_refused()?;
-    Ok(Some(Homogeneous { values, constant }))
+    Ok(Some(Homogeneous {
+        values,
+        constant,
+        fast: None,
+    }))
 }
