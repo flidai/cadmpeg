@@ -816,10 +816,13 @@ fn radius_function_geometry(
     Some(Ok(PcurveGeometry::Nurbs { nurbs: function }))
 }
 
+/// Read one radius law of a variable-blend record. `calibration_omitted`
+/// withholds the record's exact construction and keeps its solved cache.
 fn variable_blend_value(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     cur: &mut Cur<'_>,
     depth: usize,
+    calibration_omitted: &mut bool,
 ) -> Option<Result<cadmpeg_ir::geometry::VariableBlendValue, cadmpeg_core::CodecError>> {
     use cadmpeg_ir::geometry::{
         EdgeOffsetDiscriminator, VariableBlendInterpolationPoint, VariableBlendTerminal,
@@ -835,7 +838,12 @@ fn variable_blend_value(
     } else {
         1
     };
-    let calibrated = cur.take_enum()?;
+    let calibrated = if matches!(cur.peek(), Some(Token::True | Token::False)) {
+        *calibration_omitted = true;
+        0
+    } else {
+        cur.take_enum()?
+    };
     let modern_flag = cur.take_bool()?;
     let payload = match name {
         "fixed_width" => VariableBlendValuePayload::FixedWidth {
@@ -881,10 +889,12 @@ fn variable_blend_value(
             radius: cur.take_f64()? * LEN_TO_MM,
             variable_chamfer: cur.take_enum()?,
             chamfer_type: cur.take_enum()?,
-            nested: Box::new(match variable_blend_value(ctx, cur, depth + 1)? {
-                Ok(value) => value,
-                Err(error) => return Some(Err(error)),
-            }),
+            nested: Box::new(
+                match variable_blend_value(ctx, cur, depth + 1, calibration_omitted)? {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                },
+            ),
         },
         "interp" => {
             let parameter = cur.take_f64()?;
@@ -960,8 +970,8 @@ pub(super) const VARIABLE_BLEND_NAMES: &[&str] = &[
 
 pub(super) struct ParsedVariableBlend {
     /// `None` when the record states what the construction cannot hold: a
-    /// finite upper bound on the second interval, or a side whose support
-    /// owns no solved cache.
+    /// finite upper bound on the second interval, a side whose support owns
+    /// no solved cache, or a radius law that omits its calibration enum.
     pub(super) surface: Option<DecodedProceduralSurface>,
     pub(super) current_cache_marker: Option<usize>,
 }
@@ -1021,14 +1031,15 @@ pub(super) fn var_blend_spl_sur(
         1 => true,
         _ => return None,
     };
-    let first_value = match variable_blend_value(ctx, &mut cur, 0)? {
+    let mut calibration_omitted = false;
+    let first_value = match variable_blend_value(ctx, &mut cur, 0, &mut calibration_omitted)? {
         Ok(value) => value,
         Err(error) => return Some(Err(error)),
     };
     let radii = if two_radii {
         cadmpeg_ir::geometry::VariableBlendRadii::Two {
             first: first_value,
-            second: match variable_blend_value(ctx, &mut cur, 0)? {
+            second: match variable_blend_value(ctx, &mut cur, 0, &mut calibration_omitted)? {
                 Ok(value) => value,
                 Err(error) => return Some(Err(error)),
             },
@@ -1050,10 +1061,12 @@ pub(super) fn var_blend_spl_sur(
             }),
             3 => {
                 let radius = if cur.take_bool()? {
-                    Some(Box::new(match variable_blend_value(ctx, &mut cur, 0)? {
-                        Ok(value) => value,
-                        Err(error) => return Some(Err(error)),
-                    }))
+                    Some(Box::new(
+                        match variable_blend_value(ctx, &mut cur, 0, &mut calibration_omitted)? {
+                            Ok(value) => value,
+                            Err(error) => return Some(Err(error)),
+                        },
+                    ))
                 } else {
                     None
                 };
@@ -1145,35 +1158,39 @@ pub(super) fn var_blend_spl_sur(
         matches!(cache, VariableBlendCache::Current { .. }).then_some(cache_marker);
     Some(Ok(ParsedVariableBlend {
         current_cache_marker,
-        surface: sides.filter(|_| v_upper.is_none()).map(|sides| {
-            DecodedProceduralSurface::revision(DecodedProceduralSurfaceDefinition::VariableBlend(
-                Box::new(EmbeddedVariableBlend {
-                    subtype,
-                    revision,
-                    sides,
-                    slice: slice.curve,
-                    slice_range: slice.parameter_range,
-                    offsets,
-                    radii,
-                    cross_section,
-                    u_range: [u_lower, u_upper],
-                    v_lower,
-                    shape_parameter,
-                    shape_length,
-                    shape_tail,
-                    cache,
-                    discontinuities,
-                    tail_flag,
-                    tail_extensions,
-                    secondary_curve,
-                    convexity,
-                    render_mode,
-                    post_range,
-                    post_curve,
-                    post_pcurve,
-                }),
-            ))
-        }),
+        surface: sides
+            .filter(|_| v_upper.is_none() && !calibration_omitted)
+            .map(|sides| {
+                DecodedProceduralSurface::revision(
+                    DecodedProceduralSurfaceDefinition::VariableBlend(Box::new(
+                        EmbeddedVariableBlend {
+                            subtype,
+                            revision,
+                            sides,
+                            slice: slice.curve,
+                            slice_range: slice.parameter_range,
+                            offsets,
+                            radii,
+                            cross_section,
+                            u_range: [u_lower, u_upper],
+                            v_lower,
+                            shape_parameter,
+                            shape_length,
+                            shape_tail,
+                            cache,
+                            discontinuities,
+                            tail_flag,
+                            tail_extensions,
+                            secondary_curve,
+                            convexity,
+                            render_mode,
+                            post_range,
+                            post_curve,
+                            post_pcurve,
+                        },
+                    )),
+                )
+            }),
     }))
 }
 
@@ -1638,7 +1655,8 @@ mod variable_blend_value_tests {
         policy.limits.max_recursion_depth = 0;
         let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy)
             .expect("empty test input fits input limit");
-        let Some(Err(CodecError::ResourceLimit(refusal))) = variable_blend_value(&ctx, &mut cur, 0)
+        let Some(Err(CodecError::ResourceLimit(refusal))) =
+            variable_blend_value(&ctx, &mut cur, 0, &mut false)
         else {
             panic!("variable blend depth must refuse");
         };
@@ -1686,7 +1704,7 @@ mod variable_blend_value_tests {
         let toks = crate::nurbs::toks::lex_test_span(&direct, RefWidth::Eight)
             .expect("valid single-record byte fixture");
         let mut cur = Cur::at(&toks, 0);
-        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0)
+        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0, &mut false)
             .expect("generated two-ends value")
             .expect("decode the variable blend value");
         assert_eq!(cur.pos(), toks.len());
@@ -1714,7 +1732,7 @@ mod variable_blend_value_tests {
         let toks = crate::nurbs::toks::lex_test_span(&recursive, RefWidth::Eight)
             .expect("valid single-record byte fixture");
         let mut cur = Cur::at(&toks, 0);
-        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0)
+        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0, &mut false)
             .expect("generated recursive const value")
             .expect("decode the variable blend value");
         assert_eq!(cur.pos(), toks.len());
@@ -1748,7 +1766,7 @@ mod variable_blend_value_tests {
         let toks = crate::nurbs::toks::lex_test_span(&bytes, RefWidth::Eight)
             .expect("valid single-record byte fixture");
         let mut cur = Cur::at(&toks, 0);
-        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0)
+        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0, &mut false)
             .expect("generated fixed-width value")
             .expect("decode the variable blend value");
         assert_eq!(cur.pos(), toks.len());
@@ -1813,7 +1831,7 @@ mod variable_blend_value_tests {
         let toks = crate::nurbs::toks::lex_test_span(&bytes, RefWidth::Eight)
             .expect("valid single-record byte fixture");
         let mut cur = Cur::at(&toks, 0);
-        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0)
+        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0, &mut false)
             .expect("generated enum-tagged interp value")
             .expect("decode the variable blend value");
         assert_eq!(cur.pos(), toks.len() - 1);
@@ -1892,7 +1910,7 @@ mod variable_blend_value_tests {
         let toks = crate::nurbs::toks::lex_test_span(&bytes, RefWidth::Eight)
             .expect("valid single-record byte fixture");
         let mut cur = Cur::at(&toks, 0);
-        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0)
+        let decoded = variable_blend_value(&asm_decode_ctx, &mut cur, 0, &mut false)
             .expect("generated interp value with unset derivatives")
             .expect("decode the variable blend value");
         assert_eq!(cur.pos(), toks.len() - 1);
