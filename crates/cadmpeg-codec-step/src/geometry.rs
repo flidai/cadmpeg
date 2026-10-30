@@ -533,6 +533,9 @@ fn basis_surface(e: &mut Emitter, g: &SolvedSurfaceGeometry) -> Option<Ref> {
             let ref_direction = *torus_surface.frame().reference();
             let major_radius = torus_surface.major_radius().get();
             let minor_radius = torus_surface.minor_radius().get();
+            if minor_radius.abs() > major_radius.abs() {
+                return revolved_tube(e, center, axis, ref_direction, major_radius, minor_radius);
+            }
             let pl = placement(e, center, axis, ref_direction);
             e.emit(
                 "TOROIDAL_SURFACE",
@@ -552,6 +555,45 @@ fn basis_surface(e: &mut Emitter, g: &SolvedSurfaceGeometry) -> Option<Ref> {
         | SolvedSurfaceGeometry::Polygonal(_)
         | SolvedSurfaceGeometry::Unknown { .. } => return None,
     })
+}
+
+/// Emit a torus whose tube radius exceeds its major radius.
+///
+/// `toroidal_surface` requires `major_radius > minor_radius`, and a tube that
+/// crosses the axis is not a valid `toroidal_surface`. The same point set is
+/// the revolution of the tube circle about the torus axis. The circle starts at
+/// the reference direction and runs with the torus' `v` angle, so the revolved
+/// surface keeps the torus' `(u, v)` chart, including the half turn that a
+/// negative tube radius adds to `v`.
+fn revolved_tube(
+    e: &mut Emitter,
+    center: Point3,
+    axis: UnitVector3,
+    ref_direction: UnitVector3,
+    major_radius: f64,
+    minor_radius: f64,
+) -> Option<Ref> {
+    let reference = Vector3::from(ref_direction);
+    let tube_center = Point3::new(
+        center.x + major_radius * reference.x,
+        center.y + major_radius * reference.y,
+        center.z + major_radius * reference.z,
+    );
+    let tube_axis = UnitVector3::new(reference.cross(Vector3::from(axis)))?;
+    let tube_reference = if minor_radius < 0.0 {
+        ref_direction.reversed()
+    } else {
+        ref_direction
+    };
+    let pl = placement(e, tube_center, tube_axis, tube_reference);
+    let circle = e.emit("CIRCLE", &format!("'',{pl},{}", e.real(minor_radius.abs())));
+    let origin = point(e, center);
+    let axis_direction = direction(e, axis.into());
+    let revolution_axis = e.emit("AXIS1_PLACEMENT", &format!("'',{origin},{axis_direction}"));
+    Some(e.emit(
+        "SURFACE_OF_REVOLUTION",
+        &format!("'',{circle},{revolution_axis}"),
+    ))
 }
 
 /// Emit a cone of semi-angle 0, which `conical_surface` cannot hold.

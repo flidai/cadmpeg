@@ -5309,7 +5309,7 @@ impl<'a> Builder<'a> {
                 WrittenAnalyticSurface::Carrier(SolvedSurfaceGeometry::Torus(torus_surface)) => {
                     let major_radius = torus_surface.major_radius().get();
                     let minor_radius = torus_surface.minor_radius().get();
-                    minor_radius < 0.0 || minor_radius.abs() > major_radius.abs()
+                    minor_radius < 0.0 && minor_radius.abs() <= major_radius.abs()
                 }
                 // `DEGENERATE_TOROIDAL_SURFACE` holds a tube radius larger than
                 // the major radius, so only the tube radius sign is normalized.
