@@ -1199,6 +1199,16 @@ a unit `VECTOR` along the axis. Both keep the cone's `(u, v)` chart. A zero
 half-angle cone whose section has a zero semi-axis, and a cone whose half-angle
 magnitude is at least `pi/2`, are refused before any byte is written.
 
+CADIR export decision: ISO 10303-42 `TOROIDAL_SURFACE` requires `major_radius`
+to exceed `minor_radius`. A torus whose tube radius magnitude exceeds its major
+radius crosses its own axis. It is written as a `SURFACE_OF_REVOLUTION`
+of the tube `CIRCLE` about the torus axis. The circle has its center at the
+major radius along the reference direction, its radius is the tube radius
+magnitude, and its axis is the cross product of the torus reference direction
+and axis. Its reference direction is the torus reference direction, or its
+opposite for a negative tube radius. The revolved surface keeps the torus
+`(u, v)` chart, so pcurves written against the torus remain valid.
+
 A NURBS `closed` or `periodic` field uses the STEP LOGICAL domain.
 TRUE and FALSE encode the property state. UNKNOWN is a valid LOGICAL value.
 A `POLYLINE` with `n` points is the degree-one NURBS with those points as

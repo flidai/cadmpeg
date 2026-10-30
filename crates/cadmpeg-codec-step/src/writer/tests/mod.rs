@@ -11,5 +11,6 @@ mod reports;
 pub(crate) mod round_trips;
 mod styles;
 mod targets;
+mod tori;
 
 mod ownership;
