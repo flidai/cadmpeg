@@ -2,6 +2,8 @@
 
 use crate::kernel_header::RefWidth;
 use crate::nurbs::pcurve::tests::curve_block;
+use crate::nurbs::pcurve::tests::exact_cache_first_curve;
+use crate::nurbs::pcurve::tests::pcurve_block;
 use crate::nurbs::pcurve::tests::push_f64;
 use crate::nurbs::pcurve::tests::push_ident;
 use crate::nurbs::pcurve::tests::push_int;
@@ -16,6 +18,7 @@ use crate::nurbs::proc_curve::subset_patch_layout;
 use crate::nurbs::proc_curve::vector_offset_patch_layout;
 use crate::nurbs::proc_surface::DecodedProceduralSurfaceDefinition;
 use crate::nurbs::toks::lex_test_span;
+use crate::nurbs::toks::test_table;
 use cadmpeg_ir::math::Point3;
 use cadmpeg_ir::math::Vector3;
 
@@ -315,5 +318,88 @@ fn compound_layout_requires_framed_subtype_at_both_widths() {
             .collect::<Vec<_>>();
         assert_eq!(parameters, [0.0, 0.5, 1.0]);
         assert_eq!(component_parameters, [-2.0, 4.0]);
+    }
+}
+
+/// A cache-first `off_surf_int_cur` whose embedded base `intcurve` carries
+/// `reversed` as its sense and an inline exact subtype for its curve.
+fn cache_first_surface_offset(int_width: RefWidth, reversed: bool) -> Vec<u8> {
+    let mut bytes = vec![0x0f];
+    push_ident(&mut bytes, "off_surf_int_cur");
+    push_int(&mut bytes, 0x04, 23_100, int_width);
+    push_int(&mut bytes, 0x15, 0, int_width);
+    bytes.extend_from_slice(&curve_block(int_width));
+    push_f64(&mut bytes, 0.0);
+    push_ident(&mut bytes, "plane");
+    push_position(&mut bytes, [0.0, 0.0, 0.0]);
+    push_vector(&mut bytes, [0.0, 0.0, 1.0]);
+    push_vector(&mut bytes, [1.0, 0.0, 0.0]);
+    bytes.extend_from_slice(&[0x0b; 5]);
+    push_ident(&mut bytes, "null_surface");
+    bytes.extend_from_slice(&pcurve_block(int_width));
+    push_ident(&mut bytes, "nullbs");
+    bytes.extend_from_slice(&[0x0b; 2]);
+    for _ in 0..4 {
+        push_int(&mut bytes, 0x04, 0, int_width);
+    }
+    // Base surface U and V intervals.
+    for value in [-1.0, 1.0, -1.0, 1.0] {
+        bytes.push(0x0a);
+        push_f64(&mut bytes, value);
+    }
+    // The base curve: the sense, then the exact subtype that owns its cache.
+    bytes.push(if reversed { 0x0a } else { 0x0b });
+    bytes.extend_from_slice(&exact_cache_first_curve(int_width));
+    // Base endpoints and base interval, stated on the sense-selected curve.
+    for value in [0.0, 1.0, 0.0, 1.0] {
+        bytes.push(0x0a);
+        push_f64(&mut bytes, value);
+    }
+    for value in [-0.25, 0.0, 1.0] {
+        push_f64(&mut bytes, value);
+    }
+    bytes.push(0x10);
+    bytes
+}
+
+#[test]
+fn reversed_embedded_base_intcurve_of_a_surface_offset_is_held_on_negated_parameter() {
+    let asm_decode_arena = cadmpeg_core::decode::DecodeArena::new();
+    let (asm_decode_ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
+        &[],
+        &asm_decode_arena,
+        &cadmpeg_core::decode::DecodePolicy::default(),
+    )
+    .expect("test decode context");
+    for int_width in [RefWidth::Four, RefWidth::Eight] {
+        let base_of = |reversed| {
+            let record = cache_first_surface_offset(int_width, reversed);
+            let decoded = crate::nurbs::proc_curve::procedural_curve_resolving_refs(
+                &asm_decode_ctx,
+                &lex_test_span(&record, int_width).expect("valid single-record byte fixture"),
+                &test_table(&record, int_width).expect("valid single-record byte fixture"),
+            )
+            .transpose()
+            .expect("decode the procedural curve")
+            .unwrap_or_else(|| panic!("cache-first surface offset at width {int_width}"));
+            let crate::nurbs::proc_curve::ProceduralCurveConstruction::SurfaceOffset(offset) =
+                decoded.construction
+            else {
+                panic!("typed surface-offset construction")
+            };
+            assert_eq!(offset.base_range, [0.0, 1.0]);
+            offset.base
+        };
+        let forward = base_of(false);
+        let reversed = base_of(true);
+
+        assert_eq!(forward.knots().as_slice().first(), Some(&0.0));
+        assert_eq!(forward.knots().as_slice().last(), Some(&1.0));
+        // `C(-t)` of the serialized curve: knots negated, poles in reverse.
+        assert_eq!(reversed.knots().as_slice().first(), Some(&-1.0));
+        assert_eq!(reversed.knots().as_slice().last(), Some(&-0.0));
+        let mut expected = forward.control_points();
+        expected.reverse();
+        assert_eq!(reversed.control_points(), expected);
     }
 }
