@@ -1009,7 +1009,15 @@ pub(super) fn check_parameter_domains(
                 valid &= crate::eval::nurbs_curve_parameter_domain(nurbs)
                     .map(crate::topology::IncreasingParameterInterval::endpoints)
                     .is_some_and(|domain| {
-                        parameter_in_domain(start, domain) && parameter_in_domain(end, domain)
+                        if nurbs.periodic() {
+                            // A use of a closed curve may begin anywhere on
+                            // it, and a reversed use runs on the negated
+                            // parameter: the range need only span no more
+                            // than one period, as an edge of the same curve.
+                            periodic_pcurve_range_in_domain(start, end, domain)
+                        } else {
+                            parameter_in_domain(start, domain) && parameter_in_domain(end, domain)
+                        }
                     });
             }
             if !valid {

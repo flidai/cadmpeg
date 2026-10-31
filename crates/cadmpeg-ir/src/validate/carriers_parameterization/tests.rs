@@ -207,6 +207,48 @@ fn periodic_nurbs_rejects_an_edge_wider_than_its_large_finite_period() {
         .any(|finding| finding.check == Check::ParameterDomain));
 }
 
+fn use_curve_domain_findings(periodic: bool, range: [f64; 2]) -> usize {
+    let mut ir = unit_cube().expect("valid unit cube fixture");
+    let mut curve = ir.model.curves[0].clone();
+    curve.id = CurveId::mint("test:model:curve#use").expect("valid identity");
+    curve.geometry = CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(
+        crate::geometry::nurbs::NurbsCurve::from_lanes(
+            1,
+            vec![0.0, 0.0, 4.0, 4.0],
+            vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
+            None,
+            periodic,
+        )
+        .unwrap(),
+    ));
+    ir.model.coedges[0].use_curve = Some(crate::topology::CoedgeUseCurve {
+        curve: curve.id.clone(),
+        parameter_range: crate::topology::ParameterInterval::new(range).unwrap(),
+    });
+    ir.model.curves.push(curve);
+    validate_neutral(&ir, Vec::new())
+        .expect("validate the neutral model")
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.check == Check::ParameterDomain && finding.message.contains("use-curve range")
+        })
+        .count()
+}
+
+#[test]
+fn a_coedge_use_curve_may_start_anywhere_on_a_periodic_nurbs_for_one_period() {
+    // A reversed use of a closed periodic curve runs on the negated parameter,
+    // so a full turn that starts mid-curve begins below the knot domain.
+    assert_eq!(use_curve_domain_findings(true, [-3.0, 1.0]), 0);
+    assert_eq!(use_curve_domain_findings(true, [1.5, 5.5]), 0);
+    // More than one period is not a use of the curve.
+    assert_eq!(use_curve_domain_findings(true, [-3.0, 2.0]), 1);
+    // A curve that is not periodic still bounds the range by its knot domain.
+    assert_eq!(use_curve_domain_findings(false, [-3.0, 1.0]), 1);
+    assert_eq!(use_curve_domain_findings(false, [0.5, 3.5]), 0);
+}
+
 fn nurbs_pcurve_leaf() -> PcurveGeometry {
     PcurveGeometry::Nurbs {
         nurbs: crate::geometry::pcurve::PcurveNurbs::from_lanes(
