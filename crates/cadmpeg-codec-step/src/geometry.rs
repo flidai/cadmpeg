@@ -448,6 +448,28 @@ pub(crate) fn emitted_basis(g: &SolvedSurfaceGeometry) -> &SolvedSurfaceGeometry
     basis
 }
 
+/// Whether the record [`surface`] writes for `g` has the opposite normal to
+/// the carrier.
+///
+/// A sphere or torus carrier keeps the sign of its radius: a negative sphere
+/// radius or torus tube radius turns the carrier's normal toward the center
+/// or the tube axis, which is how a concave sphere or fillet is stored.
+/// `SPHERICAL_SURFACE` and `TOROIDAL_SURFACE` hold positive radii and an
+/// outward normal, so the writer takes the magnitude and a face on such a
+/// carrier states the opposite `same_sense`. A tube wider than its major
+/// radius is written as a revolved tube, which keeps the signed chart and is
+/// not covered.
+pub(crate) fn written_normal_inverted(g: &SolvedSurfaceGeometry) -> bool {
+    match g {
+        SolvedSurfaceGeometry::Sphere(sphere) => sphere.radius().get() < 0.0,
+        SolvedSurfaceGeometry::Torus(torus) => {
+            let minor_radius = torus.minor_radius().get();
+            minor_radius < 0.0 && minor_radius.abs() <= torus.major_radius().get().abs()
+        }
+        _ => false,
+    }
+}
+
 /// Emit an analytic or NURBS surface carrier.
 ///
 /// A placed carrier is written in its own placed record when
