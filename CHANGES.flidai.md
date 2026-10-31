@@ -17,3 +17,12 @@ upstream pull request is in a release.
 - `crates/cadmpeg-asm`, `docs/formats/asm.md`: keep the parameter of the base curve of a
   surface-offset curve: its intcurve sense and its analytic ellipse form
   (`fix/offset-curve-base-sense`).
+
+## Round 5, fork-only (not proposed upstream)
+
+These select by a measured quantity, which the upstream source policy forbids for decoders and
+encoders. They stay on the fork.
+
+- `crates/cadmpeg-codec-step` writer: state the face sense of a face on a torus wider than its
+  major radius against the sign of the tube radius times the sign of `rho = R + r cos v` at the
+  face, read from the torus equation at the face's vertices (`c/r5-apple-sheet`).

@@ -2952,12 +2952,86 @@ impl<'a> Builder<'a> {
             && uses.values().all(|[forward, reversed]| forward == reversed)
     }
 
+    /// Whether a face on a torus wider than its major radius needs the opposite
+    /// `same_sense` of the face sense.
+    ///
+    /// Fork-only, not for upstream: the sheet is read from the torus equation
+    /// at the vertices of the face, a geometric measurement.
+    ///
+    /// The tube radius `r` is signed and the torus point is
+    /// `C + (R + r cos v) X + r sin v Z`. Its parametric normal is
+    /// `(R + r cos v) |r|` times the unit vector from the tube center to the
+    /// point, so it points away from the tube center where `rho = R + r cos v`
+    /// is positive and toward it where `rho` is negative. The face sense of a
+    /// carrier with a negative tube radius is relative to the normal turned
+    /// toward the tube center, so the written sense states the opposite
+    /// whenever the sign of `r` and the sign of `rho` differ.
+    fn apple_sense_flip(&self, face: &Face) -> bool {
+        let Some(Some(SolvedSurfaceGeometry::Torus(torus))) = self
+            .surfaces
+            .get(face.surface.as_str())
+            .map(|surface| surface.geometry.solved())
+        else {
+            return false;
+        };
+        let minor = torus.minor_radius().get();
+        let major = torus.major_radius().get();
+        if minor.abs() <= major {
+            return false;
+        }
+        let center = torus.center().get();
+        let axis = *torus.frame().axis().as_raw();
+        let (mut plus, mut minus) = (0_usize, 0_usize);
+        for loop_id in &face.loops {
+            let Some(ring) = self.loops.get(loop_id.as_str()).copied() else {
+                continue;
+            };
+            for coedge_id in ring.coedges() {
+                let Some(position) = self
+                    .coedges
+                    .get(coedge_id.as_str())
+                    .and_then(|coedge| self.edges.get(coedge.edge.as_str()))
+                    .and_then(|edge| self.vertices.get(edge.start.as_str()))
+                    .and_then(|vertex| self.points.get(vertex.point.as_str()))
+                    .map(|point| point.position().get())
+                else {
+                    continue;
+                };
+                let offset = [
+                    position.x - center.x,
+                    position.y - center.y,
+                    position.z - center.z,
+                ];
+                let height = offset[0] * axis.x + offset[1] * axis.y + offset[2] * axis.z;
+                let radial = (offset[0].powi(2) + offset[1].powi(2) + offset[2].powi(2)
+                    - height * height)
+                    .max(0.0)
+                    .sqrt();
+                let residual = |rho: f64| {
+                    (((rho - major) / minor).powi(2) + (height / minor).powi(2) - 1.0).abs()
+                };
+                let (outer, inner) = (residual(radial), residual(-radial));
+                if outer < inner && outer < 1e-6 {
+                    plus += 1;
+                } else if inner < outer && inner < 1e-6 {
+                    minus += 1;
+                }
+            }
+        }
+        match (plus > 0, minus > 0) {
+            (true, false) => minor < 0.0,
+            (false, true) => minor > 0.0,
+            _ => false,
+        }
+    }
+
     /// Writes the face use, or its reverse when `reversed` is set: the
     /// reverse flips the face `same_sense` and the orientation of every bound.
     fn emit_face(&mut self, face_id: &str, reversed: bool) -> Option<Ref> {
         let face = self.faces.get(face_id).copied()?;
         let surface_id = face.surface.as_str();
-        let same_sense = matches!(face.sense, Sense::Forward) != reversed;
+        let same_sense =
+            matches!(face.sense, Sense::Forward) != (reversed != self.apple_sense_flip(face));
         let bound_flag = if reversed { ".F." } else { ".T." };
         let mut closed_surface = None;
         let rectangle = match self.implicit_outer_bounds.get(face_id).cloned() {
