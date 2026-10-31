@@ -834,14 +834,16 @@ fn failed_procedural_curves_discard_only_their_candidate_children() {
                         base_u_range: [0.0, 1.0],
                         base_v_range: [0.0, 1.0],
                         base_range: [0.0, 1.0],
-                        base: NurbsCurve::from_lanes(
-                            1,
-                            vec![0.0, 0.0, 1.0, 1.0],
-                            vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
-                            None,
-                            false,
-                        )
-                        .unwrap(),
+                        base: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(
+                            NurbsCurve::from_lanes(
+                                1,
+                                vec![0.0, 0.0, 1.0, 1.0],
+                                vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
+                                None,
+                                false,
+                            )
+                            .unwrap(),
+                        )),
                         distance,
                         shift: 0.0,
                         scale: 1.0,

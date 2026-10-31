@@ -4000,7 +4000,7 @@ fn emit_surface_offset_curve(
     out.curves.push(Curve {
         parameter_range: None,
         id: base.clone(),
-        geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(embedded.base)),
+        geometry: embedded.base,
         source_object: None,
     });
     Ok(

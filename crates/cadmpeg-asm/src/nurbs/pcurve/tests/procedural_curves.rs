@@ -19,8 +19,13 @@ use crate::nurbs::proc_curve::vector_offset_patch_layout;
 use crate::nurbs::proc_surface::DecodedProceduralSurfaceDefinition;
 use crate::nurbs::toks::lex_test_span;
 use crate::nurbs::toks::test_table;
+use cadmpeg_ir::features::FinitePoint3;
+use cadmpeg_ir::geometry::analytic::CircleCurve;
+use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
 use cadmpeg_ir::math::Point3;
 use cadmpeg_ir::math::Vector3;
+use cadmpeg_ir::scalar::PositiveLength;
+use cadmpeg_ir::units::{OrthonormalFrame3, UnitVector3};
 
 #[test]
 fn extrusion_layout_walks_modern_and_legacy_names_at_both_widths() {
@@ -321,9 +326,8 @@ fn compound_layout_requires_framed_subtype_at_both_widths() {
     }
 }
 
-/// A cache-first `off_surf_int_cur` whose embedded base `intcurve` carries
-/// `reversed` as its sense and an inline exact subtype for its curve.
-fn cache_first_surface_offset(int_width: RefWidth, reversed: bool) -> Vec<u8> {
+/// A cache-first `off_surf_int_cur` whose embedded base curve is `base`.
+fn cache_first_surface_offset(int_width: RefWidth, base: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0x0f];
     push_ident(&mut bytes, "off_surf_int_cur");
     push_int(&mut bytes, 0x04, 23_100, int_width);
@@ -347,9 +351,7 @@ fn cache_first_surface_offset(int_width: RefWidth, reversed: bool) -> Vec<u8> {
         bytes.push(0x0a);
         push_f64(&mut bytes, value);
     }
-    // The base curve: the sense, then the exact subtype that owns its cache.
-    bytes.push(if reversed { 0x0a } else { 0x0b });
-    bytes.extend_from_slice(&exact_cache_first_curve(int_width));
+    bytes.extend_from_slice(base);
     // Base endpoints and base interval, stated on the sense-selected curve.
     for value in [0.0, 1.0, 0.0, 1.0] {
         bytes.push(0x0a);
@@ -373,7 +375,11 @@ fn reversed_embedded_base_intcurve_of_a_surface_offset_is_held_on_negated_parame
     .expect("test decode context");
     for int_width in [RefWidth::Four, RefWidth::Eight] {
         let base_of = |reversed| {
-            let record = cache_first_surface_offset(int_width, reversed);
+            // The base curve: the sense, then the exact subtype that owns its
+            // cache.
+            let mut base = vec![if reversed { 0x0a } else { 0x0b }];
+            base.extend_from_slice(&exact_cache_first_curve(int_width));
+            let record = cache_first_surface_offset(int_width, &base);
             let decoded = crate::nurbs::proc_curve::procedural_curve_resolving_refs(
                 &asm_decode_ctx,
                 &lex_test_span(&record, int_width).expect("valid single-record byte fixture"),
@@ -388,7 +394,10 @@ fn reversed_embedded_base_intcurve_of_a_surface_offset_is_held_on_negated_parame
                 panic!("typed surface-offset construction")
             };
             assert_eq!(offset.base_range, [0.0, 1.0]);
-            offset.base
+            let CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(base)) = offset.base else {
+                panic!("a cached base curve is a NURBS curve")
+            };
+            base
         };
         let forward = base_of(false);
         let reversed = base_of(true);
@@ -401,5 +410,59 @@ fn reversed_embedded_base_intcurve_of_a_surface_offset_is_held_on_negated_parame
         let mut expected = forward.control_points();
         expected.reverse();
         assert_eq!(reversed.control_points(), expected);
+    }
+}
+
+/// An embedded `ellipse` base is stated on the native angle of the conic. A
+/// NURBS conversion of it runs over `[0, 1]` and cannot take an angle.
+#[test]
+fn embedded_ellipse_base_of_a_surface_offset_keeps_the_angle_parameter() {
+    let asm_decode_arena = cadmpeg_core::decode::DecodeArena::new();
+    let (asm_decode_ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
+        &[],
+        &asm_decode_arena,
+        &cadmpeg_core::decode::DecodePolicy::default(),
+    )
+    .expect("test decode context");
+    for int_width in [RefWidth::Four, RefWidth::Eight] {
+        for (ratio, circular) in [(1.0, true), (0.5, false)] {
+            let mut base = Vec::new();
+            push_ident(&mut base, "ellipse");
+            push_position(&mut base, [1.0, 2.0, 3.0]);
+            push_vector(&mut base, [0.0, 0.0, 1.0]);
+            push_vector(&mut base, [2.0, 0.0, 0.0]);
+            push_f64(&mut base, ratio);
+            let record = cache_first_surface_offset(int_width, &base);
+            let decoded = crate::nurbs::proc_curve::procedural_curve_resolving_refs(
+                &asm_decode_ctx,
+                &lex_test_span(&record, int_width).expect("valid single-record byte fixture"),
+                &test_table(&record, int_width).expect("valid single-record byte fixture"),
+            )
+            .transpose()
+            .expect("decode the procedural curve")
+            .unwrap_or_else(|| panic!("cache-first surface offset at width {int_width}"));
+            let crate::nurbs::proc_curve::ProceduralCurveConstruction::SurfaceOffset(offset) =
+                decoded.construction
+            else {
+                panic!("typed surface-offset construction")
+            };
+            match (circular, offset.base) {
+                (true, CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle))) => {
+                    let frame = OrthonormalFrame3::from_units(
+                        UnitVector3::normalized(Vector3::new(0.0, 0.0, 1.0)).unwrap(),
+                        UnitVector3::normalized(Vector3::new(1.0, 0.0, 0.0)).unwrap(),
+                    )
+                    .unwrap();
+                    let expected = CircleCurve::new(
+                        FinitePoint3::new(Point3::new(10.0, 20.0, 30.0)).unwrap(),
+                        frame,
+                        PositiveLength::new(20.0).unwrap(),
+                    );
+                    assert_eq!(circle, expected);
+                }
+                (false, CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(_))) => {}
+                (_, other) => panic!("unexpected base curve {other:?}"),
+            }
+        }
     }
 }
