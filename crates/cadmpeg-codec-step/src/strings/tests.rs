@@ -198,7 +198,7 @@ fn writer_and_lexer_preserve_apostrophes_and_backslashes_once() {
 }
 
 /// A doubled apostrophe in text that also holds a comma ends the string for
-/// the OpenCASCADE STEP reader, so the apostrophe is written as a wide escape
+/// the `OpenCASCADE` STEP reader, so the apostrophe is written as a wide escape
 /// there, and every other apostrophe stays doubled. Both forms read back as
 /// the source text.
 #[test]
