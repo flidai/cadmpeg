@@ -148,10 +148,18 @@ fn decode_page_byte(page: u8, byte: u8, offset: usize) -> Result<char, StringErr
 }
 
 /// Encode text as bytes suitable between Part 21 apostrophe delimiters.
+///
+/// An apostrophe is written doubled. In text that also holds a comma or a
+/// closing parenthesis it is written as the wide escape of U+0027 instead:
+/// the OpenCASCADE STEP reader ends a string at a doubled apostrophe that
+/// precedes a comma later in the text, and reads the rest of the record as
+/// syntax errors.
 pub(crate) fn encode(input: &str) -> String {
     let mut output = String::new();
+    let escape_apostrophe = input.contains('\'') && input.contains([',', ')']);
     for character in input.chars() {
         match character {
+            '\'' if escape_apostrophe => output.push_str("\\X2\\0027\\X0\\"),
             '\'' => output.push_str("''"),
             '\\' => output.push_str("\\\\"),
             '\u{20}'..='\u{7e}' => output.push(character),
