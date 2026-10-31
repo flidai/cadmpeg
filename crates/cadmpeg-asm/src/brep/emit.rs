@@ -184,6 +184,7 @@ fn emit_support_slot(
     slot: crate::nurbs::proc_curve::SupportSlot,
     construction_key: i64,
 ) -> Result<Option<SurfaceId>, cadmpeg_core::CodecError> {
+    let undecoded = matches!(slot, crate::nurbs::proc_curve::SupportSlot::Undecoded(_));
     let Some((geometry, construction)) = slot.into_parts() else {
         return Ok(None);
     };
@@ -192,6 +193,26 @@ fn emit_support_slot(
         geometry,
         source_object: None,
     });
+    if undecoded {
+        // The construction is named but not read: the cache stands for a
+        // surface of unknown fit, which the consistency check cannot test.
+        out.procedural_surfaces.push((
+            id.clone(),
+            ProceduralSurface::new(
+                brep_id!(
+                    format,
+                    ProceduralSurfaceId,
+                    "procedural_surface",
+                    construction_key
+                ),
+                ProceduralSurfaceDefinition::Unknown {
+                    record: None,
+                    cache: None,
+                },
+                None,
+            ),
+        ));
+    }
     if let Some(construction) = construction {
         // Curve supports and the entities under them carry no source record.
         emit_procedural_surface_row(
