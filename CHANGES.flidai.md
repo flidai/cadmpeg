@@ -32,3 +32,8 @@ encoders. They stay on the fork.
   positive signed volume as the outer shell when the first shell does not enclose a positive
   volume, and writes a later shell that encloses a positive volume without reversing its base
   faces.
+- `crates/cadmpeg-codec-step` writer: state the face sense of a face on the outer sheet
+  (`rho = R + r cos v > 0`) of a torus wider than its major radius, with a negative tube radius,
+  against the carrier sense. The sheet is read from the torus equation at the face's vertices
+  (`c/r5-apple-sheet`). Faces on the inner sheet are left alone: the rule was right on some
+  reference solids and wrong on others.
