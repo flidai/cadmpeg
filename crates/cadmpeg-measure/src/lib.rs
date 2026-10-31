@@ -62,12 +62,15 @@ mod witness;
 
 mod bbox;
 
+pub use body::ShellSignedVolume;
 pub use budget::{
     WorkProfile, MAX_MEASURE_PASS_WORK_PER_ITEM, MAX_MEASURE_PASS_WORK_PER_ITEM_SERVICE,
     MEASURE_PASS_WORK_FLOOR,
 };
 pub use select::{FaceFilter, RadiusRange, Selection, SurfaceKind};
-pub use session::{findings, Density, MeasureError, MeasureInput, MeasureOptions, Measurer};
+pub use session::{
+    findings, shell_signed_volumes, Density, MeasureError, MeasureInput, MeasureOptions, Measurer,
+};
 
 #[cfg(test)]
 mod integration_tests;

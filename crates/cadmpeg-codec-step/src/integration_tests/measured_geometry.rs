@@ -252,6 +252,59 @@ fn reversed_void_shell_measures_the_enclosed_volume_through_a_round_trip() {
     assert_close(volume, 976.0, error);
 }
 
+/// The same cube with a box void, decoded with the void shell listed first
+/// in the region, as a lump whose shell chain lists the void first. The
+/// writer names the shell that encloses a positive volume the outer shell, so
+/// the written solid keeps its volume `1000 - 24 = 976`. Fork-only.
+#[test]
+fn void_listed_first_is_written_as_a_void() {
+    let outer = box_shell(10, [0.0; 3], [10.0; 3], BoxFaceUse::Outward);
+    let void = box_shell(
+        outer.next,
+        [2.0, 3.0, 1.0],
+        [4.0, 6.0, 5.0],
+        BoxFaceUse::Outward,
+    );
+    let oriented = void.next;
+    let solid = oriented + 1;
+    let records = format!(
+        "{}{}#{oriented}=ORIENTED_CLOSED_SHELL('',*,#{},.F.);\n\
+         #{solid}=BREP_WITH_VOIDS('',#{},(#{oriented}));\n{}",
+        outer.records,
+        void.records,
+        void.shell,
+        outer.shell,
+        solid_representation(1, solid)
+    );
+    let decoded = decode_inline(&records);
+    let mut ir = decoded.ir().clone();
+    ir.model.regions[0].shells.reverse();
+    assert_eq!(ir.model.regions[0].shells.len(), 2);
+    let before = orientation_findings(&ir);
+    assert_eq!(
+        before.len(),
+        1,
+        "the void listed first is a conflict: {before:#?}"
+    );
+
+    let mut output = Vec::new();
+    write_step(
+        &ir,
+        &mut output,
+        StepSchema::Ap214,
+        &StepWriteOptions::default(),
+    )
+    .expect("write solid with the void listed first");
+    let round_trip = StepCodec::default()
+        .decode(&mut Cursor::new(output), &DecodeOptions::default())
+        .expect("decode written solid");
+    let findings = orientation_findings(round_trip.ir());
+    assert!(findings.is_empty(), "{findings:#?}");
+    let report = measured("void first", round_trip.ir()).expect("the document is measured");
+    let (volume, error) = body_volume(&report);
+    assert_close(volume, 976.0, error);
+}
+
 /// A solid cylinder with radius 10 and height 30, whose closed circle edges
 /// store no parameter range, keeps its measured geometry through a STEP
 /// write round trip under every written schema.

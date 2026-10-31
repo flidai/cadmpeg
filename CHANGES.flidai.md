@@ -17,3 +17,15 @@ upstream pull request is in a release.
 - `crates/cadmpeg-asm`, `docs/formats/asm.md`: keep the parameter of the base curve of a
   surface-offset curve: its intcurve sense and its analytic ellipse form
   (`fix/offset-curve-base-sense`).
+
+## Round 5, fork-only (not proposed upstream)
+
+These select by a measured quantity, which the upstream source policy forbids for decoders and
+encoders. They stay on the fork.
+
+- `crates/cadmpeg-measure`, `crates/cadmpeg-codec-step` writer: name the exterior shell of a
+  region by the sign of the volume its oriented faces enclose (`c/r5-outer-shell`). A lump chains
+  its shells in an order that carries no role. The writer takes the shell with the largest
+  positive signed volume as the outer shell when the first shell does not enclose a positive
+  volume, and writes a later shell that encloses a positive volume without reversing its base
+  faces.

@@ -141,6 +141,25 @@ pub fn findings(
         .map_err(CodecError::ResourceLimit)
 }
 
+/// The signed volume each shell of every body with closed shells encloses
+/// under the face-sense reading, under the findings allowance of
+/// `options.work`. Fork-only: not for upstream.
+pub fn shell_signed_volumes(
+    ctx: &DecodeContext<'_>,
+    ir: &CadIr,
+    options: MeasureOptions,
+) -> Result<Vec<crate::body::ShellSignedVolume>, CodecError> {
+    let input = MeasureInput {
+        ir,
+        fidelity: None,
+        geometry_transferred: true,
+    };
+    Measurer::new(input, options)
+        .orientation_pass(ctx)
+        .map(|(_, volumes)| volumes)
+        .map_err(CodecError::ResourceLimit)
+}
+
 /// Measures the bodies, faces and edges of one document.
 pub struct Measurer<'ir> {
     input: MeasureInput<'ir>,
