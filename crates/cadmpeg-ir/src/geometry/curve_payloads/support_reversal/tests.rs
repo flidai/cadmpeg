@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::geometry::curve_payloads::{
-    SilhouetteCurveConstruction, SurfaceOffsetCurveConstruction,
+    SilhouetteCurveConstruction, SpringCurvePayload, SurfaceOffsetCurveConstruction,
     ThreeSurfaceIntersectionCurvePayload, TwoSidedOffsetCurveConstruction,
 };
 use crate::geometry::pcurve::{LinePcurve, PcurveGeometry};
 use crate::geometry::{
     CacheContract, CacheFirstCurveForm, CacheFirstCurveParameterization, IntcurveSupportContext,
     IntcurveSupportSide, ProceduralCurveDefinition, RevisionCacheForm, SilhouetteKind,
-    SupportPcurve,
+    SpringLayout, SpringPcurve, SpringSupport, SupportPcurve,
 };
 use crate::ids::{CurveId, SurfaceId};
 use crate::math::{Point2, Vector3};
@@ -77,6 +77,46 @@ fn definitions() -> Vec<ProceduralCurveDefinition> {
             )
             .expect("silhouette"),
         ),
+        ProceduralCurveDefinition::Spring(
+            SpringCurvePayload::try_new(
+                SpringLayout::CacheFirst {
+                    context: context(),
+                    form: form.clone(),
+                },
+                1,
+            )
+            .expect("cache-first spring"),
+        ),
+        ProceduralCurveDefinition::Spring(
+            SpringCurvePayload::try_new(
+                SpringLayout::ContextFirst {
+                    supports: [
+                        SpringSupport::Surface(
+                            SurfaceId::mint("test:model:surface#spring").expect("surface"),
+                        ),
+                        SpringSupport::Ranges([[0.0, 1.0], [2.0, 3.0]]),
+                    ],
+                    first_pcurve: Box::new(SpringPcurve::Pcurve(
+                        line_side(Point2::new(0.5, 1.0), Point2::new(1.0, -0.5))
+                            .pcurve
+                            .expect("pcurve")
+                            .geometry,
+                    )),
+                    second_pcurve: Some(
+                        line_side(Point2::new(2.0, 0.0), Point2::new(0.0, 1.0))
+                            .pcurve
+                            .expect("pcurve")
+                            .geometry,
+                    ),
+                    parameter_range: [1.0, 4.0],
+                    discontinuities: [vec![2.0], Vec::new(), Vec::new()],
+                    discontinuity_flag: true,
+                    cache: None,
+                },
+                1,
+            )
+            .expect("context-first spring"),
+        ),
         ProceduralCurveDefinition::SurfaceOffset(
             SurfaceOffsetCurveConstruction::try_new(
                 context(),
@@ -121,6 +161,29 @@ fn context_families_reverse_about_zero_and_back() {
             }
             ProceduralCurveDefinition::TwoSidedOffset(payload) => assert_context(payload.context()),
             ProceduralCurveDefinition::Silhouette(payload) => assert_context(payload.context()),
+            ProceduralCurveDefinition::Spring(payload) => {
+                assert_context(payload.support_context());
+                assert_eq!(payload.direction(), &1);
+                match payload.layout() {
+                    SpringLayout::CacheFirst { context, form } => {
+                        assert_context(context);
+                        assert_eq!(form.solved_range, [None, FiniteReal::new(-1.5)]);
+                    }
+                    SpringLayout::ContextFirst {
+                        parameter_range,
+                        discontinuities,
+                        discontinuity_flag,
+                        ..
+                    } => {
+                        assert_eq!(parameter_range.endpoints(), [-4.0, -1.0]);
+                        assert_eq!(
+                            FiniteReal::raw_lanes(discontinuities),
+                            [vec![-2.0], vec![], vec![]]
+                        );
+                        assert!(*discontinuity_flag);
+                    }
+                }
+            }
             ProceduralCurveDefinition::SurfaceOffset(payload) => {
                 assert_context(payload.context());
                 assert_eq!(

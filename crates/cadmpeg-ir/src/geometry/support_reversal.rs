@@ -13,12 +13,13 @@ use crate::topology::ParameterInterval;
 
 impl ProceduralCurveDefinition {
     /// Restate the support context of an intersection, three-surface
-    /// intersection, two-sided offset, silhouette, surface-offset, or
+    /// intersection, two-sided offset, silhouette, surface-offset, spring, or
     /// surface-curve definition on the reversed solved parameter `-t`, as its
     /// reversed solved cache is, together with the solved-curve bounds of a
     /// cache-first form. A surface offset swaps its base endpoints and keeps
     /// its base ranges, shift, and scale as stored; a three-surface
-    /// intersection keeps its selector. Other definitions are unchanged.
+    /// intersection keeps its selector; a spring keeps its direction code.
+    /// Other definitions are unchanged.
     ///
     /// `None` when the context holds a pcurve that has no reversed form; the
     /// definition is then unchanged.
@@ -30,6 +31,7 @@ impl ProceduralCurveDefinition {
             Self::TwoSidedOffset(payload) => payload.reverse_about_zero()?,
             Self::Silhouette(payload) => payload.reverse_about_zero()?,
             Self::SurfaceOffset(payload) => payload.reverse_about_zero()?,
+            Self::Spring(payload) => payload.reverse_about_zero()?,
             _ => {}
         }
         Some(())
@@ -136,7 +138,7 @@ pub(super) fn reversed_side(side: &IntcurveSupportSide) -> Option<IntcurveSuppor
 }
 
 /// The same parameter-space curve traversed as `-t`.
-fn reversed_pcurve(geometry: &PcurveGeometry) -> Option<PcurveGeometry> {
+pub(super) fn reversed_pcurve(geometry: &PcurveGeometry) -> Option<PcurveGeometry> {
     Some(match geometry {
         PcurveGeometry::Nurbs { nurbs } => {
             let mut nurbs = nurbs.clone();
