@@ -252,8 +252,9 @@ pub struct EmbeddedSurfaceOffset {
     pub base_u_range: [f64; 2],
     /// V parameter interval of the base surface.
     pub base_v_range: [f64; 2],
-    /// The embedded base curve the offset follows.
-    pub base: NurbsCurve,
+    /// The embedded base curve the offset follows. An analytic base keeps the
+    /// native angle parameter its interval is stated on.
+    pub base: cadmpeg_ir::geometry::CurveGeometry,
     /// Native parameter interval of the base curve.
     pub base_range: [f64; 2],
     /// Signed offset distance in document length units.
@@ -1630,6 +1631,62 @@ fn embedded_oriented_base_curve(
     curve.map(|curve| (curve, reversed))
 }
 
+/// The embedded base curve of a cache-first surface-offset curve, on the
+/// parameter its interval and endpoints are stated on. An `ellipse` keeps its
+/// native angle parameter, which a NURBS conversion over `[0, 1]` does not. A
+/// curve block or referenced `intcurve` is a NURBS cache; a true `intcurve`
+/// sense holds it on the negated parameter `C(-t)`.
+fn embedded_offset_base_curve(
+    cur: &mut Cur<'_>,
+    table: &SubtypeTable,
+) -> Option<cadmpeg_ir::geometry::CurveGeometry> {
+    use cadmpeg_ir::geometry::analytic::{CircleCurve, EllipseCurve};
+    use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+
+    let saved = cur.pos();
+    if cur.take_ident() == Some("ellipse") {
+        let center = cur.take_position()?;
+        let normal = cur.take_vector3()?;
+        let major = cur.take_vector3()?;
+        let ratio = cur.take_f64()?;
+        let frame = OrthonormalFrame3::from_units(
+            UnitVector3::normalized(Vector3::from(normal))?,
+            UnitVector3::normalized(Vector3::from(major))?,
+        )?;
+        let center = FinitePoint3::new(Point3::new(
+            center[0] * LEN_TO_MM,
+            center[1] * LEN_TO_MM,
+            center[2] * LEN_TO_MM,
+        ))?;
+        let major_radius = Vector3::from(major).norm() * LEN_TO_MM;
+        return Some(CurveGeometry::Solved(
+            if (ratio.abs() - 1.0).abs() <= f64::EPSILON {
+                SolvedCurveGeometry::Circle(CircleCurve::new(
+                    center,
+                    frame,
+                    PositiveLength::new(major_radius)?,
+                ))
+            } else {
+                SolvedCurveGeometry::Ellipse(
+                    EllipseCurve::try_from_parts(
+                        center,
+                        frame,
+                        PositiveLength::new(major_radius)?,
+                        PositiveLength::new(major_radius * ratio.abs())?,
+                    )
+                    .ok()?,
+                )
+            },
+        ));
+    }
+    cur.set_pos(saved);
+    let (mut curve, reversed) = embedded_oriented_base_curve(cur, table)?;
+    if reversed {
+        curve.reverse_parameterization();
+    }
+    Some(CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(curve)))
+}
+
 fn embedded_surface_offset(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     toks: &[Token],
@@ -1650,12 +1707,7 @@ fn embedded_surface_offset(
             cur.take_optional_range_value()?.value()?,
             cur.take_optional_range_value()?.value()?,
         ];
-        // The base interval and endpoints are stated on the curve the sense
-        // selects, so a reversed base is held with its negated parameter.
-        let (mut base, reversed) = embedded_oriented_base_curve(&mut cur, table)?;
-        if reversed {
-            base.reverse_parameterization();
-        }
+        let base = embedded_offset_base_curve(&mut cur, table)?;
         let base_endpoints = [
             cur.take_optional_range_value()?.value(),
             cur.take_optional_range_value()?.value(),
@@ -1689,6 +1741,9 @@ fn embedded_surface_offset(
     let base_u_range = [cur.take_range_value()?, cur.take_range_value()?];
     let base_v_range = [cur.take_range_value()?, cur.take_range_value()?];
     let (base, base_end) = curve_block(toks, cur.pos())?;
+    let base = cadmpeg_ir::geometry::CurveGeometry::Solved(
+        cadmpeg_ir::geometry::SolvedCurveGeometry::Nurbs(base),
+    );
     cur.set_pos(base_end);
     let base_range = [cur.take_range_value()?, cur.take_range_value()?];
     Some(Ok(EmbeddedSurfaceOffset {
