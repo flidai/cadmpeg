@@ -1199,6 +1199,18 @@ a unit `VECTOR` along the axis. Both keep the cone's `(u, v)` chart. A zero
 half-angle cone whose section has a zero semi-axis, and a cone whose half-angle
 magnitude is at least `pi/2`, are refused before any byte is written.
 
+CADIR export decision: a face with no loop on a sphere or on a torus whose tube
+radius is smaller than its major radius is the whole closed surface. A STEP
+face carries at least one bound, so it is written with one `FACE_OUTER_BOUND`
+along the `u = 0` seam. On a sphere the loop is the meridian `CIRCLE` through the
+reference direction, from the south pole to the north pole, used forward and
+then reversed. On a torus the loop is the `u = 0` meridian circle, the equator
+circle of radius `major_radius + minor_radius`, and each reversed, in the order
+meridian reversed, equator, meridian, equator reversed. Both circles close at
+the vertex on the reference direction. A shell whose faces are all such closed
+surfaces is a `CLOSED_SHELL`. A reversed torus face runs the loop in the
+opposite direction.
+
 A NURBS `closed` or `periodic` field uses the STEP LOGICAL domain.
 TRUE and FALSE encode the property state. UNKNOWN is a valid LOGICAL value.
 A `POLYLINE` with `n` points is the degree-one NURBS with those points as
