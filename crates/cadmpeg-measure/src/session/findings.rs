@@ -127,7 +127,11 @@ impl<'ir> Measurer<'ir> {
     ) -> Result<(Vec<Finding>, Vec<crate::body::ShellSignedVolume>), ResourceLimit> {
         let mut shell_volumes: Vec<crate::body::ShellSignedVolume> = Vec::new();
         let model = &self.input.ir.model;
-        let (mut findings, mut unchecked) = self.ring_findings(pass);
+        let (mut findings, mut unchecked) = if every_body {
+            Default::default()
+        } else {
+            self.ring_findings(pass)
+        };
         let mut starved: BTreeSet<&'ir str> = BTreeSet::new();
 
         let placements: HashMap<&'ir str, Outcome<Placement>> = model
@@ -147,8 +151,31 @@ impl<'ir> Measurer<'ir> {
                 .unwrap_or(Ok(Placement::identity()))
         };
 
+        // The shell volumes are only read for bodies with a multi-shell
+        // region, so the other bodies' faces and edges are not measured.
+        let multi_shell_bodies: Option<BTreeSet<&'ir str>> = every_body.then(|| {
+            model
+                .bodies
+                .iter()
+                .filter(|body| {
+                    body.regions
+                        .iter()
+                        .filter_map(|region| self.owners.region(region.as_str()))
+                        .any(|region| region.shells.len() > 1)
+                })
+                .map(|body| body.id.as_str())
+                .collect()
+        });
+        let wanted = |face: &cadmpeg_ir::topology::Face| -> bool {
+            multi_shell_bodies.as_ref().is_none_or(|bodies| {
+                self.owners
+                    .face_body(face)
+                    .is_some_and(|body| bodies.contains(body))
+            })
+        };
+
         let mut needed_edges: BTreeSet<&'ir str> = BTreeSet::new();
-        for face in &model.faces {
+        for face in model.faces.iter().filter(|face| wanted(face)) {
             for loop_id in &face.loops {
                 if let Some(face_loop) = self.owners.loop_(loop_id.as_str()) {
                     for coedge in face_loop.coedges() {
@@ -211,7 +238,7 @@ impl<'ir> Measurer<'ir> {
             .collect();
 
         let mut faces: HashMap<&'ir str, FaceResult<'ir>> = HashMap::new();
-        for face in &model.faces {
+        for face in model.faces.iter().filter(|face| wanted(face)) {
             let body = self.owners.face_body(face);
             let slice = pass.face_slice();
             let eval = Eval {
