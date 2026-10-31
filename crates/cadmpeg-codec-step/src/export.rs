@@ -4003,8 +4003,8 @@ impl<'a> Builder<'a> {
                 self.written_analytic_surfaces
                     .push(WrittenAnalyticSurface::Carrier(basis));
                 let reversed = matches!(basis, SolvedSurfaceGeometry::Cone(cone) if cone.half_angle().get() < 0.0);
-                let reversed_normal =
-                    matches!(basis, SolvedSurfaceGeometry::Nurbs(nurbs) if nurbs.normal_reversed());
+                let reversed_normal = matches!(basis, SolvedSurfaceGeometry::Nurbs(nurbs) if nurbs.normal_reversed())
+                    || geometry::written_normal_inverted(basis);
                 (reference, reversed, reversed_normal)
             } else {
                 let procedural = self.procedural_surfaces.get(surface_id)?.id.to_string();

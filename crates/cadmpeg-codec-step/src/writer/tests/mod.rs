@@ -9,6 +9,7 @@ mod orientation;
 mod products;
 mod reports;
 pub(crate) mod round_trips;
+mod signed_radii;
 mod styles;
 mod targets;
 

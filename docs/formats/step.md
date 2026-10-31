@@ -1199,6 +1199,17 @@ a unit `VECTOR` along the axis. Both keep the cone's `(u, v)` chart. A zero
 half-angle cone whose section has a zero semi-axis, and a cone whose half-angle
 magnitude is at least `pi/2`, are refused before any byte is written.
 
+CADIR export decision: a CADIR sphere or torus keeps the sign of its radius, and
+the sign turns the carrier's normal toward the center of the sphere or the tube
+axis of the torus (a concave sphere or fillet). `SPHERICAL_SURFACE` and
+`TOROIDAL_SURFACE` hold positive radii and a normal that points away from the
+center or the tube. The writer takes the magnitude and states the opposite
+`same_sense` on every face on a sphere with a negative radius or on a torus with
+a negative tube radius no larger than its major radius, so the face keeps its
+oriented normal. The bound orientations are unchanged: they are relative to the
+oriented normal of the face. A torus whose tube radius exceeds its major radius is not
+covered by this rule.
+
 A NURBS `closed` or `periodic` field uses the STEP LOGICAL domain.
 TRUE and FALSE encode the property state. UNKNOWN is a valid LOGICAL value.
 A `POLYLINE` with `n` points is the degree-one NURBS with those points as
