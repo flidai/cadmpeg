@@ -197,6 +197,42 @@ fn writer_and_lexer_preserve_apostrophes_and_backslashes_once() {
     assert!(encoded.contains("\\\\"));
 }
 
+/// A doubled apostrophe in text that also holds a comma ends the string for
+/// the `OpenCASCADE` STEP reader, so the apostrophe is written as a wide escape
+/// there, and every other apostrophe stays doubled. Both forms read back as
+/// the source text.
+#[test]
+fn apostrophe_in_text_with_a_comma_is_written_as_a_wide_escape() {
+    use crate::lex::TokenKind;
+
+    let with_comma = "Copy of 'a.ipt', 11-01-2021, by x";
+    let without_comma = "Copy of 'a.ipt' by x";
+    let encoded_with_comma = crate::writer::string(with_comma);
+    let encoded_without_comma = crate::writer::string(without_comma);
+    assert!(!encoded_with_comma.contains("''"), "{encoded_with_comma}");
+    assert!(encoded_with_comma.contains("\\X2\\0027\\X0\\"));
+    assert!(encoded_without_comma.contains("''a.ipt''"));
+    for (encoded, source) in [
+        (encoded_with_comma, with_comma),
+        (encoded_without_comma, without_comma),
+    ] {
+        let tokens =
+            crate::test_support::with_service_context(encoded.as_bytes(), crate::test_support::lex)
+                .expect("lex encoded string");
+        let TokenKind::String(bytes) = &tokens[0].kind else {
+            panic!("encoded text did not lex as a string")
+        };
+        assert_eq!(
+            crate::strings::decode(
+                bytes,
+                crate::parse::implementation_level::ImplementationLevel::LegacyEdition1
+            )
+            .unwrap(),
+            source
+        );
+    }
+}
+
 #[test]
 fn wide_escape_streams_surrogate_pairs_and_rejects_isolated_surrogates() {
     assert_eq!(
