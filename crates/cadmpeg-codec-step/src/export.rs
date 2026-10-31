@@ -2909,10 +2909,14 @@ impl<'a> Builder<'a> {
 
     fn shell_is_closed(&self, shell: &Shell) -> bool {
         let mut uses: BTreeMap<&str, [usize; 2]> = BTreeMap::new();
+        let mut closed_surfaces = 0_usize;
         for face_id in shell.faces() {
             let Some(face) = self.faces.get(face_id.as_str()) else {
                 return false;
             };
+            if self.is_closed_surface(face) {
+                closed_surfaces += 1;
+            }
             for loop_id in &face.loops {
                 let Some(lp) = self.loops.get(loop_id.as_str()) else {
                     return false;
@@ -2944,7 +2948,8 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        !uses.is_empty() && uses.values().all(|[forward, reversed]| forward == reversed)
+        (!uses.is_empty() || closed_surfaces > 0)
+            && uses.values().all(|[forward, reversed]| forward == reversed)
     }
 
     /// Writes the face use, or its reverse when `reversed` is set: the
@@ -2954,9 +2959,14 @@ impl<'a> Builder<'a> {
         let surface_id = face.surface.as_str();
         let same_sense = matches!(face.sense, Sense::Forward) != reversed;
         let bound_flag = if reversed { ".F." } else { ".T." };
+        let mut closed_surface = None;
         let rectangle = match self.implicit_outer_bounds.get(face_id).cloned() {
             None => None,
             Some(implicit_outer::OuterBound::Rectangle(rectangle)) => Some(*rectangle),
+            Some(implicit_outer::OuterBound::Closed(closed)) => {
+                closed_surface = Some(closed);
+                None
+            }
             Some(implicit_outer::OuterBound::Unwritable(reason)) => {
                 self.implicit_outer_loss(face_id, reason);
                 return None;
@@ -2979,6 +2989,10 @@ impl<'a> Builder<'a> {
                 );
                 return None;
             };
+            bound_refs.push(bound);
+        }
+        if let Some(closed) = closed_surface {
+            let bound = self.emit_closed_surface(closed, bound_flag)?;
             bound_refs.push(bound);
         }
         // A seam ring becomes a vertex loop only beside a bound that is

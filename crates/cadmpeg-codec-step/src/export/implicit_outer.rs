@@ -18,8 +18,9 @@ use cadmpeg_ir::geometry::pcurve::{LinePcurve, PcurveGeometry};
 use cadmpeg_ir::geometry::{
     ProceduralSurfaceDefinition, SolvedCurveGeometry, SolvedSurfaceGeometry,
 };
-use cadmpeg_ir::math::{Point2, Point3};
+use cadmpeg_ir::math::{Point2, Point3, Vector3};
 use cadmpeg_ir::topology::{Face, LoopBoundaryRole, Sense};
+use cadmpeg_ir::units::UnitVector3;
 
 use super::Builder;
 use crate::geometry;
@@ -31,6 +32,8 @@ enum ImplicitOuter<'a> {
     Stated,
     /// The natural boundary is the parameter rectangle of a NURBS support.
     Rectangle(&'a NurbsSurface),
+    /// The face has no loop on a complete sphere or torus.
+    Closed(ClosedSurface),
     /// STEP has no bound for the natural boundary, for the stated reason.
     Unwritable(&'static str),
 }
@@ -40,8 +43,27 @@ enum ImplicitOuter<'a> {
 pub(super) enum OuterBound {
     /// The parameter rectangle of the support.
     Rectangle(Box<ParameterRectangle>),
+    /// The seam edges of a complete sphere or torus.
+    Closed(ClosedSurface),
     /// STEP has no bound for the natural boundary, for the stated reason.
     Unwritable(&'static str),
+}
+
+/// A complete sphere or torus carrier and the frame its seam edges lie in.
+#[derive(Clone, Copy)]
+pub(super) struct ClosedSurface {
+    /// Center of the sphere or torus.
+    center: Point3,
+    /// Polar axis.
+    axis: UnitVector3,
+    /// Direction of the `u = 0` meridian from the axis.
+    reference: UnitVector3,
+    /// Sphere radius, or torus major radius.
+    radius: f64,
+    /// Torus tube radius, absent for a sphere.
+    tube_radius: Option<f64>,
+    /// Whether the face runs with the carrier's `(u, v)` orientation.
+    forward: bool,
 }
 
 /// The four sides of a NURBS parameter rectangle, ready to emit.
@@ -70,6 +92,7 @@ impl<'a> Builder<'a> {
         for (id, face) in &self.faces {
             let bound = match self.implicit_outer(face) {
                 ImplicitOuter::Stated => continue,
+                ImplicitOuter::Closed(closed) => OuterBound::Closed(closed),
                 ImplicitOuter::Rectangle(nurbs) => match self.parameter_rectangle(face, nurbs)? {
                     Ok(rectangle) => OuterBound::Rectangle(Box::new(rectangle)),
                     Err(reason) => OuterBound::Unwritable(reason),
@@ -84,6 +107,9 @@ impl<'a> Builder<'a> {
     /// The implicit outer boundary of `face`, from the curve-bounded
     /// construction of its surface.
     fn implicit_outer(&self, face: &Face) -> ImplicitOuter<'a> {
+        if let Some(closed) = self.closed_surface(face) {
+            return ImplicitOuter::Closed(closed);
+        }
         let Some(procedural) = self.procedural_surfaces.get(face.surface.as_str()) else {
             return ImplicitOuter::Stated;
         };
@@ -143,6 +169,162 @@ impl<'a> Builder<'a> {
                 ImplicitOuter::Unwritable("the support has no stated natural boundary")
             }
         }
+    }
+
+    /// The sphere or torus of a face that has no loop: the face is the whole
+    /// closed surface. A tube radius not smaller than the major radius leaves
+    /// the torus without a seam.
+    fn closed_surface(&self, face: &Face) -> Option<ClosedSurface> {
+        if !face.loops.is_empty() || self.procedural_surfaces.contains_key(face.surface.as_str()) {
+            return None;
+        }
+        let forward = matches!(face.sense, Sense::Forward);
+        match self
+            .surfaces
+            .get(face.surface.as_str())?
+            .geometry
+            .solved()?
+        {
+            SolvedSurfaceGeometry::Sphere(sphere) => Some(ClosedSurface {
+                center: sphere.center().get(),
+                axis: *sphere.frame().axis(),
+                reference: *sphere.frame().reference(),
+                radius: sphere.radius().get().abs(),
+                tube_radius: None,
+                forward,
+            }),
+            SolvedSurfaceGeometry::Torus(torus) => {
+                let radius = torus.major_radius().get().abs();
+                let tube_radius = torus.minor_radius().get().abs();
+                (tube_radius < radius).then(|| ClosedSurface {
+                    center: torus.center().get(),
+                    axis: *torus.frame().axis(),
+                    reference: *torus.frame().reference(),
+                    radius,
+                    tube_radius: Some(tube_radius),
+                    forward,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `face` is a complete closed surface, which bounds itself.
+    pub(super) fn is_closed_surface(&self, face: &Face) -> bool {
+        self.closed_surface(face).is_some()
+    }
+
+    /// Write the seam edges of a complete sphere or torus as a
+    /// `FACE_OUTER_BOUND`.
+    ///
+    /// A sphere is bounded by its `u = 0` meridian from pole to pole, used once
+    /// in each direction. A torus is bounded by its `u = 0` meridian circle and
+    /// its outer equator, each closed at the vertex where they meet.
+    pub(super) fn emit_closed_surface(
+        &mut self,
+        closed: ClosedSurface,
+        bound_flag: &str,
+    ) -> Option<Ref> {
+        let ClosedSurface {
+            center,
+            axis,
+            reference,
+            radius,
+            tube_radius,
+            forward,
+        } = closed;
+        let at = |along_reference: f64, along_axis: f64, origin: Point3| {
+            let (x, z) = (Vector3::from(reference), Vector3::from(axis));
+            Point3::new(
+                origin.x + along_reference * x.x + along_axis * z.x,
+                origin.y + along_reference * x.y + along_axis * z.y,
+                origin.z + along_reference * x.z + along_axis * z.z,
+            )
+        };
+        // The meridian circle runs through the reference direction and the
+        // axis, so its normal is the reference crossed with the axis.
+        let meridian_axis = UnitVector3::new(Vector3::from(reference).cross(Vector3::from(axis)))?;
+        let oriented = |emitter: &mut crate::writer::Emitter, edge: Ref, forward: bool| {
+            let flag = if forward { ".T." } else { ".F." };
+            emitter.emit("ORIENTED_EDGE", &format!("'',*,*,{edge},{flag}"))
+        };
+        let loop_edges = if let Some(tube_radius) = tube_radius {
+            let vertex_point =
+                geometry::point(&mut self.emitter, at(radius + tube_radius, 0.0, center));
+            let vertex = self
+                .emitter
+                .emit("VERTEX_POINT", &format!("'',{vertex_point}"));
+            let meridian_frame = geometry::placement(
+                &mut self.emitter,
+                at(radius, 0.0, center),
+                meridian_axis,
+                reference,
+            );
+            let meridian = self.emitter.emit(
+                "CIRCLE",
+                &format!("'',{meridian_frame},{}", self.emitter.real(tube_radius)),
+            );
+            let equator_frame = geometry::placement(&mut self.emitter, center, axis, reference);
+            let equator = self.emitter.emit(
+                "CIRCLE",
+                &format!(
+                    "'',{equator_frame},{}",
+                    self.emitter.real(radius + tube_radius)
+                ),
+            );
+            let meridian_edge = self.emitter.emit(
+                "EDGE_CURVE",
+                &format!("'',{vertex},{vertex},{meridian},.T."),
+            );
+            let equator_edge = self
+                .emitter
+                .emit("EDGE_CURVE", &format!("'',{vertex},{vertex},{equator},.T."));
+            let sequence = [
+                (meridian_edge, false),
+                (equator_edge, true),
+                (meridian_edge, true),
+                (equator_edge, false),
+            ];
+            let sequence: Vec<(Ref, bool)> = if forward {
+                sequence.to_vec()
+            } else {
+                [
+                    (equator_edge, true),
+                    (meridian_edge, false),
+                    (equator_edge, false),
+                    (meridian_edge, true),
+                ]
+                .to_vec()
+            };
+            sequence
+                .into_iter()
+                .map(|(edge, direction)| oriented(&mut self.emitter, edge, direction))
+                .collect::<Vec<_>>()
+        } else {
+            let south = geometry::point(&mut self.emitter, at(0.0, -radius, center));
+            let north = geometry::point(&mut self.emitter, at(0.0, radius, center));
+            let south = self.emitter.emit("VERTEX_POINT", &format!("'',{south}"));
+            let north = self.emitter.emit("VERTEX_POINT", &format!("'',{north}"));
+            let frame = geometry::placement(&mut self.emitter, center, meridian_axis, reference);
+            let meridian = self.emitter.emit(
+                "CIRCLE",
+                &format!("'',{frame},{}", self.emitter.real(radius)),
+            );
+            let edge = self
+                .emitter
+                .emit("EDGE_CURVE", &format!("'',{south},{north},{meridian},.T."));
+            vec![
+                oriented(&mut self.emitter, edge, true),
+                oriented(&mut self.emitter, edge, false),
+            ]
+        };
+        let edge_loop = self
+            .emitter
+            .emit("EDGE_LOOP", &format!("'',{}", refs(&loop_edges)));
+        Some(
+            self.emitter
+                .emit("FACE_OUTER_BOUND", &format!("'',{edge_loop},{bound_flag}")),
+        )
     }
 
     /// The sides of the parameter rectangle of `nurbs`, wound so the face
