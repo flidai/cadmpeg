@@ -17,3 +17,6 @@ upstream pull request is in a release.
 - `crates/cadmpeg-asm`, `docs/formats/asm.md`: keep the parameter of the base curve of a
   surface-offset curve: its intcurve sense and its analytic ellipse form
   (`fix/offset-curve-base-sense`).
+- `crates/cadmpeg-codec-step` writer, `docs/formats/step.md`: state the opposite face `same_sense`
+  for a face on a sphere with a negative radius or on a torus with a negative tube radius, whose
+  `SPHERICAL_SURFACE` and `TOROIDAL_SURFACE` records hold the magnitude (`fix/signed-radius-face-sense`).

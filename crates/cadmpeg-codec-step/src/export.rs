@@ -260,6 +260,9 @@ enum WrittenAnalyticSurface<'a> {
 struct WrittenSurface {
     reference: Ref,
     reversed_chart: bool,
+    /// The written record has the opposite normal to the carrier's: a sphere
+    /// or torus whose signed radius was written as a magnitude.
+    normal_inverted: bool,
 }
 
 mod pcurves;
@@ -2957,7 +2960,6 @@ impl<'a> Builder<'a> {
     fn emit_face(&mut self, face_id: &str, reversed: bool) -> Option<Ref> {
         let face = self.faces.get(face_id).copied()?;
         let surface_id = face.surface.as_str();
-        let same_sense = matches!(face.sense, Sense::Forward) != reversed;
         let bound_flag = if reversed { ".F." } else { ".T." };
         let mut closed_surface = None;
         let rectangle = match self.implicit_outer_bounds.get(face_id).cloned() {
@@ -2979,6 +2981,14 @@ impl<'a> Builder<'a> {
             self.unknown_surface_faces.insert(face_id.to_string());
             return None;
         };
+        // The face sense is relative to the carrier's normal. A sphere or
+        // torus written with the magnitude of a negative radius has the
+        // opposite normal, so the written face sense follows it.
+        let normal_inverted = self
+            .surface_refs
+            .get(surface_id)
+            .is_some_and(|surface| surface.normal_inverted);
+        let same_sense = matches!(face.sense, Sense::Forward) != (reversed != normal_inverted);
 
         let mut bound_refs = Vec::new();
         if let Some(rectangle) = rectangle {
@@ -3976,9 +3986,9 @@ impl<'a> Builder<'a> {
                 };
                 Some((id, reference, reversed))
             });
-            let (r, reversed) = if let Some((id, reference, reversed)) = emitted {
+            let (r, reversed, normal_inverted) = if let Some((id, reference, reversed)) = emitted {
                 self.written_procedural_surfaces.insert(id);
-                (reference, reversed)
+                (reference, reversed, false)
             } else if let Some((id, helix)) = self.unsolved_helix_surface(surface_id) {
                 if self.failed_helix_fits.contains_key(id) {
                     return None;
@@ -3994,7 +4004,7 @@ impl<'a> Builder<'a> {
                 let reference =
                     geometry::surface(&mut self.emitter, &SolvedSurfaceGeometry::Nurbs(fitted))?;
                 self.fitted_helix_surfaces.insert(id.to_owned());
-                (reference, false)
+                (reference, false, false)
             } else if let Some(solved) =
                 solved.filter(|solved| geometry::surface_is_supported(solved))
             {
@@ -4005,24 +4015,29 @@ impl<'a> Builder<'a> {
                 self.written_analytic_surfaces
                     .push(WrittenAnalyticSurface::Carrier(basis));
                 let reversed = matches!(basis, SolvedSurfaceGeometry::Cone(cone) if cone.half_angle().get() < 0.0);
-                (reference, reversed)
+                (
+                    reference,
+                    reversed,
+                    geometry::written_normal_inverted(basis),
+                )
             } else {
                 let procedural = self.procedural_surfaces.get(surface_id)?.id.to_string();
                 let surface = self.approximations.surface(surface_id)?;
                 let reference = geometry::surface(&mut self.emitter, &surface)?;
                 self.sampled_surfaces.insert(procedural);
-                (reference, false)
+                (reference, false, false)
             };
-            Some((r, reversed))
+            Some((r, reversed, normal_inverted))
         })();
         self.active_surfaces.remove(surface_id);
         self.geometry_emission_depth -= 1;
-        if let Some((r, reversed)) = result {
+        if let Some((r, reversed, normal_inverted)) = result {
             self.surface_refs.insert(
                 surface_id.to_string(),
                 WrittenSurface {
                     reference: r,
                     reversed_chart: reversed,
+                    normal_inverted,
                 },
             );
             return Some(r);

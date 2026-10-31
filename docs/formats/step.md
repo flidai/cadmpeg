@@ -1209,6 +1209,17 @@ and axis. Its reference direction is the torus reference direction, or its
 opposite for a negative tube radius. The revolved surface keeps the torus
 `(u, v)` chart, so pcurves written against the torus remain valid.
 
+CADIR export decision: a CADIR sphere or torus keeps the sign of its radius, and
+the sign turns the carrier's normal toward the center of the sphere or the tube
+axis of the torus (a concave sphere or fillet). `SPHERICAL_SURFACE` and
+`TOROIDAL_SURFACE` hold positive radii and a normal that points away from the
+center or the tube. The writer takes the magnitude and states the opposite
+`same_sense` on every face on a sphere with a negative radius or on a torus with
+a negative tube radius no larger than its major radius, so the face keeps its
+oriented normal. The bound orientations are unchanged: they are relative to the
+oriented normal of the face. A torus wider than its major radius is written as a
+revolved tube and keeps the sense of its face.
+
 CADIR export decision: a face with no loop on a sphere or on a torus whose tube
 radius is smaller than its major radius is the whole closed surface. A STEP
 face carries at least one bound, so it is written with one `FACE_OUTER_BOUND`
