@@ -56,17 +56,35 @@ impl<'ir, 'r> FindingLocator<'ir, 'r> {
         }
         crate::document::arena_registry!(walk_model);
 
+        let mut formats: Vec<&'ir str> = Vec::new();
         NativeView::new(ir, None).for_each(|format, _, arena| {
+            if !formats.contains(&format) {
+                formats.push(format);
+            }
             for entity in arena.records() {
                 record(entity.id(), EntityLocation::Native(format));
             }
         });
+        // An identity no arena holds, in the id space of a native namespace
+        // the document carries, names a record of that namespace that did not
+        // materialise (a malformed source record): a native location.
+        for &identity in &wanted {
+            if locations.contains_key(identity) {
+                continue;
+            }
+            if let Some(&format) = identity
+                .split_once(':')
+                .and_then(|(prefix, _)| formats.iter().find(|format| **format == prefix))
+            {
+                locations.insert(identity, vec![EntityLocation::Native(format)]);
+            }
+        }
         Self { locations }
     }
 
     /// Every location of the entity of a finding supplied to `new` and of its
     /// related ids, or `None` when the finding names no entity or its entity
-    /// resolves nowhere in the document.
+    /// resolves nowhere in the document and in no native namespace it carries.
     pub(crate) fn scope(&self, finding: &'r Finding) -> Option<Vec<EntityLocation<'ir>>> {
         let locations = finding
             .entity
