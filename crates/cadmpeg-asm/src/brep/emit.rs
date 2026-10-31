@@ -173,6 +173,514 @@ fn retained_attribute_name(
         .transpose()
 }
 
+/// Push one embedded support and, when it names a procedural construction,
+/// the procedural surface that owns it.
+///
+/// `construction_key` names the construction's synthetic identities.
+fn emit_support_slot(
+    out: &mut AsmBrep,
+    format: IdFormat,
+    id: SurfaceId,
+    slot: crate::nurbs::proc_curve::SupportSlot,
+    construction_key: i64,
+) -> Result<Option<SurfaceId>, cadmpeg_core::CodecError> {
+    let Some((geometry, construction)) = slot.into_parts() else {
+        return Ok(None);
+    };
+    out.surfaces.push(Surface {
+        id: id.clone(),
+        geometry,
+        source_object: None,
+    });
+    if let Some(construction) = construction {
+        // Curve supports and the entities under them carry no source record.
+        emit_procedural_surface_row(
+            out,
+            SurfaceRowIdentity {
+                key: construction_key,
+                source_index: 0,
+                owner: id.clone(),
+            },
+            *construction,
+            None,
+            SurfaceRowSources {
+                support: &mut Vec::new(),
+                child: &mut Vec::new(),
+            },
+            format,
+        )?;
+    }
+    Ok(Some(id))
+}
+
+/// The key of the construction that owns side `side` of the supports of
+/// record `record`. It is negative, so it never names a record.
+fn support_construction_key(record: i64, side: usize) -> Result<i64, cadmpeg_core::CodecError> {
+    i64::try_from(side)
+        .ok()
+        .zip(record.checked_mul(4))
+        .and_then(|(side, base)| base.checked_add(side)?.checked_add(4))
+        .map(|key| -key)
+        .ok_or_else(|| cadmpeg_core::CodecError::malformed("support record index is too large"))
+}
+
+/// The identities of a procedural surface and of the entities under it.
+struct SurfaceRowIdentity {
+    /// Names the construction's identities.
+    key: i64,
+    /// The record the synthetic entities derive from.
+    source_index: i64,
+    /// The surface the construction owns.
+    owner: SurfaceId,
+}
+
+/// Where the synthetic entities under a procedural surface record their source.
+struct SurfaceRowSources<'a> {
+    support: &'a mut Vec<(i64, SurfaceId)>,
+    child: &'a mut Vec<(i64, CurveId)>,
+}
+
+/// Emit the procedural surface that owns `identity.owner`, with the surfaces
+/// and curves its construction needs.
+fn emit_procedural_surface_row(
+    out: &mut AsmBrep,
+    identity: SurfaceRowIdentity,
+    procedural: crate::nurbs::proc_surface::DecodedProceduralSurface,
+    trailing_bounds: Option<[Option<f64>; 4]>,
+    sources: SurfaceRowSources<'_>,
+    format: IdFormat,
+) -> Result<(), cadmpeg_core::CodecError> {
+    let SurfaceRowIdentity {
+        key: i,
+        source_index,
+        owner,
+    } = identity;
+    let SurfaceRowSources {
+        support: support_sources,
+        child: child_sources,
+    } = sources;
+    let support_start = out.surfaces.len();
+    let curve_start = out.curves.len();
+    let (definition, cache) = procedural.into_parts();
+    let definition = match definition {
+        DecodedProceduralSurfaceDefinition::Deformable(embedded) => {
+            emit_deformable_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Helix(construction) => {
+            ProceduralSurfaceDefinition::Helix { construction }
+        }
+        DecodedProceduralSurfaceDefinition::TSpline(construction) => {
+            use crate::nurbs::proc_surface::EmbeddedTSplineSubtransform;
+            use cadmpeg_core::CodecError;
+            use cadmpeg_ir::geometry::{
+                InlineTSplineSubtransform, SubtypeTableIndex, TSplineSubtransform,
+                TSplineSurfaceConstruction,
+            };
+
+            let subtransform = match construction.subtransform {
+                EmbeddedTSplineSubtransform::Inline {
+                    program,
+                    separator,
+                    values,
+                } => TSplineSubtransform::Inline(
+                    InlineTSplineSubtransform::try_new(program, separator, values)
+                        .map_err(CodecError::malformed)?,
+                ),
+                EmbeddedTSplineSubtransform::Reference { index, resolved } => {
+                    TSplineSubtransform::Resolved {
+                        index: SubtypeTableIndex::try_new(index).map_err(CodecError::malformed)?,
+                        transform: Box::new(resolved.ok_or_else(|| {
+                            CodecError::malformed("T-spline subtransform is unresolved")
+                        })?),
+                    }
+                }
+            };
+            ProceduralSurfaceDefinition::TSpline {
+                construction: Box::new(
+                    TSplineSurfaceConstruction::try_new(
+                        construction.parameter_ranges,
+                        construction.type_code,
+                        subtransform,
+                        construction.trailing_value,
+                        construction.discontinuities,
+                        construction.discontinuity_flag,
+                        cadmpeg_ir::geometry::CacheContract::from_form(construction.revision_form),
+                    )
+                    .map_err(CodecError::malformed)?,
+                ),
+            }
+        }
+        DecodedProceduralSurfaceDefinition::Exact { spline } => ProceduralSurfaceDefinition::Exact(
+            cadmpeg_ir::geometry::surface_payloads::ExactSurfacePayload::try_new(spline)
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+        ),
+        DecodedProceduralSurfaceDefinition::Compound { components } => {
+            let component_ids = components
+                .into_iter()
+                .enumerate()
+                .map(|(component, item)| -> Result<_, cadmpeg_core::CodecError> {
+                    Ok({
+                        let id = brep_id!(
+                            format,
+                            SurfaceId,
+                            "procedural_surface",
+                            brep_key!(i, ":component", component)
+                        );
+                        out.surfaces.push(Surface {
+                            id: id.clone(),
+                            geometry: item.component,
+                            source_object: None,
+                        });
+                        cadmpeg_ir::geometry::CompoundComponent {
+                            parameter: item.parameter,
+                            component: id,
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            ProceduralSurfaceDefinition::Compound(
+                cadmpeg_ir::geometry::surface_payloads::CompoundSurfacePayload::try_new(
+                    component_ids,
+                    None,
+                )
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::SubSurface {
+            support,
+            parameter_ranges,
+        } => {
+            let support_id = brep_id!(
+                format,
+                SurfaceId,
+                "procedural_surface",
+                brep_key!(i, ":sub_surface:support")
+            );
+            out.surfaces.push(Surface {
+                id: support_id.clone(),
+                geometry: support,
+                source_object: None,
+            });
+            ProceduralSurfaceDefinition::SubSurface(
+                cadmpeg_ir::geometry::surface_payloads::SubSurfaceConstruction::try_new(
+                    support_id,
+                    parameter_ranges,
+                )
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::Taper {
+            support,
+            reference,
+            pcurve,
+            parameter,
+            taper,
+            revision_form,
+        } => {
+            let support_id = brep_id!(
+                format,
+                SurfaceId,
+                "procedural_surface",
+                brep_key!(i, ":support")
+            );
+            out.surfaces.push(Surface {
+                id: support_id.clone(),
+                geometry: support,
+                source_object: None,
+            });
+            let reference_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":reference")
+            );
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: reference_id.clone(),
+                geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(reference)),
+                source_object: None,
+            });
+            let pcurve = pcurve.map(|nurbs| PcurveGeometry::Nurbs { nurbs });
+            ProceduralSurfaceDefinition::Taper(
+                cadmpeg_ir::geometry::surface_payloads::TaperSurfaceConstruction::try_new(
+                    support_id,
+                    reference_id,
+                    pcurve,
+                    parameter,
+                    taper,
+                    cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
+                )
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::Loft(embedded) => {
+            emit_loft_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::CompoundLoft(embedded) => {
+            emit_compound_loft_surface(out, i, *embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::ScaledCompoundLoft(embedded) => {
+            emit_scaled_compound_loft_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Law(embedded) => {
+            emit_law_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Skin(embedded) => {
+            emit_skin_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Net(embedded) => {
+            emit_net_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Sweep(embedded) => {
+            emit_sweep_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::G2Blend(embedded) => {
+            emit_g2_blend_surface(out, i, embedded, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Ruled { first, second } => {
+            let first_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":profile0")
+            );
+            let second_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":profile1")
+            );
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: first_id.clone(),
+                geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(first)),
+                source_object: None,
+            });
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: second_id.clone(),
+                geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(second)),
+                source_object: None,
+            });
+            ProceduralSurfaceDefinition::Ruled {
+                first: first_id,
+                second: second_id,
+                cache: None,
+            }
+        }
+        DecodedProceduralSurfaceDefinition::Sum {
+            first,
+            second,
+            basepoint,
+            revision_form,
+        } => {
+            let first_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":curve0")
+            );
+            let second_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":curve1")
+            );
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: first_id.clone(),
+                geometry: first,
+                source_object: None,
+            });
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: second_id.clone(),
+                geometry: second,
+                source_object: None,
+            });
+            ProceduralSurfaceDefinition::Sum(
+                cadmpeg_ir::geometry::surface_payloads::SumSurfaceConstruction::try_new(
+                    first_id,
+                    second_id,
+                    basepoint,
+                    cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
+                )
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::Revolution {
+            directrix,
+            axis_origin,
+            axis_direction,
+            angular_interval,
+            parameter_interval,
+            revision_form,
+        } => {
+            let directrix_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":directrix")
+            );
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: directrix_id.clone(),
+                geometry: directrix,
+                source_object: None,
+            });
+            ProceduralSurfaceDefinition::Revolution(
+                cadmpeg_ir::features::FinitePoint3::new(axis_origin)
+                .ok_or(cadmpeg_ir::geometry::ProceduralGeometryError::Payload(
+                    "revolution axis_origin and axis_direction must be finite, with unit axis_direction",
+                ))
+                .and_then(|origin| {
+                    cadmpeg_ir::geometry::surface_payloads::RevolutionSurfaceConstruction::try_new(
+                        directrix_id,
+                        (origin, axis_direction),
+                        angular_interval,
+                        None,
+                        Some(parameter_interval),
+                        false,
+                        cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
+                    )
+                })
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::Offset {
+            support,
+            distance,
+            layout,
+        } => {
+            let support_id = brep_id!(
+                format,
+                SurfaceId,
+                "procedural_surface",
+                brep_key!(i, ":support")
+            );
+            out.surfaces.push(Surface {
+                id: support_id.clone(),
+                geometry: support,
+                source_object: None,
+            });
+            let (u_sense, v_sense, extension) = match layout {
+                EmbeddedOffsetLayout::Legacy {
+                    u_sense,
+                    v_sense,
+                    extension,
+                } => (
+                    Some(u_sense),
+                    Some(v_sense),
+                    cadmpeg_ir::geometry::OffsetExtension::Legacy {
+                        flags: extension,
+                        cache: None,
+                    },
+                ),
+                EmbeddedOffsetLayout::Revision(form) => (
+                    None,
+                    None,
+                    cadmpeg_ir::geometry::OffsetExtension::Revision { form },
+                ),
+            };
+            ProceduralSurfaceDefinition::Offset(
+                cadmpeg_ir::geometry::surface_payloads::OffsetSurfaceConstruction::try_new(
+                    support_id, distance, u_sense, v_sense, false, extension,
+                )
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::Extrusion {
+            directrix,
+            parameter_interval,
+            direction,
+            native_position,
+            revision_form,
+        } => {
+            let directrix_id = brep_id!(
+                format,
+                CurveId,
+                "procedural_surface",
+                brep_key!(i, ":directrix")
+            );
+            out.curves.push(Curve {
+                parameter_range: None,
+                id: directrix_id.clone(),
+                geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(directrix)),
+                source_object: None,
+            });
+            ProceduralSurfaceDefinition::Extrusion(
+                cadmpeg_ir::geometry::surface_payloads::ExtrusionSurfaceConstruction::try_new(
+                    directrix_id,
+                    Some(parameter_interval),
+                    direction,
+                    Some(native_position),
+                    cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
+                )
+                .map_err(cadmpeg_core::CodecError::malformed)?,
+            )
+        }
+        DecodedProceduralSurfaceDefinition::VariableBlend(construction) => {
+            emit_variable_blend_surface(out, i, construction, format)?
+        }
+        DecodedProceduralSurfaceDefinition::RevisionCompoundLoft(construction) => {
+            emit_revision_compound_loft_surface(out, i, construction, format)?
+        }
+        DecodedProceduralSurfaceDefinition::RevisionG2Blend(construction) => {
+            emit_revision_g2_blend_surface(out, i, construction, format)?
+        }
+        DecodedProceduralSurfaceDefinition::VertexBlend(construction) => {
+            emit_vertex_blend_surface(out, i, *construction, format)?
+        }
+        DecodedProceduralSurfaceDefinition::Blend {
+            supports,
+            spine,
+            radius_offsets,
+            cross_section,
+            native,
+        } => emit_blend_surface(
+            out,
+            i,
+            BlendSurfaceParts {
+                supports,
+                spine,
+                radius_offsets,
+                cross_section,
+                native,
+            },
+            format,
+        )?,
+    };
+    for surface in &out.surfaces[support_start..] {
+        append_source_id(support_sources, source_index, surface.id.as_str())?;
+    }
+    for curve in &out.curves[curve_start..] {
+        append_source_id(child_sources, source_index, curve.id.as_str())?;
+    }
+    let cache_fit_tolerance = match cache {
+        ProceduralSurfaceCache::Legacy(tolerance) => tolerance,
+        ProceduralSurfaceCache::Revision => None,
+    };
+    let mut definition = definition;
+    if let Some(tolerance) = cache_fit_tolerance {
+        definition
+            .set_legacy_cache(Some(
+                cadmpeg_ir::geometry::LegacyCache::try_new(tolerance)
+                    .map_err(cadmpeg_core::CodecError::malformed)?,
+            ))
+            .map_err(cadmpeg_core::CodecError::malformed)?;
+    }
+    let surface = ProceduralSurface::new(
+        brep_id!(format, ProceduralSurfaceId, "procedural_surface", i),
+        definition,
+        trailing_bounds
+            .map(cadmpeg_ir::geometry::RecordBounds::try_from)
+            .transpose()
+            .map_err(cadmpeg_core::CodecError::malformed)?,
+    );
+    out.procedural_surfaces.push((owner, surface));
+    Ok(())
+}
+
 /// Emit a kept surface carrier and, when present, its procedural-surface
 /// construction and nested support carriers.
 fn emit_carrier_surface(
@@ -205,431 +713,21 @@ fn emit_carrier_surface(
         source_object: None,
     });
     if let Some(procedural) = procedural_surface_defs.remove(&i) {
-        let support_start = out.surfaces.len();
-        let curve_start = out.curves.len();
-        let (definition, cache) = procedural.into_parts();
-        let definition = match definition {
-            DecodedProceduralSurfaceDefinition::Deformable(embedded) => {
-                emit_deformable_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Helix(construction) => {
-                ProceduralSurfaceDefinition::Helix { construction }
-            }
-            DecodedProceduralSurfaceDefinition::TSpline(construction) => {
-                use crate::nurbs::proc_surface::EmbeddedTSplineSubtransform;
-                use cadmpeg_core::CodecError;
-                use cadmpeg_ir::geometry::{
-                    InlineTSplineSubtransform, SubtypeTableIndex, TSplineSubtransform,
-                    TSplineSurfaceConstruction,
-                };
-
-                let subtransform = match construction.subtransform {
-                    EmbeddedTSplineSubtransform::Inline {
-                        program,
-                        separator,
-                        values,
-                    } => TSplineSubtransform::Inline(
-                        InlineTSplineSubtransform::try_new(program, separator, values)
-                            .map_err(CodecError::malformed)?,
-                    ),
-                    EmbeddedTSplineSubtransform::Reference { index, resolved } => {
-                        TSplineSubtransform::Resolved {
-                            index: SubtypeTableIndex::try_new(index)
-                                .map_err(CodecError::malformed)?,
-                            transform: Box::new(resolved.ok_or_else(|| {
-                                CodecError::malformed("T-spline subtransform is unresolved")
-                            })?),
-                        }
-                    }
-                };
-                ProceduralSurfaceDefinition::TSpline {
-                    construction: Box::new(
-                        TSplineSurfaceConstruction::try_new(
-                            construction.parameter_ranges,
-                            construction.type_code,
-                            subtransform,
-                            construction.trailing_value,
-                            construction.discontinuities,
-                            construction.discontinuity_flag,
-                            cadmpeg_ir::geometry::CacheContract::from_form(
-                                construction.revision_form,
-                            ),
-                        )
-                        .map_err(CodecError::malformed)?,
-                    ),
-                }
-            }
-            DecodedProceduralSurfaceDefinition::Exact { spline } => {
-                ProceduralSurfaceDefinition::Exact(
-                    cadmpeg_ir::geometry::surface_payloads::ExactSurfacePayload::try_new(spline)
-                        .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::Compound { components } => {
-                let component_ids = components
-                    .into_iter()
-                    .enumerate()
-                    .map(|(component, item)| -> Result<_, cadmpeg_core::CodecError> {
-                        Ok({
-                            let id = brep_id!(
-                                format,
-                                SurfaceId,
-                                "procedural_surface",
-                                brep_key!(i, ":component", component)
-                            );
-                            out.surfaces.push(Surface {
-                                id: id.clone(),
-                                geometry: item.component,
-                                source_object: None,
-                            });
-                            cadmpeg_ir::geometry::CompoundComponent {
-                                parameter: item.parameter,
-                                component: id,
-                            }
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                ProceduralSurfaceDefinition::Compound(
-                    cadmpeg_ir::geometry::surface_payloads::CompoundSurfacePayload::try_new(
-                        component_ids,
-                        None,
-                    )
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::SubSurface {
-                support,
-                parameter_ranges,
-            } => {
-                let support_id = brep_id!(
-                    format,
-                    SurfaceId,
-                    "procedural_surface",
-                    brep_key!(i, ":sub_surface:support")
-                );
-                out.surfaces.push(Surface {
-                    id: support_id.clone(),
-                    geometry: support,
-                    source_object: None,
-                });
-                ProceduralSurfaceDefinition::SubSurface(
-                    cadmpeg_ir::geometry::surface_payloads::SubSurfaceConstruction::try_new(
-                        support_id,
-                        parameter_ranges,
-                    )
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::Taper {
-                support,
-                reference,
-                pcurve,
-                parameter,
-                taper,
-                revision_form,
-            } => {
-                let support_id = brep_id!(
-                    format,
-                    SurfaceId,
-                    "procedural_surface",
-                    brep_key!(i, ":support")
-                );
-                out.surfaces.push(Surface {
-                    id: support_id.clone(),
-                    geometry: support,
-                    source_object: None,
-                });
-                let reference_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":reference")
-                );
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: reference_id.clone(),
-                    geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(reference)),
-                    source_object: None,
-                });
-                let pcurve = pcurve.map(|nurbs| PcurveGeometry::Nurbs { nurbs });
-                ProceduralSurfaceDefinition::Taper(
-                    cadmpeg_ir::geometry::surface_payloads::TaperSurfaceConstruction::try_new(
-                        support_id,
-                        reference_id,
-                        pcurve,
-                        parameter,
-                        taper,
-                        cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
-                    )
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::Loft(embedded) => {
-                emit_loft_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::CompoundLoft(embedded) => {
-                emit_compound_loft_surface(out, i, *embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::ScaledCompoundLoft(embedded) => {
-                emit_scaled_compound_loft_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Law(embedded) => {
-                emit_law_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Skin(embedded) => {
-                emit_skin_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Net(embedded) => {
-                emit_net_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Sweep(embedded) => {
-                emit_sweep_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::G2Blend(embedded) => {
-                emit_g2_blend_surface(out, i, embedded, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Ruled { first, second } => {
-                let first_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":profile0")
-                );
-                let second_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":profile1")
-                );
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: first_id.clone(),
-                    geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(first)),
-                    source_object: None,
-                });
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: second_id.clone(),
-                    geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(second)),
-                    source_object: None,
-                });
-                ProceduralSurfaceDefinition::Ruled {
-                    first: first_id,
-                    second: second_id,
-                    cache: None,
-                }
-            }
-            DecodedProceduralSurfaceDefinition::Sum {
-                first,
-                second,
-                basepoint,
-                revision_form,
-            } => {
-                let first_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":curve0")
-                );
-                let second_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":curve1")
-                );
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: first_id.clone(),
-                    geometry: first,
-                    source_object: None,
-                });
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: second_id.clone(),
-                    geometry: second,
-                    source_object: None,
-                });
-                ProceduralSurfaceDefinition::Sum(
-                    cadmpeg_ir::geometry::surface_payloads::SumSurfaceConstruction::try_new(
-                        first_id,
-                        second_id,
-                        basepoint,
-                        cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
-                    )
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::Revolution {
-                directrix,
-                axis_origin,
-                axis_direction,
-                angular_interval,
-                parameter_interval,
-                revision_form,
-            } => {
-                let directrix_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":directrix")
-                );
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: directrix_id.clone(),
-                    geometry: directrix,
-                    source_object: None,
-                });
-                ProceduralSurfaceDefinition::Revolution(
-                    cadmpeg_ir::features::FinitePoint3::new(axis_origin)
-                    .ok_or(cadmpeg_ir::geometry::ProceduralGeometryError::Payload(
-                        "revolution axis_origin and axis_direction must be finite, with unit axis_direction",
-                    ))
-                    .and_then(|origin| {
-                        cadmpeg_ir::geometry::surface_payloads::RevolutionSurfaceConstruction::try_new(
-                            directrix_id,
-                            (origin, axis_direction),
-                            angular_interval,
-                            None,
-                            Some(parameter_interval),
-                            false,
-                            cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
-                        )
-                    })
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::Offset {
-                support,
-                distance,
-                layout,
-            } => {
-                let support_id = brep_id!(
-                    format,
-                    SurfaceId,
-                    "procedural_surface",
-                    brep_key!(i, ":support")
-                );
-                out.surfaces.push(Surface {
-                    id: support_id.clone(),
-                    geometry: support,
-                    source_object: None,
-                });
-                let (u_sense, v_sense, extension) = match layout {
-                    EmbeddedOffsetLayout::Legacy {
-                        u_sense,
-                        v_sense,
-                        extension,
-                    } => (
-                        Some(u_sense),
-                        Some(v_sense),
-                        cadmpeg_ir::geometry::OffsetExtension::Legacy {
-                            flags: extension,
-                            cache: None,
-                        },
-                    ),
-                    EmbeddedOffsetLayout::Revision(form) => (
-                        None,
-                        None,
-                        cadmpeg_ir::geometry::OffsetExtension::Revision { form },
-                    ),
-                };
-                ProceduralSurfaceDefinition::Offset(
-                    cadmpeg_ir::geometry::surface_payloads::OffsetSurfaceConstruction::try_new(
-                        support_id, distance, u_sense, v_sense, false, extension,
-                    )
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::Extrusion {
-                directrix,
-                parameter_interval,
-                direction,
-                native_position,
-                revision_form,
-            } => {
-                let directrix_id = brep_id!(
-                    format,
-                    CurveId,
-                    "procedural_surface",
-                    brep_key!(i, ":directrix")
-                );
-                out.curves.push(Curve {
-                    parameter_range: None,
-                    id: directrix_id.clone(),
-                    geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(directrix)),
-                    source_object: None,
-                });
-                ProceduralSurfaceDefinition::Extrusion(
-                    cadmpeg_ir::geometry::surface_payloads::ExtrusionSurfaceConstruction::try_new(
-                        directrix_id,
-                        Some(parameter_interval),
-                        direction,
-                        Some(native_position),
-                        cadmpeg_ir::geometry::CacheContract::from_form(revision_form),
-                    )
-                    .map_err(cadmpeg_core::CodecError::malformed)?,
-                )
-            }
-            DecodedProceduralSurfaceDefinition::VariableBlend(construction) => {
-                emit_variable_blend_surface(out, i, construction, format)?
-            }
-            DecodedProceduralSurfaceDefinition::RevisionCompoundLoft(construction) => {
-                emit_revision_compound_loft_surface(out, i, construction, format)?
-            }
-            DecodedProceduralSurfaceDefinition::RevisionG2Blend(construction) => {
-                emit_revision_g2_blend_surface(out, i, construction, format)?
-            }
-            DecodedProceduralSurfaceDefinition::VertexBlend(construction) => {
-                emit_vertex_blend_surface(out, i, *construction, format)?
-            }
-            DecodedProceduralSurfaceDefinition::Blend {
-                supports,
-                spine,
-                radius_offsets,
-                cross_section,
-                native,
-            } => emit_blend_surface(
-                out,
-                i,
-                BlendSurfaceParts {
-                    supports,
-                    spine,
-                    radius_offsets,
-                    cross_section,
-                    native,
-                },
-                format,
-            )?,
-        };
-        for surface in &out.surfaces[support_start..] {
-            append_source_id(procedural_support_sources, i, surface.id.as_str())?;
-        }
-        for curve in &out.curves[curve_start..] {
-            append_source_id(procedural_curve_child_sources, i, curve.id.as_str())?;
-        }
-        let cache_fit_tolerance = match cache {
-            ProceduralSurfaceCache::Legacy(tolerance) => tolerance,
-            ProceduralSurfaceCache::Revision => None,
-        };
-        let mut definition = definition;
-        if let Some(tolerance) = cache_fit_tolerance {
-            definition
-                .set_legacy_cache(Some(
-                    cadmpeg_ir::geometry::LegacyCache::try_new(tolerance)
-                        .map_err(cadmpeg_core::CodecError::malformed)?,
-                ))
-                .map_err(cadmpeg_core::CodecError::malformed)?;
-        }
-        let surface = ProceduralSurface::new(
-            brep_id!(format, ProceduralSurfaceId, "procedural_surface", i),
-            definition,
-            nurbs::proc_curve::record_trailing_surface_bounds(&r.tokens)
-                .map(cadmpeg_ir::geometry::RecordBounds::try_from)
-                .transpose()
-                .map_err(cadmpeg_core::CodecError::malformed)?,
-        );
-        out.procedural_surfaces
-            .push((SurfaceId::from(id(format, i)), surface));
+        emit_procedural_surface_row(
+            out,
+            SurfaceRowIdentity {
+                key: i,
+                source_index: i,
+                owner: SurfaceId::from(id(format, i)),
+            },
+            procedural,
+            nurbs::proc_curve::record_trailing_surface_bounds(&r.tokens),
+            SurfaceRowSources {
+                support: procedural_support_sources,
+                child: procedural_curve_child_sources,
+            },
+            format,
+        )?;
     } else if cached_unknown_procedural_surfaces.contains(&i) {
         out.procedural_surfaces.push((
             <SurfaceId>::from(id(format, i)),
@@ -3305,6 +3403,7 @@ fn emit_carrier_curve(
     });
     let surface_start = out.surfaces.len();
     let curve_start = out.curves.len();
+    let procedural_surface_start = out.procedural_surfaces.len();
     let procedural = match procedural_curve_defs.remove(&i) {
         Some(super::ProceduralCurveSource::Cached {
             construction,
@@ -3410,21 +3509,19 @@ fn emit_carrier_curve(
                             |side,
                              slot: crate::nurbs::proc_curve::SupportSlot|
                              -> Result<_, CarrierCurveError> {
-                                let Some(geometry) = slot.into_surface() else {
-                                    return Ok(None);
-                                };
                                 let id = brep_id!(
                                     format,
                                     SurfaceId,
                                     "procedural_curve",
                                     brep_key!(i, ":support", side)
                                 );
-                                out.surfaces.push(Surface {
-                                    id: id.clone(),
-                                    geometry,
-                                    source_object: None,
-                                });
-                                Ok(Some(id))
+                                Ok(emit_support_slot(
+                                    out,
+                                    format,
+                                    id,
+                                    slot,
+                                    support_construction_key(i, side)?,
+                                )?)
                             };
                         let surfaces = [emit_support(0, first)?, emit_support(1, second)?];
                         let pcurves = embedded.pcurves.map(|pcurve| {
@@ -3513,21 +3610,19 @@ fn emit_carrier_curve(
                             |side,
                              slot: crate::nurbs::proc_curve::SupportSlot|
                              -> Result<_, CarrierCurveError> {
-                                let Some(geometry) = slot.into_surface() else {
-                                    return Ok(None);
-                                };
                                 let id = brep_id!(
                                     format,
                                     SurfaceId,
                                     "procedural_curve",
                                     brep_key!(i, ":deformable_support", side)
                                 );
-                                out.surfaces.push(Surface {
-                                    id: id.clone(),
-                                    geometry,
-                                    source_object: None,
-                                });
-                                Ok(Some(id))
+                                Ok(emit_support_slot(
+                                    out,
+                                    format,
+                                    id,
+                                    slot,
+                                    support_construction_key(i, side)?,
+                                )?)
                             };
                         let support_ids = [emit_support(0, first)?, emit_support(1, second)?];
                         let pcurves = context.pcurves.map(|pcurve| {
@@ -3706,6 +3801,7 @@ fn emit_carrier_curve(
         Err(CarrierCurveError::Invalid(cause)) => {
             out.surfaces.truncate(surface_start);
             out.curves.truncate(curve_start);
+            out.procedural_surfaces.truncate(procedural_surface_start);
             count_kind(&mut out.stats.procedural_curve_kinds, cause);
         }
     }
@@ -3750,21 +3846,19 @@ fn emit_surface_curve_layout<F>(
     let [first, second] = embedded.surfaces;
     let mut emit_support =
         |side, slot: crate::nurbs::proc_curve::SupportSlot| -> Result<_, CarrierCurveError> {
-            let Some(geometry) = slot.into_surface() else {
-                return Ok(None);
-            };
             let id = brep_id!(
                 format,
                 SurfaceId,
                 "procedural_curve",
                 brep_key!(i, ":support", side)
             );
-            out.surfaces.push(Surface {
-                id: id.clone(),
-                geometry,
-                source_object: None,
-            });
-            Ok(Some(id))
+            Ok(emit_support_slot(
+                out,
+                format,
+                id,
+                slot,
+                support_construction_key(i, side)?,
+            )?)
         };
     let surfaces = [emit_support(0, first)?, emit_support(1, second)?];
     let pcurves = embedded.pcurves.map(|pcurve| {
@@ -3883,21 +3977,19 @@ fn emit_surface_offset_curve(
     let [first, second] = context.surfaces;
     let mut emit_support =
         |side, slot: crate::nurbs::proc_curve::SupportSlot| -> Result<_, CarrierCurveError> {
-            let Some(geometry) = slot.into_surface() else {
-                return Ok(None);
-            };
             let id = brep_id!(
                 format,
                 SurfaceId,
                 "procedural_curve",
                 brep_key!(i, ":support", side)
             );
-            out.surfaces.push(Surface {
-                id: id.clone(),
-                geometry,
-                source_object: None,
-            });
-            Ok(Some(id))
+            Ok(emit_support_slot(
+                out,
+                format,
+                id,
+                slot,
+                support_construction_key(i, side)?,
+            )?)
         };
     let support_ids = [emit_support(0, first)?, emit_support(1, second)?];
     let pcurves = context.pcurves.map(|pcurve| {
@@ -4123,21 +4215,19 @@ fn emit_law_curve(
     let [first, second] = embedded.surfaces;
     let mut emit_support =
         |side, slot: crate::nurbs::proc_curve::SupportSlot| -> Result<_, CarrierCurveError> {
-            let Some(geometry) = slot.into_surface() else {
-                return Ok(None);
-            };
             let id = brep_id!(
                 format,
                 SurfaceId,
                 "procedural_curve",
                 brep_key!(i, ":support", side)
             );
-            out.surfaces.push(Surface {
-                id: id.clone(),
-                geometry,
-                source_object: None,
-            });
-            Ok(Some(id))
+            Ok(emit_support_slot(
+                out,
+                format,
+                id,
+                slot,
+                support_construction_key(i, side)?,
+            )?)
         };
     let surfaces = [emit_support(0, first)?, emit_support(1, second)?];
     let pcurves = embedded.pcurves.map(|pcurve| {

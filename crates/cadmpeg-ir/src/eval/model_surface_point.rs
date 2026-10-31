@@ -619,7 +619,7 @@ pub(super) fn model_surface_point_by_id_inner(
             }
             Some(ProceduralSurfaceDefinition::Offset(definition_payload)) => {
                 let support = definition_payload.support();
-                let distance = definition_payload.distance();
+                let distance = definition_payload.displacement_along_parametric_normal();
                 let linear_extension = definition_payload.linear_support_extension();
                 {
                     let support = linear_extension
@@ -631,10 +631,7 @@ pub(super) fn model_surface_point_by_id_inner(
                     }
                     match support.oriented_normal {
                         Ok(normal) => Some(SurfaceEvaluation {
-                            point: evaluated(offset(
-                                reached(support.point),
-                                &[(distance.get(), normal)],
-                            )),
+                            point: evaluated(offset(reached(support.point), &[(distance, normal)])),
                             oriented_normal: Ok(normal),
                             refusal: None,
                         }),

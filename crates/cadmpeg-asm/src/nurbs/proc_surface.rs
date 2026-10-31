@@ -65,7 +65,7 @@ pub(crate) enum ProceduralSurfaceCache {
 }
 
 impl DecodedProceduralSurface {
-    pub(super) fn legacy(
+    pub(crate) fn legacy(
         definition: DecodedProceduralSurfaceDefinition,
         cache_fit_tolerance: Option<f64>,
     ) -> Self {

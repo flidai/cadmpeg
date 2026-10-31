@@ -92,12 +92,34 @@ pub enum SupportSlot {
     DeclaredOnly,
     /// The support has a standalone geometry cache.
     Surface(SurfaceGeometry),
+    /// The support has a standalone geometry cache and names a procedural
+    /// construction that owns it.
+    Constructed {
+        /// The cache of the construction.
+        surface: SurfaceGeometry,
+        /// The construction the support names.
+        construction: Box<crate::nurbs::proc_surface::DecodedProceduralSurface>,
+    },
 }
 
 impl SupportSlot {
     pub(crate) fn into_surface(self) -> Option<SurfaceGeometry> {
+        self.into_parts().map(|(surface, _)| surface)
+    }
+
+    /// The support's cache and the construction it names, when it has one.
+    pub(crate) fn into_parts(
+        self,
+    ) -> Option<(
+        SurfaceGeometry,
+        Option<Box<crate::nurbs::proc_surface::DecodedProceduralSurface>>,
+    )> {
         match self {
-            Self::Surface(surface) => Some(surface),
+            Self::Surface(surface) => Some((surface, None)),
+            Self::Constructed {
+                surface,
+                construction,
+            } => Some((surface, Some(construction))),
             Self::Absent | Self::DeclaredOnly => None,
         }
     }
@@ -671,7 +693,7 @@ fn selected_support_pcurve<'a>(
     slot: usize,
 ) -> Option<&'a PcurveNurbs> {
     match surfaces.get(slot)? {
-        SupportSlot::Surface(_) => pcurves.get(slot)?.as_ref(),
+        SupportSlot::Surface(_) | SupportSlot::Constructed { .. } => pcurves.get(slot)?.as_ref(),
         SupportSlot::Absent | SupportSlot::DeclaredOnly => None,
     }
 }
@@ -693,7 +715,9 @@ fn selected_pcurve(decoded: &DecodedProceduralCurve, slot: usize) -> Option<&Pcu
         ProceduralCurveConstruction::Intersection(context, _) => {
             match context.surfaces.get(slot)? {
                 SupportSlot::Absent => return None,
-                SupportSlot::DeclaredOnly | SupportSlot::Surface(_) => {}
+                SupportSlot::DeclaredOnly
+                | SupportSlot::Surface(_)
+                | SupportSlot::Constructed { .. } => {}
             }
             context.pcurves.get(slot)?.as_ref()
         }
@@ -3028,9 +3052,21 @@ pub(super) fn optional_embedded_surface_with_bounds(
             });
             let surface = if let Some(target) = target {
                 if let Some(surface) = owned_surface_cache_resolving_refs(ctx, target, table) {
-                    SupportSlot::Surface(SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(
+                    let surface = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(
                         propagate_resource!(surface),
-                    )))
+                    ));
+                    match crate::nurbs::proc_surface::procedural_surface_resolving_refs(
+                        ctx,
+                        target.tokens(),
+                        table,
+                    ) {
+                        Some(Ok(construction)) => SupportSlot::Constructed {
+                            surface,
+                            construction: Box::new(construction),
+                        },
+                        Some(Err(error)) => return Some(Err(error)),
+                        None => SupportSlot::Surface(surface),
+                    }
                 } else if propagate_resource!(
                     crate::nurbs::proc_surface::procedural_surface_resolving_refs(
                         ctx,

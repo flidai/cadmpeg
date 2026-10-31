@@ -118,6 +118,20 @@ fn procedural_support_allowance(
     COINCIDENCE_TOLERANCE + allowance(document_tolerance, &[cache_fit_tolerance])
 }
 
+/// Fit tolerance of the solved cache that stands in for a support surface.
+/// A support surface whose points come from an approximating cache can sit
+/// that far from the surface it approximates, so the distance a support side
+/// misses by grows with it. A surface with no cache tolerance adds nothing.
+fn support_surface_fit(
+    index: &crate::index::ModelIndex<'_>,
+    surface: &crate::ids::SurfaceId,
+) -> f64 {
+    index
+        .procedural_surface_for_surface(surface.as_str(), crate::index::StandardIndex)
+        .and_then(crate::geometry::ProceduralSurface::cache_fit_tolerance)
+        .map_or(0.0, crate::geometry::FitTolerance::get)
+}
+
 /// Embedded support pcurves must map through their surfaces onto the curve
 /// they constrain at both ends of the construction interval.
 pub(super) fn check_procedural_support_consistency(
@@ -465,7 +479,8 @@ fn visit_support_failures(
             endpoint_mismatch(constrained[0], support_start),
             endpoint_mismatch(constrained[1], support_end),
         );
-        if !mismatch.is_finite() || mismatch > bound {
+        if !mismatch.is_finite() || mismatch > bound + support_surface_fit(model.index, surface_id)
+        {
             failure(side_index, mismatch);
         }
     }

@@ -1344,6 +1344,117 @@ fn a_reversed_intcurve_cache_reverses_its_support_pcurves() {
     }
 }
 
+/// An intcurve support that names a procedural construction is emitted with
+/// the procedural surface that owns it, so the support's own fit tolerance is
+/// available to the consistency check.
+#[test]
+fn an_intcurve_support_that_names_a_construction_owns_a_procedural_surface() {
+    use crate::brep::ProceduralCurveSource;
+    use crate::nurbs::proc_curve::{EmbeddedIntersection, SupportSlot};
+    use crate::nurbs::proc_surface::{
+        DecodedProceduralSurface, DecodedProceduralSurfaceDefinition,
+    };
+    use cadmpeg_ir::geometry::{
+        ExactSpline, ProceduralCurveDefinition, ProceduralSurfaceDefinition,
+    };
+    use cadmpeg_ir::math::{Point2, Point3};
+
+    let pcurve = cadmpeg_ir::geometry::pcurve::PcurveNurbs::from_lanes(
+        1,
+        vec![0.0, 0.0, 2.0, 2.0],
+        vec![Point2::new(0.0, 0.0), Point2::new(1.0, 3.0)],
+        None,
+        false,
+    )
+    .expect("pcurve");
+    let cache = NurbsCurve::from_lanes(
+        1,
+        vec![0.0, 0.0, 2.0, 2.0],
+        vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 3.0, 0.0)],
+        None,
+        false,
+    )
+    .expect("cache");
+    let support = || SurfaceGeometry::Solved(SolvedSurfaceGeometry::Unknown { record: None });
+    let construction = DecodedProceduralSurface::legacy(
+        DecodedProceduralSurfaceDefinition::Exact {
+            spline: ExactSpline::Legacy {
+                ranges: [[0.0, 1.0], [0.0, 1.0]],
+                extension: 0,
+                cache: None,
+            },
+        },
+        Some(0.25),
+    );
+    let mut out = AsmBrep::default();
+    let mut carriers = Carriers::default();
+    carriers
+        .curve_geo
+        .insert(4, CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(cache)));
+    carriers.procedural_curve_defs.insert(
+        4,
+        ProceduralCurveSource::Cached {
+            construction: Box::new(ProceduralCurveConstruction::Intersection(
+                EmbeddedIntersection {
+                    surfaces: [
+                        SupportSlot::Constructed {
+                            surface: support(),
+                            construction: Box::new(construction),
+                        },
+                        SupportSlot::Surface(support()),
+                    ],
+                    pcurves: [Some(pcurve), None],
+                    parameter_range: [0.0, 2.0],
+                    discontinuities: std::array::from_fn(|_| Vec::new()),
+                },
+                false,
+            )),
+            cache_fit_tolerance: None,
+            parsed_domain: Some([0.0, 2.0]),
+            reversed: false,
+        },
+    );
+    emit_carrier_curve(
+        &mut out,
+        4,
+        &mut carriers,
+        &HashSet::new(),
+        &HashSet::new(),
+        crate::asm_format!("f3d"),
+    )
+    .expect("carrier emission succeeds");
+
+    let [(_, curve)] = out.procedural_curves.as_slice() else {
+        panic!("one procedural curve")
+    };
+    let ProceduralCurveDefinition::Intersection { context, .. } = curve.definition() else {
+        panic!("intersection definition")
+    };
+    let [first, second] = context.sides();
+    let first = first.surface.as_ref().expect("first support surface");
+    let second = second.surface.as_ref().expect("second support surface");
+    let owned: Vec<_> = out
+        .procedural_surfaces
+        .iter()
+        .map(|(owner, procedural)| (owner, procedural))
+        .collect();
+    let [(owner, procedural)] = owned.as_slice() else {
+        panic!("only the first support names a construction")
+    };
+    assert_eq!(*owner, first);
+    assert_ne!(*owner, second);
+    assert!(matches!(
+        procedural.definition(),
+        ProceduralSurfaceDefinition::Exact(_)
+    ));
+    assert_eq!(
+        procedural
+            .cache_fit_tolerance()
+            .map(cadmpeg_ir::geometry::FitTolerance::get),
+        Some(0.25)
+    );
+}
+
 /// A `subset_int_cur` runs against its parent once for a reversed record and
 /// once for an edge use that reverses it. The subset sense is the net
 /// direction, so localization moves the cache and the edge range onto the
