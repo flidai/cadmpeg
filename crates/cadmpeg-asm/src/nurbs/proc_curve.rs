@@ -1514,28 +1514,40 @@ pub(super) fn embedded_base_curve_resolving_refs(
     cur: &mut Cur<'_>,
     table: &SubtypeTable,
 ) -> Option<NurbsCurve> {
+    embedded_oriented_base_curve(cur, table).map(|(curve, _)| curve)
+}
+
+/// [`embedded_base_curve_resolving_refs`] with the sense of an embedded
+/// `intcurve`. A true sense evaluates the serialized curve with its parameter
+/// negated, `C(-t)`; the second element is that sense, false for every other
+/// curve form.
+fn embedded_oriented_base_curve(
+    cur: &mut Cur<'_>,
+    table: &SubtypeTable,
+) -> Option<(NurbsCurve, bool)> {
     let toks = cur.toks();
     if let Some(decoded) = curve_block(toks, cur.pos()) {
         let (curve, end) = decoded;
         cur.set_pos(end);
-        return Some(curve);
+        return Some((curve, false));
     }
     let saved = cur.pos();
     // Some revision-gated owners omit the redundant `intcurve` identifier and
     // store only its sense followed by the compact subtype-table reference.
     if matches!(cur.peek(), Some(Token::True | Token::False)) {
-        cur.take_bool()?;
+        let reversed = cur.take_bool()?;
         let reference = cur.pos();
         if matches!(toks.get(reference), Some(Token::SubtypeOpen)) {
             let scope = crate::nurbs::toks::subtype_span(toks, reference)?;
             if let Some(curve) = owned_curve_cache_resolving_refs(scope, table) {
                 cur.set_pos(reference + scope.tokens().len());
-                return Some(curve);
+                return Some((curve, reversed));
             }
         }
         cur.set_pos(saved);
     }
-    match cur.take_ident()? {
+    let mut reversed = false;
+    let curve = match cur.take_ident()? {
         "straight" => {
             let origin = cur.take_position()?;
             let direction = cur.take_vector3()?;
@@ -1584,7 +1596,7 @@ pub(super) fn embedded_base_curve_resolving_refs(
             .ok()
         }
         "intcurve" => {
-            cur.take_bool()?;
+            reversed = cur.take_bool()?;
             let reference = cur.pos();
             let compact_ref = matches!(toks.get(reference), Some(Token::SubtypeOpen))
                 && matches!(toks.get(reference + 1), Some(Token::Ident(name)) if name == "ref")
@@ -1595,7 +1607,7 @@ pub(super) fn embedded_base_curve_resolving_refs(
                     let scope = crate::nurbs::toks::subtype_span(toks, reference)?;
                     let curve = owned_curve_cache_resolving_refs(scope, table)?;
                     cur.set_pos(reference + scope.tokens().len());
-                    return Some(curve);
+                    return Some((curve, reversed));
                 }
                 cur.set_pos(saved);
                 return None;
@@ -1614,7 +1626,8 @@ pub(super) fn embedded_base_curve_resolving_refs(
             cur.set_pos(saved);
             None
         }
-    }
+    };
+    curve.map(|curve| (curve, reversed))
 }
 
 fn embedded_surface_offset(
@@ -1637,7 +1650,12 @@ fn embedded_surface_offset(
             cur.take_optional_range_value()?.value()?,
             cur.take_optional_range_value()?.value()?,
         ];
-        let base = embedded_base_curve_resolving_refs(&mut cur, table)?;
+        // The base interval and endpoints are stated on the curve the sense
+        // selects, so a reversed base is held with its negated parameter.
+        let (mut base, reversed) = embedded_oriented_base_curve(&mut cur, table)?;
+        if reversed {
+            base.reverse_parameterization();
+        }
         let base_endpoints = [
             cur.take_optional_range_value()?.value(),
             cur.take_optional_range_value()?.value(),
