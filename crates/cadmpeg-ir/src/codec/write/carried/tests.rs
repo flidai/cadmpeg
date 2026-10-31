@@ -57,6 +57,32 @@ fn absent_entity_is_unlocated_even_with_a_resolving_related_id() {
 }
 
 #[test]
+fn absent_entity_in_a_carried_native_namespace_resolves_to_it() {
+    let mut ir = CadIr::empty();
+    insert_native(&mut ir, "f3d", &[NATIVE_ID]);
+    // A record of the namespace that did not materialise.
+    let finding = finding(
+        Some("f3d:test:asm-history#missing"),
+        &[],
+        "malformed record",
+    );
+    let locator = FindingLocator::new(&ir, [&finding]);
+    assert_eq!(
+        locator.scope(&finding),
+        Some(vec![EntityLocation::Native("f3d")])
+    );
+    // The same identity under a namespace the document does not carry stays
+    // unlocated.
+    let other = finding_for("other:test:asm-history#missing");
+    let locator = FindingLocator::new(&ir, [&other]);
+    assert_eq!(locator.scope(&other), None);
+}
+
+fn finding_for(entity: &str) -> Finding {
+    finding(Some(entity), &[], "malformed record")
+}
+
+#[test]
 fn model_entity_resolves_to_its_arena() {
     let ir = unit_cube().expect("valid cube");
     let finding = finding(Some(ir.model.faces[0].identity()), &[], "invalid face");
