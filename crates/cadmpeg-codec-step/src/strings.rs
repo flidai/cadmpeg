@@ -151,7 +151,7 @@ fn decode_page_byte(page: u8, byte: u8, offset: usize) -> Result<char, StringErr
 ///
 /// An apostrophe is written doubled. In text that also holds a comma or a
 /// closing parenthesis it is written as the wide escape of U+0027 instead:
-/// the OpenCASCADE STEP reader ends a string at a doubled apostrophe that
+/// the `OpenCASCADE` STEP reader ends a string at a doubled apostrophe that
 /// precedes a comma later in the text, and reads the rest of the record as
 /// syntax errors.
 pub(crate) fn encode(input: &str) -> String {
