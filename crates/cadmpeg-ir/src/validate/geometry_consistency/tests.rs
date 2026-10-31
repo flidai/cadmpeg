@@ -430,6 +430,60 @@ fn procedural_support_endpoints_honor_the_per_side_parameter_mapping() {
     assert!(findings[0].message.contains("support side 0"));
 }
 
+/// The mapped surface curve whose support plane sits `gap` above the curve and
+/// whose support surface is owned by a construction with `fit_tolerance`.
+fn mapped_surface_curve_over_gapped_support(gap: f64, fit_tolerance: Option<f64>) -> CadIr {
+    let mut ir = mapped_surface_curve([2.0, 3.0]);
+    ir.model.surfaces[0].geometry = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Plane(
+        crate::geometry::analytic::PlaneSurface::try_new(
+            Point3::new(0.0, 0.0, gap),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+        )
+        .unwrap(),
+    ));
+    if let Some(fit_tolerance) = fit_tolerance {
+        let construction = procedural_surface! {
+            id: ProceduralSurfaceId::mint("test:model:entity#support-construction").expect("valid identity"),
+            definition: ProceduralSurfaceDefinition::Unknown { record: None, cache: None },
+            cache_fit_tolerance: Some(fit_tolerance),
+            record_bounds: None,
+        };
+        let support = ir.model.surfaces[0].id.clone();
+        ir.model
+            .add_procedural_surface(&support, construction)
+            .unwrap();
+    }
+    ir
+}
+
+fn support_findings(ir: &CadIr) -> Vec<crate::validate::Finding> {
+    let mut findings = Vec::new();
+    check_procedural_support_consistency(
+        &cadmpeg_test_support::service_decode_context(),
+        &crate::index::ModelIndex::new_model_only(ir),
+        &crate::eval::admission::ModelEvaluationPass::new(),
+        &mut findings,
+    )
+    .expect("check that the procedural support is consistent");
+    findings
+}
+
+/// A support surface that a construction approximates within a fit tolerance
+/// can sit that far from the curve it supports.
+#[test]
+fn support_surface_fit_tolerance_widens_the_support_allowance() {
+    let bare = support_findings(&mapped_surface_curve_over_gapped_support(0.05, None));
+    assert_eq!(bare.len(), 1);
+    assert!(bare[0].message.contains("support side 0"));
+
+    let within = support_findings(&mapped_surface_curve_over_gapped_support(0.05, Some(0.1)));
+    assert!(within.is_empty());
+
+    let beyond = support_findings(&mapped_surface_curve_over_gapped_support(0.05, Some(0.01)));
+    assert_eq!(beyond.len(), 1);
+}
+
 #[test]
 fn surface_offset_support_constrains_the_embedded_base_curve() {
     let mut findings = Vec::new();

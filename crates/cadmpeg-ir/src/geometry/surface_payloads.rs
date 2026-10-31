@@ -784,6 +784,19 @@ impl OffsetSurfaceConstruction {
     pub fn extension(&self) -> &OffsetExtension<FiniteReal> {
         &self.extension
     }
+
+    /// Signed distance along the support's parametric normal.
+    ///
+    /// The revision-gated form negates the support normal when its first
+    /// boolean is set, so the displacement along the parametric normal runs
+    /// opposite to the stored distance.
+    #[must_use]
+    pub fn displacement_along_parametric_normal(&self) -> f64 {
+        match &self.extension {
+            OffsetExtension::Revision { form } if form.flags[0] => -self.distance.get(),
+            _ => self.distance.get(),
+        }
+    }
 }
 
 impl TryFrom<OffsetSurfaceConstructionWire> for OffsetSurfaceConstruction {

@@ -1079,6 +1079,72 @@ fn recursive_offsets_use_exact_support_normals_at_large_parameters() {
     assert_eq!(partials.dv, Vector3::new(0.0, 1.0, 0.0));
 }
 
+/// A revision-form offset displaces its support along the support normal,
+/// negated when the first boolean of the pair is set.
+#[test]
+fn revision_offset_first_boolean_negates_the_support_normal() {
+    let support_id = SurfaceId::mint("test:model:entity#support").expect("valid identity");
+    let offset_id = SurfaceId::mint("test:model:entity#offset").expect("valid identity");
+    let construction =
+        ProceduralSurfaceId::mint("test:model:entity#offset-construction").expect("valid identity");
+    let height = |first_boolean: bool| {
+        let mut ir = CadIr::empty();
+        ir.model.surfaces = vec![
+            Surface {
+                id: support_id.clone(),
+                geometry: SurfaceGeometry::Solved(SolvedSurfaceGeometry::Plane(
+                    crate::geometry::analytic::PlaneSurface::try_new(
+                        Point3::new(0.0, 0.0, 0.0),
+                        Vector3::new(0.0, 0.0, 1.0),
+                        Vector3::new(1.0, 0.0, 0.0),
+                    )
+                    .unwrap(),
+                )),
+                source_object: None,
+            },
+            Surface {
+                id: offset_id.clone(),
+                geometry: SurfaceGeometry::Procedural {
+                    construction: construction.clone(),
+                    cache: None,
+                },
+                source_object: None,
+            },
+        ];
+        let form = crate::geometry::RevisionSurfaceForm {
+            revision: crate::scalar::PositiveI64::new(22300).expect("positive revision"),
+            support_bounds: [None; 4],
+            reference_endpoints: [None; 2],
+            second_endpoints: [None; 2],
+            flags: [first_boolean, false, false, false],
+            cache: crate::geometry::RevisionCacheForm::Parameterization(
+                crate::geometry::RevisionSurfaceParameterization::default(),
+            ),
+            discontinuities: Default::default(),
+            tail_flag: false,
+            trailing_flags: Vec::new(),
+        };
+        ir.model.procedural_surfaces = vec![procedural_surface! {
+            id: construction.clone(),
+            definition: ProceduralSurfaceDefinition::Offset(crate::geometry::surface_payloads::OffsetSurfaceConstruction::try_new(support_id.clone(), 2.0, None, None, false, OffsetExtension::Revision { form: Box::new(form) }).unwrap()),
+            cache_fit_tolerance: None,
+            record_bounds: None,
+        }];
+        let index = crate::index::ModelIndex::build(&ir);
+        model_surface_point_by_id(
+            crate::eval::admission::EvaluationAdmission::Standard,
+            &index,
+            &offset_id,
+            1.0,
+            1.0,
+        )
+        .map(crate::features::FinitePoint3::get)
+    };
+
+    assert_eq!(height(false), Ok(Point3::new(1.0, 1.0, 2.0)));
+    assert_eq!(height(true), Ok(Point3::new(1.0, 1.0, -2.0)));
+}
+
 #[test]
 fn linear_offset_support_extension_uses_the_boundary_tangent_plane() {
     let support_id = SurfaceId::mint("test:model:entity#support").expect("valid identity");

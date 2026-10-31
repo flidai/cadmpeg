@@ -8176,7 +8176,7 @@ fn model_surface_mapping(
             model_surface_mapping(admission, index, payload.support(), u, v).map(|support| {
                 SurfaceMapping {
                     offset_distance: support.offset_distance
-                        + payload.distance().get() * support.orientation,
+                        + payload.displacement_along_parametric_normal() * support.orientation,
                     ..support
                 }
             })
