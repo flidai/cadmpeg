@@ -23,6 +23,8 @@ upstream pull request is in a release.
 These select by a measured quantity, which the upstream source policy forbids for decoders and
 encoders. They stay on the fork.
 
-- `crates/cadmpeg-codec-step` writer: state the face sense of a face on a torus wider than its
-  major radius against the sign of the tube radius times the sign of `rho = R + r cos v` at the
-  face, read from the torus equation at the face's vertices (`c/r5-apple-sheet`).
+- `crates/cadmpeg-codec-step` writer: state the face sense of a face on the outer sheet
+  (`rho = R + r cos v > 0`) of a torus wider than its major radius, with a negative tube radius,
+  against the carrier sense. The sheet is read from the torus equation at the face's vertices
+  (`c/r5-apple-sheet`). Faces on the inner sheet are left alone: the rule was right on some
+  reference solids and wrong on others.

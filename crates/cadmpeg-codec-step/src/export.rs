@@ -2965,7 +2965,8 @@ impl<'a> Builder<'a> {
     /// is positive and toward it where `rho` is negative. The face sense of a
     /// carrier with a negative tube radius is relative to the normal turned
     /// toward the tube center, so the written sense states the opposite
-    /// whenever the sign of `r` and the sign of `rho` differ.
+    /// where `r` is negative and `rho` is positive. Faces on the inner sheet
+    /// are not corrected.
     fn apple_sense_flip(&self, face: &Face) -> bool {
         let Some(Some(SolvedSurfaceGeometry::Torus(torus))) = self
             .surfaces
@@ -3019,8 +3020,9 @@ impl<'a> Builder<'a> {
             }
         }
         match (plus > 0, minus > 0) {
+            // Only the outer sheet is corrected: the inner-sheet rule was
+            // right on some reference solids and wrong on others.
             (true, false) => minor < 0.0,
-            (false, true) => minor > 0.0,
             _ => false,
         }
     }

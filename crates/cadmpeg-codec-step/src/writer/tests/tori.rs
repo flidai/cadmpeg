@@ -251,11 +251,12 @@ fn apple_face_sense(minor_radius: f64, position: [f64; 3]) -> String {
         .to_owned()
 }
 
-/// A face on a torus wider than its major radius states `same_sense` against
-/// the sign of the tube radius times the sign of `rho = R + r cos v`, because
-/// the parametric normal of the written revolved tube points away from the
-/// tube center where `rho` is positive and the face sense of a negative tube
-/// radius is relative to the normal turned toward it.
+/// A face on the outer sheet (`rho > 0`) of a torus wider than its major
+/// radius states `same_sense` against the sign of the tube radius, because the
+/// face sense of a negative tube radius is relative to the normal turned toward
+/// the tube center. A face on the inner sheet keeps the carrier sense: on the
+/// reference data the inner-sheet rule was right for some solids and wrong for
+/// others, so it is left unflipped.
 #[test]
 fn face_on_a_torus_wider_than_its_major_radius_follows_the_sheet() {
     // `R = 1`, `|r| = 2`: `v` with `cos v = 0.5` gives `rho = 2` on the outer
@@ -264,7 +265,7 @@ fn face_on_a_torus_wider_than_its_major_radius_follows_the_sheet() {
     let outer = [2.0, 0.0, 2.0 * 0.75_f64.sqrt()];
     let inner = [0.5, 0.0, 2.0 * (1.0_f64 - 0.5625).sqrt()];
     assert_eq!(apple_face_sense(2.0, outer), ".T.");
-    assert_eq!(apple_face_sense(2.0, inner), ".F.");
+    assert_eq!(apple_face_sense(2.0, inner), ".T.");
     assert_eq!(apple_face_sense(-2.0, outer), ".F.");
     assert_eq!(apple_face_sense(-2.0, inner), ".T.");
 }
