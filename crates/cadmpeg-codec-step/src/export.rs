@@ -296,6 +296,9 @@ pub(crate) struct Builder<'a> {
     edges: HashMap<&'a str, &'a Edge>,
     coedges: HashMap<&'a str, &'a Coedge>,
     surfaces: HashMap<&'a str, &'a Surface>,
+    /// Fork-only: signed shell volumes read from the measurement crate, by
+    /// shell id, with whether every face of the shell had a flux.
+    shell_volumes: HashMap<String, (f64, bool)>,
     curves: HashMap<&'a str, &'a Curve>,
     pcurves: HashMap<&'a str, &'a Pcurve>,
     procedural_surfaces: HashMap<&'a str, &'a ProceduralSurface>,
@@ -441,7 +444,66 @@ fn distinct_names<'n>(entries: &[(&'n str, Option<&'n str>)]) -> Vec<&'n str> {
         .collect()
 }
 
+/// Signed volume of every shell of a region with several shells, read from
+/// the measurement crate. Fork-only: not for upstream. The upstream source
+/// policy forbids an encoder from selecting by measured geometry.
+fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
+    if ir
+        .model
+        .regions
+        .iter()
+        .all(|region| region.shells.len() < 2)
+    {
+        return HashMap::new();
+    }
+    let arena = cadmpeg_core::decode::DecodeArena::new();
+    let policy = cadmpeg_core::decode::DecodePolicy::desktop();
+    let Ok(ctx) = cadmpeg_core::decode::DecodeContext::for_loaded_input(&arena, &policy, 0) else {
+        return HashMap::new();
+    };
+    let options = cadmpeg_measure::MeasureOptions {
+        work: cadmpeg_measure::WorkProfile::Desktop,
+        density: None,
+    };
+    let volumes = cadmpeg_measure::shell_signed_volumes(&ctx, ir, options).unwrap_or_default();
+    volumes
+        .into_iter()
+        .map(|entry| (entry.shell, (entry.volume, entry.complete)))
+        .collect()
+}
+
 impl<'a> Builder<'a> {
+    /// The shells of a region with the exterior first, and for every shell
+    /// after it whether its base faces are written reversed. A void is written
+    /// as the base shell of an `ORIENTED_CLOSED_SHELL` with orientation false,
+    /// so a void that encloses a negative volume has its base faces reversed
+    /// and one that encloses a positive volume keeps them. Fork-only.
+    fn shell_roles(&self, shells: &'a [ShellId]) -> Vec<(&'a ShellId, bool)> {
+        let volume = |id: &ShellId| self.shell_volumes.get(id.as_str()).map(|entry| entry.0);
+        let mut order: Vec<&'a ShellId> = shells.iter().collect();
+        if order.len() > 1 && volume(order[0]).is_some_and(|v| v <= 0.0) {
+            let best = order
+                .iter()
+                .enumerate()
+                .filter_map(|(index, id)| volume(id).map(|v| (index, v)))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((index, v)) = best {
+                if v > 0.0 && index != 0 {
+                    let outer = order.remove(index);
+                    order.insert(0, outer);
+                }
+            }
+        }
+        order
+            .into_iter()
+            .enumerate()
+            .map(|(index, id)| {
+                let reversed = index > 0 && !volume(id).is_some_and(|v| v > 0.0);
+                (id, reversed)
+            })
+            .collect()
+    }
+
     pub(crate) fn new(
         ir: &'a CadIr,
         schema: StepSchema,
@@ -532,6 +594,7 @@ impl<'a> Builder<'a> {
                 .iter()
                 .map(|c| (c.id.as_str(), c))
                 .collect(),
+            shell_volumes: measured_shell_volumes(ir),
             surfaces: ir
                 .model
                 .surfaces
@@ -1926,10 +1989,12 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let closed = body_kind == BodyKind::Solid;
-            let Some((outer_id, void_ids)) = region.shells.split_first() else {
+            let roles = self.shell_roles(&region.shells);
+            let Some(((outer_id, _), void_roles)) = roles.split_first() else {
                 self.empty_regions.insert(region.id.as_str().to_owned());
                 continue;
             };
+            let void_ids: Vec<&ShellId> = void_roles.iter().map(|(id, _)| *id).collect();
             if closed {
                 self.split_non_manifold_edges(&region.shells);
             }
@@ -1945,8 +2010,8 @@ impl<'a> Builder<'a> {
             // A solid void is the base shell of an `ORIENTED_CLOSED_SHELL`
             // with orientation false, so its base faces carry the reverse of
             // the CADIR face use.
-            let void_reversed = closed;
-            for sid in void_ids {
+            for (sid, reversed) in void_roles {
+                let void_reversed = closed && *reversed;
                 if let Some(void) = self.emit_shell(sid.as_str(), closed, void_reversed) {
                     voids.push(void);
                 } else {

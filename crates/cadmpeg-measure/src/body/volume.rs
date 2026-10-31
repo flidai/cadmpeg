@@ -571,6 +571,23 @@ impl VolumeInput<'_> {
         None
     }
 
+    /// The signed volume of each shell under the face-sense reading, in
+    /// shell order, summed over the faces that have a flux, and whether
+    /// every face of the shell has one.
+    pub(super) fn face_sense_shell_volumes(&self) -> Vec<(f64, bool)> {
+        let mut shells = vec![(0.0_f64, true); self.shells.len()];
+        for member in &self.members {
+            let Some(entry) = shells.get_mut(member.shell) else {
+                continue;
+            };
+            match self.term(member, BodyReading::FaceSense) {
+                Ok((flux, sigma)) => entry.0 += sigma * flux.volume(),
+                Err(_) => entry.1 = false,
+            }
+        }
+        shells
+    }
+
     /// The failure of a body whose shells are closed and whose volume
     /// readings conflict: an orientation conflict or a closure flux above
     /// its tolerance. `None` when the volume is measured or fails for

@@ -232,6 +232,63 @@ impl<'a> BodyInput<'a, '_> {
         })
     }
 
+    /// The region, shell and face-sense signed volume of every shell of a
+    /// body, in region order. `None` for a body with no shell.
+    ///
+    /// Fork-only: used to name the exterior shell of a lump by the sign of
+    /// the volume its oriented faces enclose.
+    pub(crate) fn shell_signed_volumes(&self, body: &Body) -> Option<Vec<ShellSignedVolume>> {
+        let rows = self.shells(body);
+        if rows.is_empty() {
+            return None;
+        }
+        let mut regions = Vec::new();
+        for region in &body.regions {
+            let Some(owner) = self.owners.region(region.as_str()) else {
+                continue;
+            };
+            for shell_id in &owner.shells {
+                if self.owners.shell(shell_id.as_str()).is_some() {
+                    regions.push(region.as_str().to_owned());
+                }
+            }
+        }
+        let id = body.id.as_str();
+        let placement = self.placements.get(id);
+        let no_term = |_: u8, _: f64| 0.0;
+        let input = VolumeInput {
+            id,
+            members: self.members(body),
+            shells: rows
+                .iter()
+                .map(|shell| (shell.closed, shell.role == ShellRole::Outer))
+                .collect(),
+            origin: self
+                .origins
+                .get(id)
+                .copied()
+                .unwrap_or(Point3::new(0.0, 0.0, 0.0)),
+            handedness: handedness(placement),
+            area: 0.0,
+            diagonal: 0.0,
+            placement: &no_term,
+            density: None,
+        };
+        let volumes = input.face_sense_shell_volumes();
+        Some(
+            rows.iter()
+                .zip(regions)
+                .zip(volumes)
+                .map(|((row, region), (volume, complete))| ShellSignedVolume {
+                    region,
+                    shell: row.shell.clone(),
+                    volume,
+                    complete,
+                })
+                .collect(),
+        )
+    }
+
     /// The union of the face boxes, else of the edge boxes.
     fn bbox(&self, id: &str, faces: &[&str], edges: &[&str]) -> Quantity<BoxValue> {
         let mut union = BoxUnion::new();
@@ -359,6 +416,21 @@ impl<'a> BodyInput<'a, '_> {
         }
         rows
     }
+}
+
+/// The signed volume one shell encloses under the face-sense reading.
+#[derive(Debug, Clone)]
+pub struct ShellSignedVolume {
+    /// The region that owns the shell.
+    pub region: String,
+    /// The shell.
+    pub shell: String,
+    /// The volume enclosed by the shell's oriented faces, in mm³, summed over
+    /// the faces with a flux. Positive when the face normals point away from
+    /// the enclosed volume.
+    pub volume: f64,
+    /// Whether every face of the shell has a flux.
+    pub complete: bool,
 }
 
 /// Why a body's volume readings conflict.

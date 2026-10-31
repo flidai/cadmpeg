@@ -64,6 +64,17 @@ fn warning(check: Check, entity: &str, related: Vec<String>, message: String) ->
     }
 }
 
+fn allowance_refusal(items: usize) -> ResourceLimit {
+    ResourceLimit {
+        dimension: ResourceDimension::Entities,
+        reason: ResourceFailure::BudgetExceeded,
+        limit: 0,
+        used: cadmpeg_core::decode::u64_from_index(items),
+        additional: 0,
+        operation: "measurement findings allowance",
+    }
+}
+
 impl<'ir> Measurer<'ir> {
     /// The ring-order and orientation findings of the document, under one
     /// pass allowance. A session refusal of `ctx` ends the call.
@@ -74,26 +85,47 @@ impl<'ir> Measurer<'ir> {
         let model = &self.input.ir.model;
         let items = model.faces.len() + model.edges.len();
         let Some(allowance) = self.options.work.findings_allowance(items) else {
-            return Err(ResourceLimit {
-                dimension: ResourceDimension::Entities,
-                reason: ResourceFailure::BudgetExceeded,
-                limit: 0,
-                used: cadmpeg_core::decode::u64_from_index(items),
-                additional: 0,
-                operation: "measurement findings allowance",
-            });
+            return Err(allowance_refusal(items));
         };
-        self.findings_under(ctx, &PassAllowance::findings(allowance))
+        self.findings_and_shells_under(ctx, &PassAllowance::findings(allowance), false)
+            .map(|(findings, _)| findings)
+    }
+
+    /// The findings and the signed shell volumes of every body with closed
+    /// shells, under the measurement allowance rather than the smaller
+    /// findings allowance.
+    pub(super) fn orientation_pass(
+        &self,
+        ctx: &DecodeContext<'_>,
+    ) -> Result<(Vec<Finding>, Vec<crate::body::ShellSignedVolume>), ResourceLimit> {
+        let model = &self.input.ir.model;
+        let items = model.faces.len() + model.edges.len();
+        let Some(allowance) = self.options.work.pass_allowance(items) else {
+            return Err(allowance_refusal(items));
+        };
+        self.findings_and_shells_under(ctx, &PassAllowance::new(allowance), true)
     }
 
     /// The findings under `pass`. A face or edge whose slice refused a
     /// charge is starved: no finding names it or the body that owns it, and
     /// the info finding counts the faces and bodies left unchecked.
+    #[cfg(test)]
     fn findings_under(
         &self,
         ctx: &DecodeContext<'_>,
         pass: &PassAllowance,
     ) -> Result<Vec<Finding>, ResourceLimit> {
+        self.findings_and_shells_under(ctx, pass, false)
+            .map(|(findings, _)| findings)
+    }
+
+    fn findings_and_shells_under(
+        &self,
+        ctx: &DecodeContext<'_>,
+        pass: &PassAllowance,
+        every_body: bool,
+    ) -> Result<(Vec<Finding>, Vec<crate::body::ShellSignedVolume>), ResourceLimit> {
+        let mut shell_volumes: Vec<crate::body::ShellSignedVolume> = Vec::new();
         let model = &self.input.ir.model;
         let (mut findings, mut unchecked) = self.ring_findings(pass);
         let mut starved: BTreeSet<&'ir str> = BTreeSet::new();
@@ -151,6 +183,13 @@ impl<'ir> Measurer<'ir> {
             .bodies
             .iter()
             .filter(|body| {
+                if every_body {
+                    return body
+                        .regions
+                        .iter()
+                        .filter_map(|region| self.owners.region(region.as_str()))
+                        .any(|region| region.shells.len() > 1);
+                }
                 let shells: Vec<_> = body
                     .regions
                     .iter()
@@ -255,6 +294,12 @@ impl<'ir> Measurer<'ir> {
             if !flux_bodies.contains(id) {
                 continue;
             }
+            if every_body {
+                if let Some(volumes) = bodies.shell_signed_volumes(body) {
+                    shell_volumes.extend(volumes);
+                }
+                continue;
+            }
             if starved_member {
                 unchecked_bodies += 1;
                 continue;
@@ -286,7 +331,7 @@ impl<'ir> Measurer<'ir> {
                 related: Vec::new(),
             });
         }
-        Ok(findings)
+        Ok((findings, shell_volumes))
     }
 
     /// One finding per face ring whose listed coedges are not a closed
