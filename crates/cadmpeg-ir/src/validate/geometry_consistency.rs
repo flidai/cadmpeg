@@ -132,6 +132,24 @@ fn support_surface_fit(
         .map_or(0.0, crate::geometry::FitTolerance::get)
 }
 
+/// Whether a support surface is the cache of a construction that the document
+/// does not decode and whose cache states no fit tolerance. Such a cache
+/// approximates a surface the check cannot evaluate, to an unknown distance,
+/// so a support side that misses it is not evidence of a wrong pcurve.
+fn support_cache_is_unverifiable(
+    index: &crate::index::ModelIndex<'_>,
+    surface: &crate::ids::SurfaceId,
+) -> bool {
+    index
+        .procedural_surface_for_surface(surface.as_str(), crate::index::StandardIndex)
+        .is_some_and(|procedural| {
+            matches!(
+                procedural.definition(),
+                crate::geometry::ProceduralSurfaceDefinition::Unknown { .. }
+            ) && procedural.cache_fit_tolerance().is_none()
+        })
+}
+
 /// Embedded support pcurves must map through their surfaces onto the curve
 /// they constrain at both ends of the construction interval.
 pub(super) fn check_procedural_support_consistency(
@@ -479,8 +497,10 @@ fn visit_support_failures(
             endpoint_mismatch(constrained[0], support_start),
             endpoint_mismatch(constrained[1], support_end),
         );
-        if !mismatch.is_finite() || mismatch > bound + support_surface_fit(model.index, surface_id)
-        {
+        let misses = !mismatch.is_finite()
+            || (mismatch > bound + support_surface_fit(model.index, surface_id)
+                && !support_cache_is_unverifiable(model.index, surface_id));
+        if misses {
             failure(side_index, mismatch);
         }
     }

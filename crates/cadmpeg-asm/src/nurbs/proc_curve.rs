@@ -93,6 +93,10 @@ pub enum SupportSlot {
     /// The support has a standalone geometry cache.
     Surface(SurfaceGeometry),
     /// The support has a standalone geometry cache and names a procedural
+    /// construction that this decoder does not read. The cache approximates a
+    /// surface that cannot be evaluated, within an unstated tolerance.
+    Undecoded(SurfaceGeometry),
+    /// The support has a standalone geometry cache and names a procedural
     /// construction that owns it.
     Constructed {
         /// The cache of the construction.
@@ -115,7 +119,7 @@ impl SupportSlot {
         Option<Box<crate::nurbs::proc_surface::DecodedProceduralSurface>>,
     )> {
         match self {
-            Self::Surface(surface) => Some((surface, None)),
+            Self::Surface(surface) | Self::Undecoded(surface) => Some((surface, None)),
             Self::Constructed {
                 surface,
                 construction,
@@ -694,7 +698,9 @@ fn selected_support_pcurve<'a>(
     slot: usize,
 ) -> Option<&'a PcurveNurbs> {
     match surfaces.get(slot)? {
-        SupportSlot::Surface(_) | SupportSlot::Constructed { .. } => pcurves.get(slot)?.as_ref(),
+        SupportSlot::Surface(_) | SupportSlot::Undecoded(_) | SupportSlot::Constructed { .. } => {
+            pcurves.get(slot)?.as_ref()
+        }
         SupportSlot::Absent | SupportSlot::DeclaredOnly => None,
     }
 }
@@ -718,6 +724,7 @@ fn selected_pcurve(decoded: &DecodedProceduralCurve, slot: usize) -> Option<&Pcu
                 SupportSlot::Absent => return None,
                 SupportSlot::DeclaredOnly
                 | SupportSlot::Surface(_)
+                | SupportSlot::Undecoded(_)
                 | SupportSlot::Constructed { .. } => {}
             }
             context.pcurves.get(slot)?.as_ref()
@@ -3078,6 +3085,14 @@ pub(super) struct EmbeddedSurfaceWithBounds {
     pub(super) bounds: [Option<f64>; 4],
 }
 
+/// Whether the record owns a spline-surface construction by name. Every
+/// spline-surface subtype name ends in `sur` (`docs/formats/asm.md`, the
+/// spline-surface subtype paragraphs); a construction cache under any other
+/// name is a plain cache.
+fn names_spline_surface_construction(toks: &[Token]) -> bool {
+    crate::nurbs::toks::owned_construction_subtype(toks).is_some_and(|name| name.ends_with("sur"))
+}
+
 /// Parse an optional embedded support surface and its U/V bounds.
 pub(super) fn optional_embedded_surface_with_bounds(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
@@ -3124,6 +3139,11 @@ pub(super) fn optional_embedded_surface_with_bounds(
                             construction: Box::new(construction),
                         },
                         Some(Err(error)) => return Some(Err(error)),
+                        // A named construction whose layout this decoder does
+                        // not read: its cache stays, as a cache of unknown fit.
+                        None if names_spline_surface_construction(target.tokens()) => {
+                            SupportSlot::Undecoded(surface)
+                        }
                         None => SupportSlot::Surface(surface),
                     }
                 } else if propagate_resource!(

@@ -484,6 +484,28 @@ fn support_surface_fit_tolerance_widens_the_support_allowance() {
     assert_eq!(beyond.len(), 1);
 }
 
+/// A support surface whose construction the document does not decode, and
+/// whose cache states no fit tolerance, is an approximation of unknown
+/// distance: a side that misses it is not reported. The same gap over a
+/// support with no construction is.
+#[test]
+fn support_cache_of_an_undecoded_construction_is_not_checked() {
+    let mut ir = mapped_surface_curve_over_gapped_support(0.05, None);
+    assert_eq!(support_findings(&ir).len(), 1);
+
+    let construction = procedural_surface! {
+        id: ProceduralSurfaceId::mint("test:model:entity#support-construction").expect("valid identity"),
+        definition: ProceduralSurfaceDefinition::Unknown { record: None, cache: None },
+        cache_fit_tolerance: None,
+        record_bounds: None,
+    };
+    let support = ir.model.surfaces[0].id.clone();
+    ir.model
+        .add_procedural_surface(&support, construction)
+        .unwrap();
+    assert!(support_findings(&ir).is_empty());
+}
+
 #[test]
 fn surface_offset_support_constrains_the_embedded_base_curve() {
     let mut findings = Vec::new();
