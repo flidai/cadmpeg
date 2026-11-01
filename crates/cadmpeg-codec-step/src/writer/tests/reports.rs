@@ -1462,6 +1462,7 @@ fn unsupported_nested_and_polygonal_carriers_are_skipped_without_panicking() {
     assert!(report.losses.iter().any(|loss| {
         loss.code.category() == cadmpeg_ir::report::loss::LossCategory::Geometry
             && loss.message.contains("unknown or STEP-unsupported surface")
+            && loss.message.ends_with("(polygonal: 1)")
     }));
 
     let mut nested_unknown = unit_cube().expect("unit cube fixture is admitted");

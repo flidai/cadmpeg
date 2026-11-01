@@ -373,7 +373,7 @@ pub(crate) struct Builder<'a> {
     /// Faces skipped because their surface geometry is unknown (opaque), so no
     /// STEP surface exists to build an `ADVANCED_FACE` on. Deduplicated (a face
     /// is reached once per shell) and aggregated into a single counted loss.
-    unknown_surface_faces: BTreeSet<String>,
+    unknown_surface_faces: BTreeMap<String, String>,
 
     /// Individual enclosing topology relations that could not be emitted.
     topology_relation_losses: BTreeSet<String>,
@@ -781,7 +781,7 @@ impl<'a> Builder<'a> {
             point_loop_points: BTreeSet::new(),
             collapsed_curveless_coedges: BTreeSet::new(),
             seam_rings: HashMap::new(),
-            unknown_surface_faces: BTreeSet::new(),
+            unknown_surface_faces: BTreeMap::new(),
             topology_relation_losses: BTreeSet::new(),
             face_step_refs: HashMap::new(),
             body_step_refs: HashMap::new(),
@@ -3240,6 +3240,43 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// The kind of a surface for a loss note: the geometry tag and, for a
+    /// procedural surface, the tag of its definition.
+    fn surface_kind_name(&self, surface_id: &str) -> String {
+        let tag = |value: Option<serde_json::Value>, key: &str| {
+            value
+                .as_ref()
+                .and_then(|value| value.get(key))
+                .and_then(|tag| tag.as_str())
+                .map(str::to_owned)
+        };
+        let geometry = self
+            .surfaces
+            .get(surface_id)
+            .and_then(|surface| tag(serde_json::to_value(&surface.geometry).ok(), "kind"))
+            .unwrap_or_else(|| "missing".to_owned());
+        match self.procedural_surfaces.get(surface_id) {
+            Some(procedural) => {
+                let definition = tag(serde_json::to_value(procedural.definition()).ok(), "kind")
+                    .unwrap_or_else(|| "unnamed".to_owned());
+                format!("{geometry}/{definition}")
+            }
+            None => geometry,
+        }
+    }
+
+    fn unknown_surface_kind_counts(&self) -> String {
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for kind in self.unknown_surface_faces.values() {
+            *counts.entry(kind.as_str()).or_default() += 1;
+        }
+        counts
+            .iter()
+            .map(|(kind, count)| format!("{kind}: {count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Writes the face use, or its reverse when `reversed` is set: the
     /// reverse flips the face `same_sense` and the orientation of every bound.
     fn emit_face(&mut self, face_id: &str, reversed: bool) -> Option<Ref> {
@@ -3263,7 +3300,8 @@ impl<'a> Builder<'a> {
         // Surface emission admits either a writable construction or a solved
         // carrier. An absent or opaque solved cache cannot veto a construction.
         let Some(surf_ref) = self.emit_surface(surface_id) else {
-            self.unknown_surface_faces.insert(face_id.to_string());
+            let kind = self.surface_kind_name(surface_id);
+            self.unknown_surface_faces.insert(face_id.to_string(), kind);
             return None;
         };
         // The face sense is relative to the carrier's normal. A sphere or
@@ -5689,8 +5727,9 @@ impl<'a> Builder<'a> {
                 format!(
                     "{} face(s) rest on an unknown or STEP-unsupported surface and were omitted \
                      from the STEP shell (an ADVANCED_FACE requires a surface); their \
-                     topology remains in the IR",
-                    self.unknown_surface_faces.len()
+                     topology remains in the IR ({})",
+                    self.unknown_surface_faces.len(),
+                    self.unknown_surface_kind_counts()
                 ),
             );
         }
