@@ -3178,6 +3178,7 @@ impl<'a> Builder<'a> {
         let axis = *torus.frame().axis().as_raw();
         let on_axis = 1e-7 * minor.abs().max(major).max(1.0);
         let (mut plus, mut minus) = (0_usize, 0_usize);
+        let mut on_the_axis = false;
         for loop_id in &face.loops {
             let Some(ring) = self.loops.get(loop_id.as_str()).copied() else {
                 continue;
@@ -3206,6 +3207,7 @@ impl<'a> Builder<'a> {
                 ];
                 let radial = (across[0].powi(2) + across[1].powi(2) + across[2].powi(2)).sqrt();
                 if radial <= on_axis {
+                    on_the_axis = true;
                     continue;
                 }
                 let residual = |rho: f64| {
@@ -3218,6 +3220,9 @@ impl<'a> Builder<'a> {
                     minus += 1;
                 }
             }
+        }
+        if on_the_axis {
+            return false;
         }
         match (plus > 0, minus > 0) {
             (true, false) => minor < 0.0,

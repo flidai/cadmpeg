@@ -306,6 +306,12 @@ fn face_on_a_sphere_with_a_negative_radius_states_the_opposite_sense() {
 /// `R = 1` and tube radius `minor_radius`, with every vertex of the face moved
 /// to `position`. The face sense is forward.
 fn apple_face_sense(minor_radius: f64, position: [f64; 3]) -> String {
+    apple_face_sense_at(minor_radius, &[position])
+}
+
+/// As [`apple_face_sense`], with the vertices of the face moved to the
+/// positions in turn.
+fn apple_face_sense_at(minor_radius: f64, positions: &[[f64; 3]]) -> String {
     let mut ir = unit_cube().expect("unit cube fixture is admitted");
     ir.model.surfaces[0].geometry = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Torus(
         cadmpeg_ir::geometry::analytic::TorusSurface::try_new(
@@ -317,9 +323,6 @@ fn apple_face_sense(minor_radius: f64, position: [f64; 3]) -> String {
         )
         .unwrap(),
     ));
-    let target =
-        cadmpeg_ir::features::FinitePoint3::new(Point3::new(position[0], position[1], position[2]))
-            .unwrap();
     let face_loops = ir.model.faces[0].loops.clone();
     let mut points = Vec::new();
     for loop_id in &face_loops {
@@ -346,13 +349,17 @@ fn apple_face_sense(minor_radius: f64, position: [f64; 3]) -> String {
             points.push(vertex.point.clone());
         }
     }
-    for point in ir
+    for (index, point) in ir
         .model
         .points
         .iter_mut()
         .filter(|p| points.contains(&p.id))
+        .enumerate()
     {
-        point.set_position(target);
+        let at = positions[index % positions.len()];
+        point.set_position(
+            cadmpeg_ir::features::FinitePoint3::new(Point3::new(at[0], at[1], at[2])).unwrap(),
+        );
     }
     let mut buf = Vec::new();
     write_step(
@@ -404,4 +411,14 @@ fn face_on_a_torus_wider_than_its_major_radius_ignores_vertices_on_the_axis() {
     let pole = [1e-10, 0.0, 3.0_f64.sqrt()];
     assert_eq!(apple_face_sense(2.0, pole), ".T.");
     assert_eq!(apple_face_sense(-2.0, pole), ".T.");
+}
+
+/// A face with a vertex on the axis reaches across it, where the sign of `rho`
+/// changes inside the face, so the other vertices decide nothing.
+#[test]
+fn face_on_a_torus_wider_than_its_major_radius_with_a_vertex_on_the_axis_keeps_its_sense() {
+    let pole = [0.0, 0.0, 3.0_f64.sqrt()];
+    let inner = [0.5, 0.0, 2.0 * (1.0_f64 - 0.5625).sqrt()];
+    assert_eq!(apple_face_sense_at(2.0, &[inner]), ".F.");
+    assert_eq!(apple_face_sense_at(2.0, &[inner, pole]), ".T.");
 }
