@@ -1,8 +1,9 @@
-# flidai converter branch `flidai/ipt-step-r4`
+# flidai converter branch `flidai/ipt-step-r6`
 
-Based on upstream `v0.6.7`. Modified files retain the upstream Apache-2.0 license. Each change is
-a fix proposed upstream from a `fix/*` branch of github.com/flidai/cadmpeg; drop it once the
-upstream pull request is in a release.
+Based on upstream `v0.6.7`. Modified files retain the upstream Apache-2.0 license. The changes in
+this first list are fixes meant for upstream, each from a `fix/*` branch of
+github.com/flidai/cadmpeg or still to be proposed; drop each once its upstream pull request is in
+a release. The rounds below it are fork-only.
 
 - `crates/cadmpeg-codec-step` writer, `docs/formats/step.md`: write a torus whose tube radius
   exceeds its major radius as a revolved tube (`fix/self-crossing-torus-revolution`).
@@ -19,14 +20,18 @@ upstream pull request is in a release.
   (`fix/offset-curve-base-sense`).
 - `crates/cadmpeg-codec-step` writer, `docs/formats/step.md`: state the opposite face `same_sense`
   for a face on a sphere with a negative radius or on a torus with a negative tube radius, whose
-  `SPHERICAL_SURFACE` and `TOROIDAL_SURFACE` records hold the magnitude (`fix/signed-radius-face-sense`).
+  `SPHERICAL_SURFACE` and `TOROIDAL_SURFACE` records hold the magnitude (`fix/negative-radius-face-sense`).
 - `crates/cadmpeg-ir`: let a coedge use curve span one period of a periodic NURBS from any start
-  (`fix/periodic-use-curve-range`).
+  (to be proposed upstream).
 - `crates/cadmpeg-asm`, `crates/cadmpeg-ir`, `docs/formats/asm.md`: keep the cache of an intcurve
   support whose named construction is not read as a surface of unknown fit, and test no support
-  side against it (`fix/undecoded-support-cache`).
+  side against it (to be proposed upstream).
 - `crates/cadmpeg-ir`: place a finding on a record of a native namespace the document carries, so a
-  malformed source record of another format does not refuse an export (`fix/native-finding-scope`).
+  malformed source record of another format does not refuse an export (to be proposed upstream).
+
+- `crates/cadmpeg-codec-step` writer: write an apostrophe in text that also holds a comma as the
+  wide escape of U+0027, so readers that end a string at a doubled apostrophe followed by a comma
+  read the file (`fix/step-apostrophe-wide-escape`).
 
 ## Round 5, fork-only (not proposed upstream)
 
