@@ -2453,6 +2453,15 @@ fn sketch_feature(
     })
 }
 
+/// Whether a feature-label class is one whose family this decoder names.
+pub(crate) fn names_feature_class(class_id: ClassId) -> bool {
+    FeatureFamily::from_class_id(class_id).is_some()
+        || loft_sweep::slots::Family::from_class_id(class_id).is_some()
+        || NATIVE_CLASSES
+            .iter()
+            .any(|(bytes, _)| *bytes == class_id.0.into_inner())
+}
+
 /// Native family of a feature-label class identifier.
 fn native_kind(class_id: Option<ClassId>) -> cadmpeg_ir::features::NativeFeatureKind {
     use cadmpeg_ir::features::NativeFeatureKind;

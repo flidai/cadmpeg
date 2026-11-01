@@ -521,6 +521,27 @@ fn mixed_solid_and_sheet_geometry_uses_linked_representations() {
 }
 
 #[test]
+fn a_hidden_sheet_body_is_left_out_of_the_shape() {
+    let mut ir = assembly(false);
+    ir.model.bodies[1].kind = BodyKind::Sheet;
+    ir.model.bodies[1].visible = Some(false);
+    ir.model.product_definitions.clear();
+    ir.model.occurrences.clear();
+    let mut bytes = Vec::new();
+    write_step(
+        &ir,
+        &mut bytes,
+        StepSchema::Ap214,
+        &StepWriteOptions::default(),
+    )
+    .unwrap();
+    let (exchange, _) =
+        crate::test_support::with_service_context(&bytes, crate::parse::parse_inner).unwrap();
+    assert_solid_representation_membership(&exchange, 1);
+    assert!(entities(&exchange, "SHELL_BASED_SURFACE_MODEL").is_empty());
+}
+
+#[test]
 fn omitted_solid_geometry_does_not_create_an_empty_advanced_representation() {
     for schema in [
         StepSchema::Ap203Edition1,

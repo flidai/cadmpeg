@@ -2072,6 +2072,15 @@ impl<'a> Builder<'a> {
                 .bodies
                 .get(region.body.as_str())
                 .map_or(BodyKind::General, |body| body.kind);
+            // Fork-only: a hidden sheet is not part of the exported shape.
+            if body_kind == BodyKind::Sheet
+                && self
+                    .bodies
+                    .get(region.body.as_str())
+                    .is_some_and(|body| body.visible == Some(false))
+            {
+                continue;
+            }
             let has_surface_topology = region.shells.iter().any(|shell_id| {
                 self.shells
                     .get(shell_id.as_str())

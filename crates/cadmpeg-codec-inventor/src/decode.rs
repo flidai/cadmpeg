@@ -18,6 +18,7 @@ use cadmpeg_ir::hash::sha256_hex;
 use cadmpeg_ir::ids::{ProductDefinitionId, UnknownId};
 use cadmpeg_ir::products::{ProductDefinition, ProductDefinitionKind};
 use cadmpeg_ir::report::decode::TransferLedger;
+use cadmpeg_ir::topology::BodyKind;
 use cadmpeg_ir::{AnnotationBuilder, SourceFidelity, UnknownRecord};
 
 use crate::container::InventorContainer;
@@ -618,6 +619,25 @@ fn decode_container<'a>(
             .ok_or_else(|| {
                 CodecError::malformed("Inventor Base projection exceeds unresolved feature count")
             })?;
+    }
+    // Fork-only: a part whose feature history names a feature family and that
+    // has a solid keeps its construction surfaces in the kernel stream; they
+    // are consumed by later features and are not displayed.
+    if ir
+        .model
+        .bodies
+        .iter()
+        .any(|body| body.kind == BodyKind::Solid)
+        && feature_inventory
+            .labels
+            .iter()
+            .any(|label| crate::feature::names_feature_class(label.class_id()))
+    {
+        for body in &mut ir.model.bodies {
+            if body.kind == BodyKind::Sheet {
+                body.visible = Some(false);
+            }
+        }
     }
     ir.set_native_unknowns(ctx, "inventor", &[])?;
     let geometry_transferred =
