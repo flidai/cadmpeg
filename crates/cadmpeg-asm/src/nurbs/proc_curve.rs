@@ -614,6 +614,12 @@ fn pcurve_for_selector_recursive(
             let pcurve = pcurve.clone();
             return Some(Ok((pcurve, false)));
         }
+        if matches!(&decoded.construction, ProceduralCurveConstruction::Unknown(kind) if kind == "comp_int_cur")
+        {
+            if let Some(result) = revision_compound_pcurve(ctx, toks, slot, table, seen) {
+                return Some(result);
+            }
+        }
         if !matches!(&decoded.construction, ProceduralCurveConstruction::Unknown(kind) if kind == "intcurve")
         {
             // Modern exact curves can carry the same cache-first support
@@ -3220,7 +3226,19 @@ fn revision_compound_result(
     })
 }
 
-fn revision_compound_curve(toks: &[Token], table: &SubtypeTable) -> Option<NurbsCurve> {
+/// A child slot of a revision-gated `comp_int_cur`.
+struct CompoundChild<'a> {
+    /// The balanced scope of the child's construction.
+    scope: crate::nurbs::toks::SubtypeScope<'a>,
+    /// Whether the child runs against its own parameter direction.
+    reversed: bool,
+    /// Lower and upper parameter kept.
+    range: [Option<f64>; 2],
+}
+
+/// The child slots of a revision-gated `comp_int_cur` and the lower bound of
+/// its interval.
+fn revision_compound_children(toks: &[Token]) -> Option<(Vec<CompoundChild<'_>>, Option<f64>)> {
     let (marker, _) = crate::nurbs::toks::find_owned_subtype_marker(toks, &["comp_int_cur"])?;
     let span = crate::nurbs::toks::subtype_span(toks, marker)?.tokens();
     let mut cur = Cur::at(span, 2);
@@ -3230,7 +3248,7 @@ fn revision_compound_curve(toks: &[Token], table: &SubtypeTable) -> Option<Nurbs
     cur.take_optional_range_value()?;
     let mut depth = 0_usize;
     let mut position = cur.pos();
-    let mut parts = Vec::new();
+    let mut children = Vec::new();
     while position + 1 < span.len() {
         match &span[position] {
             Token::SubtypeOpen => depth += 1,
@@ -3240,27 +3258,77 @@ fn revision_compound_curve(toks: &[Token], table: &SubtypeTable) -> Option<Nurbs
                 matches!(span.get(position + 1)?, Token::True | Token::False).then_some(())?;
                 matches!(span.get(position + 2)?, Token::SubtypeOpen).then_some(())?;
                 let scope = crate::nurbs::toks::subtype_span(span, position + 2)?;
-                let mut curve = crate::nurbs::core::owned_curve_cache_resolving_refs(scope, table)?;
-                if reversed {
-                    curve.reverse_parameterization();
-                }
                 let mut ends = Cur::at(span, position + 2 + scope.tokens().len());
                 let range = [
                     ends.take_optional_range_value()?.value(),
                     ends.take_optional_range_value()?.value(),
                 ];
-                parts.push(crate::nurbs::compose::CurvePart { curve, range });
                 position = ends.pos();
+                children.push(CompoundChild {
+                    scope,
+                    reversed,
+                    range,
+                });
                 continue;
             }
             _ => {}
         }
         position += 1;
     }
-    if parts.is_empty() {
-        return None;
-    }
+    (!children.is_empty()).then_some((children, start))
+}
+
+fn revision_compound_curve(toks: &[Token], table: &SubtypeTable) -> Option<NurbsCurve> {
+    let (children, start) = revision_compound_children(toks)?;
+    let parts = children
+        .iter()
+        .map(|child| {
+            let mut curve =
+                crate::nurbs::core::owned_curve_cache_resolving_refs(child.scope, table)?;
+            if child.reversed {
+                curve.reverse_parameterization();
+            }
+            Some(crate::nurbs::compose::CurvePart {
+                curve,
+                range: child.range,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
     crate::nurbs::compose::join_curve_parts(&parts, start)
+}
+
+/// The parameter curve of one support slot of a revision-gated `comp_int_cur`:
+/// the slot's parameter curves of its children over the same ranges, joined.
+fn revision_compound_pcurve(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    toks: &[Token],
+    slot: usize,
+    table: &SubtypeTable,
+    seen: &std::collections::HashSet<usize>,
+) -> Option<Result<(PcurveNurbs, bool), cadmpeg_core::CodecError>> {
+    let (children, start) = revision_compound_children(toks)?;
+    let mut parts = Vec::new();
+    for child in &children {
+        let (pcurve, in_chart) = match pcurve_for_selector_recursive(
+            ctx,
+            child.scope.tokens(),
+            slot,
+            table,
+            &mut seen.clone(),
+        )? {
+            Ok(found) => found,
+            Err(error) => return Some(Err(error)),
+        };
+        if in_chart {
+            return None;
+        }
+        parts.push(crate::nurbs::compose::PcurvePart {
+            curve: pcurve,
+            range: child.range,
+            reversed: child.reversed,
+        });
+    }
+    crate::nurbs::compose::join_pcurve_parts(&parts, start).map(|pcurve| Ok((pcurve, false)))
 }
 
 fn compound_definition(toks: &[Token]) -> Option<CompoundDefinition> {
