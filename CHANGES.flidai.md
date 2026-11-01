@@ -33,11 +33,14 @@ a release. The rounds below it are fork-only.
   no cache, or whose vertex-blend circle twist is a location (`c/r7-variable-blend-grammar`,
   stacked on the calibration change above).
 - `crates/cadmpeg-ir`: allow the roundoff of a stored coedge use-curve range on an open NURBS
-  carrier (`c/r7-use-curve-roundoff`, stacked on the periodic use-curve change above).
+  carrier. Upstream #631 (`6295aff6ca`) admits the same range; drop this change and the periodic
+  one above when the fork rebases onto a release that has it.
 - `crates/cadmpeg-asm`, `docs/formats/asm.md`: decode a revision-gated `comp_int_cur` as its
-  children's ranges joined end to end (`c/r7-comp-int-cur`).
+  children's ranges joined end to end (`c/r7-comp-int-cur`). The parameter curve of a support slot
+  is the same join over the children's parameter curves (fork commit `ace654da76`).
 - `crates/cadmpeg-codec-inventor`: name the undecoded surface, curve and parameter-curve kinds and
-  their counts in the loss notes (`c/r7-loss-kind-counts`).
+  their counts in the loss notes (`c/r7-loss-kind-counts`). The STEP writer's note for faces
+  omitted for an unknown or unsupported surface names the kinds too (fork-only).
 
 - `crates/cadmpeg-codec-step` writer: write an apostrophe in text that also holds a comma as the
   wide escape of U+0027, so readers that end a string at a doubled apostrophe followed by a comma
@@ -83,3 +86,14 @@ These select by a measured quantity too.
   surfaces in the kernel stream. The decoder marks those sheet bodies hidden and the STEP writer
   leaves a hidden sheet out of the shape (`c/r7`). A part without a named feature family keeps its
   sheets.
+- `crates/cadmpeg-codec-step` writer, `crates/cadmpeg` application: the shell-volume measurement of
+  the round 5 and 6 outer-shell rule moves out of the writer. The writer exposes
+  `set_shell_volume_provider`, the command-line application registers the measurement, and the
+  writer no longer depends on `cadmpeg-measure`. The three tolerances of the round 5 and 6 rules
+  are named constants. Output is unchanged, and `python3 scripts/check-source-policy.py` passes.
+
+## Identity
+
+The fork identity string is `ipt-step-v1+cadmpeg-0.6.7+flidai.r7`; it lives in the application
+repository (`IPT_SIDECAR_VERSION`), not in this tree. `cadmpeg --version` prints the upstream
+version only.
