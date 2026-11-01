@@ -36,8 +36,7 @@ a release. The rounds below it are fork-only.
   carrier. Upstream #631 (`6295aff6ca`) admits the same range; drop this change and the periodic
   one above when the fork rebases onto a release that has it.
 - `crates/cadmpeg-asm`, `docs/formats/asm.md`: decode a revision-gated `comp_int_cur` as its
-  children's ranges joined end to end (`c/r7-comp-int-cur`). The parameter curve of a support slot
-  is the same join over the children's parameter curves (fork commit `ace654da76`).
+  children's ranges joined end to end (`c/r7-comp-int-cur`).
 - `crates/cadmpeg-codec-inventor`: name the undecoded surface, curve and parameter-curve kinds and
   their counts in the loss notes (`c/r7-loss-kind-counts`). The STEP writer's note for faces
   omitted for an unknown or unsupported surface names the kinds too (fork-only).
