@@ -30,6 +30,22 @@ pub struct StepCodec {
     pub options: StepWriteOptions,
 }
 
+impl StepCodec {
+    /// Register the measurement the writer uses to choose the outer shell of a
+    /// region with several shells: for the shells named by the second
+    /// argument, each shell's identity, the signed volume it encloses, and
+    /// whether every face was measured. Without one the first shell stays the
+    /// exterior. Fork-only: not for upstream.
+    pub fn set_shell_volume_provider(
+        provider: fn(
+            &cadmpeg_ir::document::CadIr,
+            &std::collections::BTreeSet<String>,
+        ) -> Vec<(String, f64, bool)>,
+    ) {
+        crate::export::register_shell_volume_provider(provider);
+    }
+}
+
 impl EncoderBackend for StepCodec {
     const FORMAT: FormatId = <Self as CodecBackend>::FORMAT;
     /// Writes B-rep, product structure, presentation and PMI; design arenas are

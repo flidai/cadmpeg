@@ -49,7 +49,6 @@ mod writer;
 pub mod fuzz;
 
 pub use codec::StepCodec;
-pub use export::{set_shell_volume_provider, ShellVolume, ShellVolumeProvider};
 pub use options::{StepSchema, StepWriteOptions};
 
 #[cfg(test)]

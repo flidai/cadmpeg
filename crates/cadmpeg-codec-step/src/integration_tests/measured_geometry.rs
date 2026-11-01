@@ -26,7 +26,7 @@ const TEST_ABSOLUTE_FLOOR: f64 = 1.0e-9;
 
 /// Register the measurement the command-line application supplies.
 fn register_shell_volumes() {
-    crate::set_shell_volume_provider(|ir, scope| {
+    crate::StepCodec::set_shell_volume_provider(|ir, scope| {
         let arena = DecodeArena::new();
         let policy = DecodePolicy::desktop();
         let Ok(ctx) = DecodeContext::for_loaded_input(&arena, &policy, 0) else {
@@ -39,11 +39,7 @@ fn register_shell_volumes() {
         cadmpeg_measure::shell_signed_volumes(&ctx, ir, options, scope)
             .unwrap_or_default()
             .into_iter()
-            .map(|entry| crate::ShellVolume {
-                shell: entry.shell,
-                volume: entry.volume,
-                complete: entry.complete,
-            })
+            .map(|entry| (entry.shell, entry.volume, entry.complete))
             .collect()
     });
 }

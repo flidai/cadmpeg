@@ -569,27 +569,16 @@ pub(crate) fn shells_to_measure(ir: &CadIr) -> (BTreeSet<String>, BTreeSet<Strin
     (scope, assumed)
 }
 
-/// The signed volume a shell encloses and whether the measurement finished.
-/// Fork-only: not for upstream.
-pub struct ShellVolume {
-    /// Identity of the shell.
-    pub shell: String,
-    /// Signed volume enclosed under the face-sense reading.
-    pub volume: f64,
-    /// Whether every face of the shell was measured.
-    pub complete: bool,
-}
-
-/// A measurement of the shells named by the second argument. The writer links
-/// no measurement code; the command-line application registers the provider.
-pub type ShellVolumeProvider = fn(&CadIr, &BTreeSet<String>) -> Vec<ShellVolume>;
+/// A measurement of the shells named by the second argument: for each shell
+/// its identity, the signed volume it encloses under the face-sense reading,
+/// and whether every face was measured. The writer links no measurement code;
+/// the command-line application registers the provider. Fork-only: not for
+/// upstream.
+pub(crate) type ShellVolumeProvider = fn(&CadIr, &BTreeSet<String>) -> Vec<(String, f64, bool)>;
 
 static SHELL_VOLUME_PROVIDER: std::sync::OnceLock<ShellVolumeProvider> = std::sync::OnceLock::new();
 
-/// Register the measurement of shell volumes used to choose the outer shell
-/// of a region with several shells. Without a provider the first shell stays
-/// the exterior. Fork-only: not for upstream.
-pub fn set_shell_volume_provider(provider: ShellVolumeProvider) {
+pub(crate) fn register_shell_volume_provider(provider: ShellVolumeProvider) {
     SHELL_VOLUME_PROVIDER.get_or_init(|| provider);
 }
 
@@ -610,7 +599,7 @@ fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     let (scope, assumed) = shells_to_measure(ir);
     let mut measured: HashMap<String, (f64, bool)> = provider(ir, &scope)
         .into_iter()
-        .map(|entry| (entry.shell, (entry.volume, entry.complete)))
+        .map(|(shell, volume, complete)| (shell, (volume, complete)))
         .collect();
     // A shell that encloses its region and is listed after the first is the
     // exterior when the first is not positive: it is taken as the largest.

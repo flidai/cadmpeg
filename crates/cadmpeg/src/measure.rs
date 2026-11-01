@@ -223,7 +223,7 @@ fn run(
 pub(crate) fn step_shell_volumes(
     ir: &cadmpeg_ir::document::CadIr,
     scope: &std::collections::BTreeSet<String>,
-) -> Vec<cadmpeg_codec_step::ShellVolume> {
+) -> Vec<(String, f64, bool)> {
     let arena = DecodeArena::new();
     let policy = cadmpeg_core::decode::DecodePolicy::desktop();
     let Ok(ctx) = DecodeContext::for_loaded_input(&arena, &policy, 0) else {
@@ -236,10 +236,6 @@ pub(crate) fn step_shell_volumes(
     cadmpeg_measure::shell_signed_volumes(&ctx, ir, options, scope)
         .unwrap_or_default()
         .into_iter()
-        .map(|entry| cadmpeg_codec_step::ShellVolume {
-            shell: entry.shell,
-            volume: entry.volume,
-            complete: entry.complete,
-        })
+        .map(|entry| (entry.shell, entry.volume, entry.complete))
         .collect()
 }
