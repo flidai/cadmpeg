@@ -3138,7 +3138,9 @@ impl<'a> Builder<'a> {
     /// the carrier points away from the tube center for a positive `r` and
     /// toward it for a negative one. The written record holds `|r|`, so a face
     /// on the sheet where the sign of `rho` differs from the sign of `r` states
-    /// the opposite sense. A face with vertices on both sheets is left alone.
+    /// the opposite sense. A vertex on the axis (`rho = 0`) belongs to both
+    /// sheets and decides nothing; a face with vertices on both sheets is left
+    /// alone.
     fn apple_sense_flip(&self, face: &Face) -> bool {
         let Some(Some(SolvedSurfaceGeometry::Torus(torus))) = self
             .surfaces
@@ -3154,6 +3156,7 @@ impl<'a> Builder<'a> {
         }
         let center = torus.center().get();
         let axis = *torus.frame().axis().as_raw();
+        let on_axis = 1e-7 * minor.abs().max(major).max(1.0);
         let (mut plus, mut minus) = (0_usize, 0_usize);
         for loop_id in &face.loops {
             let Some(ring) = self.loops.get(loop_id.as_str()).copied() else {
@@ -3182,6 +3185,9 @@ impl<'a> Builder<'a> {
                     offset[2] - height * axis.z,
                 ];
                 let radial = (across[0].powi(2) + across[1].powi(2) + across[2].powi(2)).sqrt();
+                if radial <= on_axis {
+                    continue;
+                }
                 let residual = |rho: f64| {
                     (((rho - major) / minor).powi(2) + (height / minor).powi(2) - 1.0).abs()
                 };

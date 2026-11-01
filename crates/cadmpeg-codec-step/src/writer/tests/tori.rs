@@ -393,3 +393,15 @@ fn face_on_a_torus_wider_than_its_major_radius_follows_the_sheet() {
     assert_eq!(apple_face_sense(-2.0, outer), ".F.");
     assert_eq!(apple_face_sense(-2.0, inner), ".T.");
 }
+
+/// A vertex on the axis lies on both sheets of the torus, so a face whose
+/// vertices are all on the axis keeps the carrier sense for either tube sign.
+#[test]
+fn face_on_a_torus_wider_than_its_major_radius_ignores_vertices_on_the_axis() {
+    // `R = 1`, `|r| = 2`: the torus meets the axis where `rho = 0`, at
+    // `cos v = -0.5`, height `2 sin v = sqrt(3)`.
+    // The vertex is off the axis by rounding noise, which would pick a sheet.
+    let pole = [1e-10, 0.0, 3.0_f64.sqrt()];
+    assert_eq!(apple_face_sense(2.0, pole), ".T.");
+    assert_eq!(apple_face_sense(-2.0, pole), ".T.");
+}
