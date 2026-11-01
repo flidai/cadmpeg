@@ -19,7 +19,6 @@ base64.workspace = true
 cadmpeg-container.workspace = true
 cadmpeg-core.workspace = true
 cadmpeg-ir = { workspace = true }
-cadmpeg-measure.workspace = true
 thiserror = { workspace = true }
 encoding_rs = { workspace = true }
 serde.workspace = true

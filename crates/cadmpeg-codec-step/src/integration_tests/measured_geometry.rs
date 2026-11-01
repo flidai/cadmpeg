@@ -24,6 +24,30 @@ use crate::{StepCodec, StepSchema, StepWriteOptions};
 /// numeric error, per unit of the larger of the expected magnitude and 1.
 const TEST_ABSOLUTE_FLOOR: f64 = 1.0e-9;
 
+/// Register the measurement the command-line application supplies.
+fn register_shell_volumes() {
+    crate::set_shell_volume_provider(|ir, scope| {
+        let arena = DecodeArena::new();
+        let policy = DecodePolicy::desktop();
+        let Ok(ctx) = DecodeContext::for_loaded_input(&arena, &policy, 0) else {
+            return Vec::new();
+        };
+        let options = MeasureOptions {
+            work: cadmpeg_measure::WorkProfile::Desktop,
+            density: None,
+        };
+        cadmpeg_measure::shell_signed_volumes(&ctx, ir, options, scope)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| crate::ShellVolume {
+                shell: entry.shell,
+                volume: entry.volume,
+                complete: entry.complete,
+            })
+            .collect()
+    });
+}
+
 /// The orientation findings of `ir`.
 fn orientation_findings(ir: &CadIr) -> Vec<cadmpeg_ir::report::check::Finding> {
     let arena = DecodeArena::new();
@@ -287,6 +311,7 @@ fn void_listed_first_is_written_as_a_void() {
         "the void listed first is a conflict: {before:#?}"
     );
 
+    register_shell_volumes();
     let mut output = Vec::new();
     write_step(
         &ir,

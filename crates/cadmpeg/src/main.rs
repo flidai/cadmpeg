@@ -419,6 +419,8 @@ fn main() -> ExitCode {
     #[cfg(unix)]
     reset_sigpipe();
     let command = Cli::parse().command;
+    #[cfg(feature = "step")]
+    cadmpeg_codec_step::set_shell_volume_provider(measure::step_shell_volumes);
     let inputs = InputCatalog::with_builtins();
     let result: Result<ExitCode, application::refusal::ApplicationError> = match command {
         Command::Inspect(inspect::InspectArgs::Bytes(byte_command)) => {

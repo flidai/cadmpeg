@@ -44,6 +44,15 @@ mod representations;
 mod wire;
 
 const EPS_IDENTITY: f64 = 1.0e-12;
+/// Fraction of the largest box extent by which one shell's vertex box may
+/// stand outside another and still be enclosed by it. Fork-only.
+const SHELL_BOX_SLACK_FRACTION: f64 = 1.0e-6;
+/// Fraction of the larger torus radius within which a vertex counts as on the
+/// axis when the sheet of an apple torus is read. Fork-only.
+const APPLE_AXIS_FRACTION: f64 = 1.0e-7;
+/// Largest residual of the torus equation, in model length units, at which a
+/// vertex counts as on a sheet. Fork-only.
+const APPLE_SHEET_RESIDUAL: f64 = 1.0e-6;
 
 /// Serializes an IR document as an ISO 10303-21 STEP Part 21 file declaring
 /// `schema`.
@@ -528,7 +537,7 @@ pub(crate) fn shells_to_measure(ir: &CadIr) -> (BTreeSet<String>, BTreeSet<Strin
     for region in ir.model.regions.iter().filter(|r| r.shells.len() > 1) {
         let encloses = |outer: &ShellId| {
             boxes.get(outer.as_str()).is_some_and(|outer| {
-                let slack = 1e-6
+                let slack = SHELL_BOX_SLACK_FRACTION
                     * (outer[3] - outer[0])
                         .max(outer[4] - outer[1])
                         .max(outer[5] - outer[2])
@@ -560,9 +569,32 @@ pub(crate) fn shells_to_measure(ir: &CadIr) -> (BTreeSet<String>, BTreeSet<Strin
     (scope, assumed)
 }
 
-/// Signed volume of the shells in [`shells_to_measure`], read from the
-/// measurement crate. Fork-only: not for upstream. The upstream source policy
-/// forbids an encoder from selecting by measured geometry.
+/// The signed volume a shell encloses and whether the measurement finished.
+/// Fork-only: not for upstream.
+pub struct ShellVolume {
+    /// Identity of the shell.
+    pub shell: String,
+    /// Signed volume enclosed under the face-sense reading.
+    pub volume: f64,
+    /// Whether every face of the shell was measured.
+    pub complete: bool,
+}
+
+/// A measurement of the shells named by the second argument. The writer links
+/// no measurement code; the command-line application registers the provider.
+pub type ShellVolumeProvider = fn(&CadIr, &BTreeSet<String>) -> Vec<ShellVolume>;
+
+static SHELL_VOLUME_PROVIDER: std::sync::OnceLock<ShellVolumeProvider> = std::sync::OnceLock::new();
+
+/// Register the measurement of shell volumes used to choose the outer shell
+/// of a region with several shells. Without a provider the first shell stays
+/// the exterior. Fork-only: not for upstream.
+pub fn set_shell_volume_provider(provider: ShellVolumeProvider) {
+    SHELL_VOLUME_PROVIDER.get_or_init(|| provider);
+}
+
+/// Signed volume of the shells in [`shells_to_measure`], from the registered
+/// provider. Fork-only: not for upstream.
 fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     if ir
         .model
@@ -572,19 +604,11 @@ fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     {
         return HashMap::new();
     }
-    let (scope, assumed) = shells_to_measure(ir);
-    let arena = cadmpeg_core::decode::DecodeArena::new();
-    let policy = cadmpeg_core::decode::DecodePolicy::desktop();
-    let Ok(ctx) = cadmpeg_core::decode::DecodeContext::for_loaded_input(&arena, &policy, 0) else {
+    let Some(provider) = SHELL_VOLUME_PROVIDER.get() else {
         return HashMap::new();
     };
-    let options = cadmpeg_measure::MeasureOptions {
-        work: cadmpeg_measure::WorkProfile::Desktop,
-        density: None,
-    };
-    let volumes =
-        cadmpeg_measure::shell_signed_volumes(&ctx, ir, options, &scope).unwrap_or_default();
-    let mut measured: HashMap<String, (f64, bool)> = volumes
+    let (scope, assumed) = shells_to_measure(ir);
+    let mut measured: HashMap<String, (f64, bool)> = provider(ir, &scope)
         .into_iter()
         .map(|entry| (entry.shell, (entry.volume, entry.complete)))
         .collect();
@@ -3185,7 +3209,7 @@ impl<'a> Builder<'a> {
         }
         let center = torus.center().get();
         let axis = *torus.frame().axis().as_raw();
-        let on_axis = 1e-7 * minor.abs().max(major).max(1.0);
+        let on_axis = APPLE_AXIS_FRACTION * minor.abs().max(major).max(1.0);
         let (mut plus, mut minus) = (0_usize, 0_usize);
         let mut on_the_axis = false;
         for loop_id in &face.loops {
@@ -3223,9 +3247,9 @@ impl<'a> Builder<'a> {
                     (((rho - major) / minor).powi(2) + (height / minor).powi(2) - 1.0).abs()
                 };
                 let (outer, inner) = (residual(radial), residual(-radial));
-                if outer < inner && outer < 1e-6 {
+                if outer < inner && outer < APPLE_SHEET_RESIDUAL {
                     plus += 1;
-                } else if inner < outer && inner < 1e-6 {
+                } else if inner < outer && inner < APPLE_SHEET_RESIDUAL {
                     minus += 1;
                 }
             }
