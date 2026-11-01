@@ -1,4 +1,4 @@
-# flidai converter branch `flidai/ipt-step-r6`
+# flidai converter branch `flidai/ipt-step-r7`
 
 Based on upstream `v0.6.7`. Modified files retain the upstream Apache-2.0 license. The changes in
 this first list are fixes meant for upstream, each from a `fix/*` branch of
@@ -28,6 +28,16 @@ a release. The rounds below it are fork-only.
   side against it (to be proposed upstream).
 - `crates/cadmpeg-ir`: place a finding on a record of a native namespace the document carries, so a
   malformed source record of another format does not refuse an export (to be proposed upstream).
+- `crates/cadmpeg-asm`, `crates/cadmpeg-ir`, `docs/formats/asm.md`: read a variable blend whose
+  `functional` radius value ends with its function (no terminal token), whose slice intcurve owns
+  no cache, or whose vertex-blend circle twist is a location (`c/r7-variable-blend-grammar`,
+  stacked on the calibration change above).
+- `crates/cadmpeg-ir`: allow the roundoff of a stored coedge use-curve range on an open NURBS
+  carrier (`c/r7-use-curve-roundoff`, stacked on the periodic use-curve change above).
+- `crates/cadmpeg-asm`, `docs/formats/asm.md`: decode a revision-gated `comp_int_cur` as its
+  children's ranges joined end to end (`c/r7-comp-int-cur`).
+- `crates/cadmpeg-codec-inventor`: name the undecoded surface, curve and parameter-curve kinds and
+  their counts in the loss notes (`c/r7-loss-kind-counts`).
 
 - `crates/cadmpeg-codec-step` writer: write an apostrophe in text that also holds a comma as the
   wide escape of U+0027, so readers that end a string at a doubled apostrophe followed by a comma
@@ -65,3 +75,11 @@ These select by a measured quantity too.
   on the outer sheet with a negative tube radius (`c/r6-apple-inner`). A face with a vertex on the
   axis, or with vertices on both sheets, is left on the carrier sense: no single sense
   describes it.
+
+## Round 7, fork-only (not proposed upstream)
+
+- `crates/cadmpeg-codec-inventor` decoder, `crates/cadmpeg-codec-step` writer: a part whose feature
+  history names a feature family and that has a solid body keeps its consumed construction
+  surfaces in the kernel stream. The decoder marks those sheet bodies hidden and the STEP writer
+  leaves a hidden sheet out of the shape (`c/r7`). A part without a named feature family keeps its
+  sheets.

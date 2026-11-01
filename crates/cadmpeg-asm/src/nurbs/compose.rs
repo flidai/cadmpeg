@@ -10,7 +10,7 @@ type Control = [f64; 4];
 
 /// Largest distance, in document length units, between the end of one part and
 /// the start of the next.
-const MAX_JOINT_GAP: f64 = 1.0e-3;
+const JOINT_GAP_ALLOWANCE: f64 = 1.0e-3;
 
 /// Largest distance of a weight from one that still reads as a polynomial pole.
 const UNIT_WEIGHT_SLACK: f64 = 1.0e-12;
@@ -147,7 +147,7 @@ pub(super) fn join_curve_parts(parts: &[CurvePart], start: Option<f64>) -> Optio
             let gap = position(previous)
                 .zip(position(&polygon[0]))
                 .map(|(from, to)| Point3::distance(from, to))?;
-            if gap.is_nan() || gap > MAX_JOINT_GAP {
+            if gap.is_nan() || gap > JOINT_GAP_ALLOWANCE {
                 return None;
             }
             // A shared control carries one weight, so the polygon is scaled to

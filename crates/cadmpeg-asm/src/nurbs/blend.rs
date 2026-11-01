@@ -645,8 +645,6 @@ pub(super) fn surface_ranges(cur: &mut Cur<'_>) -> Option<[[Option<f64>; 2]; 2]>
     ])
 }
 
-/// Decode one rolling-ball curve slot. Token-space counterpart of
-/// [`decode_rolling_ball_curve`].
 /// The slice curve of a variable blend. A slice whose `intcurve` subtype owns
 /// no decodable cache is skipped as a balanced scope with its two parameter
 /// bounds and reads as `None`: the construction is not transferred and the
@@ -670,6 +668,8 @@ fn rolling_ball_slice(
     Some(Ok(None))
 }
 
+/// Decode one rolling-ball curve slot. Token-space counterpart of
+/// [`decode_rolling_ball_curve`].
 pub(super) fn rolling_ball_curve(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     cur: &mut Cur<'_>,
