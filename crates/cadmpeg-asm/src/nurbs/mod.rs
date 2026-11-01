@@ -24,6 +24,7 @@
 //! and validates tags, degrees, counts, and block extents.
 
 pub mod blend;
+mod compose;
 pub mod core;
 pub mod pcurve;
 pub mod proc_curve;

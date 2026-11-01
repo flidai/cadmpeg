@@ -845,8 +845,12 @@ fn procedural_curve_recursive(
     // intcurve opens with its cache — the first block, followed by the fit
     // tolerance; later blocks belong to nested construction machinery
     // (support surfaces, blend spines, progenitors) and are not the carrier.
-    let cache_scope = crate::nurbs::toks::cache_scope(toks)?;
-    let positions = crate::nurbs::toks::owned_marker_positions(cache_scope)?;
+    let Some(cache_scope) = crate::nurbs::toks::cache_scope(toks) else {
+        return revision_compound_result(toks, table);
+    };
+    let Some(positions) = crate::nurbs::toks::owned_marker_positions(cache_scope) else {
+        return revision_compound_result(toks, table);
+    };
     let solved = if vector_offset.is_some() || subset.is_some() || compound.is_some() {
         positions
             .into_iter()
@@ -935,6 +939,9 @@ fn procedural_curve_recursive(
             construction,
             cache_fit_tolerance,
         }));
+    }
+    if let Some(decoded) = revision_compound_result(toks, table) {
+        return Some(decoded);
     }
     for index in crate::nurbs::toks::subtype_refs(toks) {
         if seen.contains(&index) {
@@ -3192,6 +3199,70 @@ pub(super) fn optional_embedded_surface_with_bounds(
     }))
 }
 
+/// The curve of a revision-gated `comp_int_cur`, which states no cache of its
+/// own. After the revision integer, the cache-form enum and the two optional
+/// bounds of its parameter interval, the record holds the header context and
+/// the ordered child curves, each an `intcurve` slot with its sense and two
+/// optional bounds of the range it contributes. The curve is the children's
+/// ranges joined end to end from the lower parameter bound, each at the pace of
+/// its own parameter. A child that states no curve of its own is read from the
+/// subtype-table entry it names.
+fn revision_compound_result(
+    toks: &[Token],
+    table: &SubtypeTable,
+) -> Option<Result<DecodedProceduralCurve, cadmpeg_core::CodecError>> {
+    revision_compound_curve(toks, table).map(|curve| {
+        Ok(DecodedProceduralCurve {
+            curve,
+            construction: ProceduralCurveConstruction::Unknown("comp_int_cur".to_owned()),
+            cache_fit_tolerance: None,
+        })
+    })
+}
+
+fn revision_compound_curve(toks: &[Token], table: &SubtypeTable) -> Option<NurbsCurve> {
+    let (marker, _) = crate::nurbs::toks::find_owned_subtype_marker(toks, &["comp_int_cur"])?;
+    let span = crate::nurbs::toks::subtype_span(toks, marker)?.tokens();
+    let mut cur = Cur::at(span, 2);
+    cur.take_long()?;
+    cur.take_enum()?;
+    let start = cur.take_optional_range_value()?.value();
+    cur.take_optional_range_value()?;
+    let mut depth = 0_usize;
+    let mut position = cur.pos();
+    let mut parts = Vec::new();
+    while position + 1 < span.len() {
+        match &span[position] {
+            Token::SubtypeOpen => depth += 1,
+            Token::SubtypeClose => depth = depth.checked_sub(1)?,
+            Token::Ident(name) if depth == 0 && name == "intcurve" => {
+                let reversed = matches!(span.get(position + 1)?, Token::True);
+                matches!(span.get(position + 1)?, Token::True | Token::False).then_some(())?;
+                matches!(span.get(position + 2)?, Token::SubtypeOpen).then_some(())?;
+                let scope = crate::nurbs::toks::subtype_span(span, position + 2)?;
+                let mut curve = crate::nurbs::core::owned_curve_cache_resolving_refs(scope, table)?;
+                if reversed {
+                    curve.reverse_parameterization();
+                }
+                let mut ends = Cur::at(span, position + 2 + scope.tokens().len());
+                let range = [
+                    ends.take_optional_range_value()?.value(),
+                    ends.take_optional_range_value()?.value(),
+                ];
+                parts.push(crate::nurbs::compose::CurvePart { curve, range });
+                position = ends.pos();
+                continue;
+            }
+            _ => {}
+        }
+        position += 1;
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    crate::nurbs::compose::join_curve_parts(&parts, start)
+}
+
 fn compound_definition(toks: &[Token]) -> Option<CompoundDefinition> {
     let (marker, _) = crate::nurbs::toks::find_owned_subtype_marker(toks, &["comp_int_cur"])?;
     let mut cur = Cur::at(toks, marker + 2);
@@ -3399,6 +3470,108 @@ mod cache_form_tests {
     use crate::sab::Token;
     use cadmpeg_ir::geometry::nurbs::NurbsCurve;
     use cadmpeg_ir::math::Point3;
+
+    fn linear_definition(from: [f64; 3], to: [f64; 3], lower: f64, upper: f64) -> Vec<Token> {
+        let mut tokens = vec![
+            Token::SubtypeOpen,
+            Token::Ident("exact_int_cur".into()),
+            Token::Ident("nubs".into()),
+            Token::Long(1),
+            Token::Enum(0),
+            Token::Long(2),
+            Token::Double(lower),
+            Token::Long(1),
+            Token::Double(upper),
+            Token::Long(1),
+        ];
+        tokens.extend(from.map(Token::Double));
+        tokens.extend(to.map(Token::Double));
+        tokens.push(Token::SubtypeClose);
+        tokens
+    }
+
+    #[test]
+    fn revision_compound_curve_joins_the_ranges_of_its_children() {
+        use crate::nurbs::toks::SubtypeTable;
+        use crate::sab::Record;
+        use cadmpeg_core::decode::{DecodeArena, DecodeContext, DecodePolicy};
+
+        let record = |index, tokens: Vec<Token>| Record {
+            index,
+            name: "intcurve-curve".into(),
+            tokens: tokens.into(),
+            offset: 0,
+            len: 0,
+        };
+        let table = SubtypeTable::from_records(&[
+            record(0, linear_definition([0.0; 3], [4.0, 0.0, 0.0], 0.0, 4.0)),
+            record(
+                1,
+                linear_definition([4.0, 0.0, 0.0], [4.0, 6.0, 0.0], 10.0, 16.0),
+            ),
+        ]);
+        let child = |index: i64, reversed: bool, range: [f64; 2]| {
+            vec![
+                Token::Ident("intcurve".into()),
+                if reversed { Token::True } else { Token::False },
+                Token::SubtypeOpen,
+                Token::Ident("ref".into()),
+                Token::Long(index),
+                Token::SubtypeClose,
+                Token::True,
+                Token::Double(range[0]),
+                Token::True,
+                Token::Double(range[1]),
+            ]
+        };
+        let mut tokens = vec![
+            Token::SubtypeOpen,
+            Token::Ident("comp_int_cur".into()),
+            Token::Long(23_100),
+            Token::Enum(2),
+            Token::True,
+            Token::Double(100.0),
+            Token::True,
+            Token::Double(110.0),
+            Token::Enum(0),
+            Token::Ident("null_surface".into()),
+            Token::Ident("null_surface".into()),
+            Token::Ident("nullbs".into()),
+            Token::Ident("nullbs".into()),
+            Token::False,
+            Token::False,
+        ];
+        tokens.extend(child(0, false, [1.0, 4.0]));
+        tokens.extend(child(1, false, [10.0, 12.0]));
+        tokens.push(Token::SubtypeClose);
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        let decoded = super::procedural_curve_resolving_refs(&ctx, &tokens, &table)
+            .expect("the record frames")
+            .expect("no resource refusal");
+        assert!(matches!(
+            decoded.construction,
+            super::ProceduralCurveConstruction::Unknown(ref kind) if kind == "comp_int_cur"
+        ));
+        let curve = decoded.curve;
+        // Three units of the first child, then two of the second, from the
+        // stated lower bound.
+        let knots = curve.knots().as_slice();
+        assert_eq!(knots.first().copied(), Some(100.0));
+        assert_eq!(knots.last().copied(), Some(105.0));
+        let points = curve.control_points();
+        let x: Vec<f64> = points.iter().map(|p| p.get().x).collect();
+        let y: Vec<f64> = points.iter().map(|p| p.get().y).collect();
+        // Document lengths are centimeters and the curve is in millimeters.
+        assert_eq!(x, [10.0, 40.0, 40.0]);
+        assert_eq!(y, [0.0, 0.0, 20.0]);
+        // A child that does not start where the previous one ends is refused.
+        let mut apart = tokens.clone();
+        let at = apart.len() - 5;
+        apart[at] = Token::Long(0);
+        assert!(super::procedural_curve_resolving_refs(&ctx, &apart, &table).is_none());
+    }
 
     #[test]
     fn cache_first_support_decodes_the_solved_nurbs_support() {
