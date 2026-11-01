@@ -20,3 +20,10 @@ upstream pull request is in a release.
 - `crates/cadmpeg-codec-step` writer, `docs/formats/step.md`: state the opposite face `same_sense`
   for a face on a sphere with a negative radius or on a torus with a negative tube radius, whose
   `SPHERICAL_SURFACE` and `TOROIDAL_SURFACE` records hold the magnitude (`fix/signed-radius-face-sense`).
+- `crates/cadmpeg-ir`: let a coedge use curve span one period of a periodic NURBS from any start
+  (`fix/periodic-use-curve-range`).
+- `crates/cadmpeg-asm`, `crates/cadmpeg-ir`, `docs/formats/asm.md`: keep the cache of an intcurve
+  support whose named construction is not read as a surface of unknown fit, and test no support
+  side against it (`fix/undecoded-support-cache`).
+- `crates/cadmpeg-ir`: place a finding on a record of a native namespace the document carries, so a
+  malformed source record of another format does not refuse an export (`fix/native-finding-scope`).
