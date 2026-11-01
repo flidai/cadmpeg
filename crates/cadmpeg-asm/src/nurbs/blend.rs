@@ -647,6 +647,29 @@ pub(super) fn surface_ranges(cur: &mut Cur<'_>) -> Option<[[Option<f64>; 2]; 2]>
 
 /// Decode one rolling-ball curve slot. Token-space counterpart of
 /// [`decode_rolling_ball_curve`].
+/// The slice curve of a variable blend. A slice whose `intcurve` subtype owns
+/// no decodable cache is skipped as a balanced scope with its two parameter
+/// bounds and reads as `None`: the construction is not transferred and the
+/// record keeps its current surface cache.
+fn rolling_ball_slice(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    cur: &mut Cur<'_>,
+    reference_context: Option<&SubtypeTable>,
+) -> Option<Result<Option<RollingBallSupportCurve<CurveGeometry>>, cadmpeg_core::CodecError>> {
+    let start = cur.pos();
+    if let Some(curve) = rolling_ball_curve(ctx, cur, reference_context) {
+        return Some(curve.map(Some));
+    }
+    cur.set_pos(start);
+    (cur.take_ident()? == "intcurve").then_some(())?;
+    cur.take_bool()?;
+    let scope = toks::subtype_span(cur.toks(), cur.pos())?;
+    cur.set_pos(cur.pos() + scope.tokens().len());
+    cur.take_optional_range_value()?;
+    cur.take_optional_range_value()?;
+    Some(Ok(None))
+}
+
 pub(super) fn rolling_ball_curve(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     cur: &mut Cur<'_>,
@@ -870,10 +893,12 @@ fn variable_blend_value(
             let radius = cur.take_f64()? * LEN_TO_MM;
             let (function, end) = pcurve_block_with_end(cur.toks(), cur.pos())?;
             cur.set_pos(end);
-            let terminal = if matches!(cur.peek(), Some(Token::Double(_))) {
-                VariableBlendTerminal::Double(cur.take_f64()?)
-            } else {
-                VariableBlendTerminal::Text(blend_value_name(cur)?.to_owned())
+            let terminal = match cur.peek() {
+                Some(Token::Double(_)) => VariableBlendTerminal::Double(cur.take_f64()?),
+                Some(Token::Str(_)) => {
+                    VariableBlendTerminal::Text(blend_value_name(cur)?.to_owned())
+                }
+                _ => VariableBlendTerminal::Absent,
             };
             VariableBlendValuePayload::Functional {
                 discriminator,
@@ -1021,7 +1046,7 @@ pub(super) fn var_blend_spl_sur(
         (SideRead::Carried(first), SideRead::Carried(second)) => Some(Box::new([*first, *second])),
         _ => None,
     };
-    let slice = match rolling_ball_curve(ctx, &mut cur, reference_context)? {
+    let slice = match rolling_ball_slice(ctx, &mut cur, reference_context)? {
         Ok(curve) => curve,
         Err(limit) => return Some(Err(limit)),
     };
@@ -1159,8 +1184,9 @@ pub(super) fn var_blend_spl_sur(
     Some(Ok(ParsedVariableBlend {
         current_cache_marker,
         surface: sides
+            .zip(slice)
             .filter(|_| v_upper.is_none() && !calibration_omitted)
-            .map(|sides| {
+            .map(|(sides, slice)| {
                 DecodedProceduralSurface::revision(
                     DecodedProceduralSurfaceDefinition::VariableBlend(Box::new(
                         EmbeddedVariableBlend {
@@ -1318,7 +1344,10 @@ fn revision_vertex_blend_boundary(
             ];
             let form = cur.take_enum()?;
             let mut read_twist = || {
-                let twist = cur.take_vector3()?;
+                let twist = match cur.peek()? {
+                    Token::Position(_) => cur.take_position()?,
+                    _ => cur.take_vector3()?,
+                };
                 Some(Point3::new(
                     twist[0] * LEN_TO_MM,
                     twist[1] * LEN_TO_MM,

@@ -4491,6 +4491,8 @@ pub enum VariableBlendTerminal<R = f64> {
     Double(R),
     /// Native string token.
     Text(String),
+    /// No token: the value ends with its `(u,radius)` function.
+    Absent,
 }
 
 /// Complete recursive native `getBlendValues` payload.

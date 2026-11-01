@@ -1578,6 +1578,7 @@ impl VariableBlendTerminal {
         Some(match self {
             Self::Double(value) => VariableBlendTerminal::Double(FiniteReal::new(value)?),
             Self::Text(value) => VariableBlendTerminal::Text(value),
+            Self::Absent => VariableBlendTerminal::Absent,
         })
     }
 }
@@ -1589,6 +1590,7 @@ impl VariableBlendTerminal<FiniteReal> {
         match self {
             Self::Double(value) => VariableBlendTerminal::Double(value.get()),
             Self::Text(value) => VariableBlendTerminal::Text(value.clone()),
+            Self::Absent => VariableBlendTerminal::Absent,
         }
     }
 }

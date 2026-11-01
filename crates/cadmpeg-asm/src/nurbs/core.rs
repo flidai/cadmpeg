@@ -1608,4 +1608,119 @@ mod tests {
             }
         }
     }
+
+    /// Replaces the first occurrence of `from` in `tokens` by `to`.
+    fn splice_tokens(
+        tokens: &mut Vec<crate::sab::Token>,
+        from: &[crate::sab::Token],
+        to: Vec<crate::sab::Token>,
+    ) {
+        let at = tokens
+            .windows(from.len())
+            .position(|window| window == from)
+            .expect("fixture holds the replaced tokens");
+        tokens.splice(at..at + from.len(), to);
+    }
+
+    #[test]
+    fn variable_blend_slice_without_a_cache_keeps_the_current_surface_cache() {
+        use crate::sab::Token;
+        let mut scope = variable_blend_tokens("srf_srf_v_bl_spl_sur", 1);
+        splice_tokens(
+            &mut scope,
+            &[
+                Token::Ident("straight".into()),
+                Token::Position([0.0; 3]),
+                Token::Vector3([1.0, 0.0, 0.0]),
+            ],
+            vec![
+                Token::Ident("intcurve".into()),
+                Token::False,
+                Token::SubtypeOpen,
+                Token::Ident("sss_int_cur".into()),
+                Token::Long(1),
+                Token::SubtypeClose,
+            ],
+        );
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        let parsed = crate::nurbs::blend::var_blend_spl_sur(
+            &ctx,
+            &scope,
+            None,
+            crate::nurbs::blend::SupportCaches::Skip,
+        )
+        .expect("the record frames")
+        .expect("no resource refusal");
+        assert!(
+            parsed.surface.is_none(),
+            "an undecoded slice leaves the construction untransferred"
+        );
+        assert!(parsed.current_cache_marker.is_some());
+        let span = crate::nurbs::toks::subtype_span(&scope, 0).unwrap();
+        let cache = super::owned_surface_cache(&ctx, span, None)
+            .expect("the current cache is the carrier")
+            .unwrap();
+        assert_eq!(cache.u_count(), 2);
+    }
+
+    #[test]
+    fn variable_blend_functional_radius_without_a_terminal_ends_with_its_function() {
+        use crate::sab::Token;
+        let function = |tokens: &mut Vec<Token>| {
+            tokens.extend([
+                Token::Ident("nubs".into()),
+                Token::Long(1),
+                Token::Enum(0),
+                Token::Long(2),
+                Token::Double(0.0),
+                Token::Long(1),
+                Token::Double(1.0),
+                Token::Long(1),
+                Token::Double(0.0),
+                Token::Double(0.0),
+                Token::Double(1.0),
+                Token::Double(1.0),
+            ]);
+        };
+        let two_ends = [
+            Token::Str("two_ends".into()),
+            Token::Enum(0),
+            Token::True,
+            Token::Double(0.0),
+            Token::Double(1.0),
+            Token::Double(1.0),
+            Token::Double(1.0),
+        ];
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        for terminal in [None, Some(Token::Double(2.5))] {
+            let mut scope = variable_blend_tokens("var_blend_spl_sur", 1);
+            let mut functional = vec![
+                Token::Str("functional".into()),
+                Token::Enum(0),
+                Token::True,
+                Token::Double(0.0),
+                Token::Double(1.0),
+            ];
+            function(&mut functional);
+            functional.extend(terminal.clone());
+            splice_tokens(&mut scope, &two_ends, functional);
+            let parsed = crate::nurbs::blend::var_blend_spl_sur(
+                &ctx,
+                &scope,
+                None,
+                crate::nurbs::blend::SupportCaches::Skip,
+            )
+            .expect("the record frames")
+            .expect("no resource refusal");
+            assert!(
+                parsed.current_cache_marker.is_some(),
+                "a functional radius law reads to the cache with terminal {terminal:?}"
+            );
+            assert!(parsed.surface.is_some());
+        }
+    }
 }

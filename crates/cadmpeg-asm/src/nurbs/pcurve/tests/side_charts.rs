@@ -440,6 +440,65 @@ fn vertex_blend_pcurve_boundary_reaches_the_native_point() {
 }
 
 #[test]
+fn vertex_blend_circle_boundary_reads_a_single_twist_location_or_vector() {
+    for twist in [
+        Token::Position([1.0, 2.0, 3.0]),
+        Token::Vector3([1.0, 2.0, 3.0]),
+    ] {
+        let tokens = vec![
+            Token::SubtypeOpen,
+            Token::Ident("VBL_SURF".into()),
+            Token::Long(1),
+            Token::Long(1),
+            Token::Ident("circle".into()),
+            Token::False,
+            Token::Vector3([0.0, 0.0, 0.0]),
+            Token::False,
+            Token::False,
+            Token::Double(0.5),
+            Token::Ident("straight".into()),
+            Token::Position([0.0; 3]),
+            Token::Vector3([1.0, 0.0, 0.0]),
+            Token::False,
+            Token::False,
+            Token::Enum(1),
+            twist,
+            Token::Double(0.0),
+            Token::Double(1.0),
+            Token::False,
+            Token::Long(4),
+            Token::Double(1.0e-3),
+            Token::SubtypeClose,
+        ];
+        let decoded = decode_context(|ctx| {
+            crate::nurbs::proc_surface::procedural_surface_resolving_refs(
+                ctx,
+                &tokens,
+                &SubtypeTable::from_records(&[]),
+            )
+            .expect("vertex blend parses")
+            .expect("no resource refusal")
+        });
+        let (definition, _) = decoded.into_parts();
+        let crate::nurbs::proc_surface::DecodedProceduralSurfaceDefinition::VertexBlend(blend) =
+            definition
+        else {
+            panic!("expected a vertex blend");
+        };
+        let crate::nurbs::proc_surface::EmbeddedVertexBlendBoundaryGeometry::Circle {
+            twists, ..
+        } = &blend.boundaries[0].geometry
+        else {
+            panic!("expected a circle boundary");
+        };
+        assert!(matches!(
+            twists,
+            cadmpeg_ir::geometry::VertexBlendTwists::One { .. }
+        ));
+    }
+}
+
+#[test]
 fn loft_profile_pcurve_reaches_the_native_point() {
     let support = Support::Cone {
         origin: [0.0; 3],

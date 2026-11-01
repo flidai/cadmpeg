@@ -417,6 +417,7 @@ rewrite_scalar!(VariableBlendSurfaceSubtype);
 rewrite_enum!(VariableBlendTerminal<R>, [R]; {
     Double(field0),
     Text(field0),
+    Absent {},
 });
 rewrite_record!(VariableBlendValue<R, V, P>, [R, V, P]; {modern_flag, calibrated, payload});
 rewrite_enum!(VariableBlendValuePayload<R, V, P>, [R, V, P]; {

@@ -3553,6 +3553,7 @@ fn native_variable_blend_value(
             match terminal {
                 VariableBlendTerminal::Double(value) => native_f64(bytes, *value),
                 VariableBlendTerminal::Text(value) => native_string(bytes, value)?,
+                VariableBlendTerminal::Absent => {}
             }
         }
         VariableBlendValuePayload::Constant {
