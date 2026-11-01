@@ -44,3 +44,19 @@ encoders. They stay on the fork.
   against the carrier sense. The sheet is read from the torus equation at the face's vertices
   (`c/r5-apple-sheet`). Faces on the inner sheet are left alone: the rule was right on some
   reference solids and wrong on others.
+
+## Round 6, fork-only (not proposed upstream)
+
+These select by a measured quantity too.
+
+- `crates/cadmpeg-measure`, `crates/cadmpeg-codec-step` writer: measure only the shells that
+  decide the shell roles (`c/r6-shell-scope`). A shell that encloses the vertex box of every other
+  shell in its region is the exterior and is not measured; a later enclosing shell takes an
+  assumed volume. The native flux pass takes the scope as a parameter. This keeps the round 5
+  exterior choice and brings the conversion time of a file with thousands of faces back to the
+  round 4 range.
+- `crates/cadmpeg-codec-step` writer: state the face sense on the inner sheet (`rho < 0`) of a
+  torus wider than its major radius with a positive tube radius against the carrier sense, and
+  on the outer sheet with a negative tube radius (`c/r6-apple-inner`). A face with a vertex on the
+  axis, or with vertices on both sheets, is left on the carrier sense: no single sense
+  describes it.
