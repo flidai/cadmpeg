@@ -141,13 +141,14 @@ pub fn findings(
         .map_err(CodecError::ResourceLimit)
 }
 
-/// The signed volume each shell of every body with closed shells encloses
-/// under the face-sense reading, under the findings allowance of
-/// `options.work`. Fork-only: not for upstream.
+/// The signed volume each shell in `scope` encloses under the face-sense
+/// reading, under the measurement allowance of `options.work`. Only the faces
+/// of the shells in `scope` are measured. Fork-only: not for upstream.
 pub fn shell_signed_volumes(
     ctx: &DecodeContext<'_>,
     ir: &CadIr,
     options: MeasureOptions,
+    scope: &std::collections::BTreeSet<String>,
 ) -> Result<Vec<crate::body::ShellSignedVolume>, CodecError> {
     let input = MeasureInput {
         ir,
@@ -155,7 +156,7 @@ pub fn shell_signed_volumes(
         geometry_transferred: true,
     };
     Measurer::new(input, options)
-        .orientation_pass(ctx)
+        .orientation_pass(ctx, scope)
         .map(|(_, volumes)| volumes)
         .map_err(CodecError::ResourceLimit)
 }

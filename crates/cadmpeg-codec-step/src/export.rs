@@ -444,9 +444,111 @@ fn distinct_names<'n>(entries: &[(&'n str, Option<&'n str>)]) -> Vec<&'n str> {
         .collect()
 }
 
-/// Signed volume of every shell of a region with several shells, read from
-/// the measurement crate. Fork-only: not for upstream. The upstream source
-/// policy forbids an encoder from selecting by measured geometry.
+/// Axis-aligned box of the vertices of every shell that owns a face.
+fn shell_vertex_boxes(ir: &CadIr) -> HashMap<&str, [f64; 6]> {
+    let model = &ir.model;
+    let faces: HashMap<&str, &Face> = model.faces.iter().map(|f| (f.id.as_str(), f)).collect();
+    let loops: HashMap<&str, &Loop> = model.loops.iter().map(|l| (l.id.as_str(), l)).collect();
+    let coedges: HashMap<&str, &Coedge> =
+        model.coedges.iter().map(|c| (c.id.as_str(), c)).collect();
+    let edges: HashMap<&str, &Edge> = model.edges.iter().map(|e| (e.id.as_str(), e)).collect();
+    let vertices: HashMap<&str, &cadmpeg_ir::topology::Vertex> =
+        model.vertices.iter().map(|v| (v.id.as_str(), v)).collect();
+    let points: HashMap<&str, [f64; 3]> = model
+        .points
+        .iter()
+        .map(|p| {
+            let at = p.position().get();
+            (p.id.as_str(), [at.x, at.y, at.z])
+        })
+        .collect();
+    let mut boxes = HashMap::new();
+    for shell in &model.shells {
+        let mut bounds = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for face_id in shell.faces() {
+            let Some(face) = faces.get(face_id.as_str()) else {
+                continue;
+            };
+            for loop_id in &face.loops {
+                let Some(ring) = loops.get(loop_id.as_str()) else {
+                    continue;
+                };
+                for coedge_id in ring.coedges() {
+                    let Some(edge) = coedges
+                        .get(coedge_id.as_str())
+                        .and_then(|coedge| edges.get(coedge.edge.as_str()))
+                    else {
+                        continue;
+                    };
+                    for vertex_id in [&edge.start, &edge.end] {
+                        let Some(at) = vertices
+                            .get(vertex_id.as_str())
+                            .and_then(|vertex| points.get(vertex.point.as_str()))
+                        else {
+                            continue;
+                        };
+                        for axis in 0..3 {
+                            bounds[axis] = bounds[axis].min(at[axis]);
+                            bounds[axis + 3] = bounds[axis + 3].max(at[axis]);
+                        }
+                    }
+                }
+            }
+        }
+        if bounds[0].is_finite() {
+            boxes.insert(shell.id.as_str(), bounds);
+        }
+    }
+    boxes
+}
+
+/// The shells whose signed volume decides the roles of the shells of a
+/// region with several shells. Fork-only.
+///
+/// The first listed shell is the exterior unless its volume is not positive.
+/// When its vertex box holds the vertex box of every other shell of the
+/// region, it encloses them and only the other shells are measured, for the
+/// orientation of each void. Otherwise every shell of the region is measured.
+/// Measuring the faces of a large exterior shell dominates the conversion
+/// time of a file with many voids.
+pub(crate) fn shells_to_measure(ir: &CadIr) -> BTreeSet<String> {
+    let boxes = shell_vertex_boxes(ir);
+    let mut scope: BTreeSet<String> = BTreeSet::new();
+    for region in ir.model.regions.iter().filter(|r| r.shells.len() > 1) {
+        let Some((first, rest)) = region.shells.split_first() else {
+            continue;
+        };
+        let encloses = boxes.get(first.as_str()).is_some_and(|outer| {
+            let slack = 1e-6
+                * (outer[3] - outer[0])
+                    .max(outer[4] - outer[1])
+                    .max(outer[5] - outer[2])
+                    .max(1.0);
+            rest.iter().all(|other| {
+                boxes.get(other.as_str()).is_some_and(|inner| {
+                    (0..3).all(|axis| {
+                        inner[axis] >= outer[axis] - slack
+                            && inner[axis + 3] <= outer[axis + 3] + slack
+                    })
+                })
+            })
+        });
+        let measured = if encloses { rest } else { &region.shells[..] };
+        scope.extend(measured.iter().map(|id| id.as_str().to_owned()));
+    }
+    scope
+}
+
+/// Signed volume of the shells in [`shells_to_measure`], read from the
+/// measurement crate. Fork-only: not for upstream. The upstream source policy
+/// forbids an encoder from selecting by measured geometry.
 fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     if ir
         .model
@@ -456,6 +558,7 @@ fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     {
         return HashMap::new();
     }
+    let scope = shells_to_measure(ir);
     let arena = cadmpeg_core::decode::DecodeArena::new();
     let policy = cadmpeg_core::decode::DecodePolicy::desktop();
     let Ok(ctx) = cadmpeg_core::decode::DecodeContext::for_loaded_input(&arena, &policy, 0) else {
@@ -465,7 +568,8 @@ fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
         work: cadmpeg_measure::WorkProfile::Desktop,
         density: None,
     };
-    let volumes = cadmpeg_measure::shell_signed_volumes(&ctx, ir, options).unwrap_or_default();
+    let volumes =
+        cadmpeg_measure::shell_signed_volumes(&ctx, ir, options, &scope).unwrap_or_default();
     volumes
         .into_iter()
         .map(|entry| (entry.shell, (entry.volume, entry.complete)))

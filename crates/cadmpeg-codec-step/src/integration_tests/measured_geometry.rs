@@ -305,6 +305,45 @@ fn void_listed_first_is_written_as_a_void() {
     assert_close(volume, 976.0, error);
 }
 
+/// A cube with a box void whose vertex box lies inside the cube's: the cube,
+/// listed first, is the exterior without a measurement, so only the void shell
+/// is measured. When the void is listed first its box does not hold the cube's
+/// and both shells are measured. Fork-only.
+#[test]
+fn only_the_voids_are_measured_when_the_first_shell_encloses_them() {
+    let outer = box_shell(10, [0.0; 3], [10.0; 3], BoxFaceUse::Outward);
+    let void = box_shell(
+        outer.next,
+        [2.0, 3.0, 1.0],
+        [4.0, 6.0, 5.0],
+        BoxFaceUse::Outward,
+    );
+    let oriented = void.next;
+    let solid = oriented + 1;
+    let records = format!(
+        "{}{}#{oriented}=ORIENTED_CLOSED_SHELL('',*,#{},.F.);\n\
+         #{solid}=BREP_WITH_VOIDS('',#{},(#{oriented}));\n{}",
+        outer.records,
+        void.records,
+        void.shell,
+        outer.shell,
+        solid_representation(1, solid)
+    );
+    let decoded = decode_inline(&records);
+    let mut ir = decoded.ir().clone();
+    assert_eq!(ir.model.regions[0].shells.len(), 2);
+    let outer_first = ir.model.regions[0].shells.clone();
+    let scope = crate::export::shells_to_measure(&ir);
+    assert_eq!(
+        scope.len(),
+        1,
+        "only the shell inside the first is measured: {scope:?}"
+    );
+    assert!(!scope.contains(outer_first[0].as_str()));
+    ir.model.regions[0].shells.reverse();
+    assert_eq!(crate::export::shells_to_measure(&ir).len(), 2);
+}
+
 /// A solid cylinder with radius 10 and height 30, whose closed circle edges
 /// store no parameter range, keeps its measured geometry through a STEP
 /// write round trip under every written schema.

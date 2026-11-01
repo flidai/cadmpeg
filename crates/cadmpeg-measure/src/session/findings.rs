@@ -87,7 +87,7 @@ impl<'ir> Measurer<'ir> {
         let Some(allowance) = self.options.work.findings_allowance(items) else {
             return Err(allowance_refusal(items));
         };
-        self.findings_and_shells_under(ctx, &PassAllowance::findings(allowance), false)
+        self.findings_and_shells_under(ctx, &PassAllowance::findings(allowance), None)
             .map(|(findings, _)| findings)
     }
 
@@ -97,13 +97,14 @@ impl<'ir> Measurer<'ir> {
     pub(super) fn orientation_pass(
         &self,
         ctx: &DecodeContext<'_>,
+        scope: &BTreeSet<String>,
     ) -> Result<(Vec<Finding>, Vec<crate::body::ShellSignedVolume>), ResourceLimit> {
         let model = &self.input.ir.model;
         let items = model.faces.len() + model.edges.len();
         let Some(allowance) = self.options.work.pass_allowance(items) else {
             return Err(allowance_refusal(items));
         };
-        self.findings_and_shells_under(ctx, &PassAllowance::new(allowance), true)
+        self.findings_and_shells_under(ctx, &PassAllowance::new(allowance), Some(scope))
     }
 
     /// The findings under `pass`. A face or edge whose slice refused a
@@ -115,7 +116,7 @@ impl<'ir> Measurer<'ir> {
         ctx: &DecodeContext<'_>,
         pass: &PassAllowance,
     ) -> Result<Vec<Finding>, ResourceLimit> {
-        self.findings_and_shells_under(ctx, pass, false)
+        self.findings_and_shells_under(ctx, pass, None)
             .map(|(findings, _)| findings)
     }
 
@@ -123,8 +124,10 @@ impl<'ir> Measurer<'ir> {
         &self,
         ctx: &DecodeContext<'_>,
         pass: &PassAllowance,
-        every_body: bool,
+        scope: Option<&BTreeSet<String>>,
     ) -> Result<(Vec<Finding>, Vec<crate::body::ShellSignedVolume>), ResourceLimit> {
+        let every_body = scope.is_some();
+        let in_scope = |shell: &str| scope.is_some_and(|scope| scope.contains(shell));
         let mut shell_volumes: Vec<crate::body::ShellSignedVolume> = Vec::new();
         let model = &self.input.ir.model;
         let (mut findings, mut unchecked) = if every_body {
@@ -151,27 +154,10 @@ impl<'ir> Measurer<'ir> {
                 .unwrap_or(Ok(Placement::identity()))
         };
 
-        // The shell volumes are only read for bodies with a multi-shell
-        // region, so the other bodies' faces and edges are not measured.
-        let multi_shell_bodies: Option<BTreeSet<&'ir str>> = every_body.then(|| {
-            model
-                .bodies
-                .iter()
-                .filter(|body| {
-                    body.regions
-                        .iter()
-                        .filter_map(|region| self.owners.region(region.as_str()))
-                        .any(|region| region.shells.len() > 1)
-                })
-                .map(|body| body.id.as_str())
-                .collect()
-        });
+        // The shell volumes are only read for the shells in scope, so the
+        // other shells' faces and edges are not measured.
         let wanted = |face: &cadmpeg_ir::topology::Face| -> bool {
-            multi_shell_bodies.as_ref().is_none_or(|bodies| {
-                self.owners
-                    .face_body(face)
-                    .is_some_and(|body| bodies.contains(body))
-            })
+            !every_body || in_scope(face.shell.as_str())
         };
 
         let mut needed_edges: BTreeSet<&'ir str> = BTreeSet::new();
@@ -215,7 +201,8 @@ impl<'ir> Measurer<'ir> {
                         .regions
                         .iter()
                         .filter_map(|region| self.owners.region(region.as_str()))
-                        .any(|region| region.shells.len() > 1);
+                        .flat_map(|region| &region.shells)
+                        .any(|shell| in_scope(shell.as_str()));
                 }
                 let shells: Vec<_> = body
                     .regions
@@ -323,7 +310,7 @@ impl<'ir> Measurer<'ir> {
             }
             if every_body {
                 if let Some(volumes) = bodies.shell_signed_volumes(body) {
-                    shell_volumes.extend(volumes);
+                    shell_volumes.extend(volumes.into_iter().filter(|row| in_scope(&row.shell)));
                 }
                 continue;
             }
