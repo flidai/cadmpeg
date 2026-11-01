@@ -1016,7 +1016,7 @@ pub(super) fn check_parameter_domains(
                             // than one period, as an edge of the same curve.
                             periodic_pcurve_range_in_domain(start, end, domain)
                         } else {
-                            parameter_in_domain(start, domain) && parameter_in_domain(end, domain)
+                            use_curve_range_in_domain(start, end, domain)
                         }
                     });
             }
@@ -1109,6 +1109,26 @@ fn periodic_pcurve_range_in_domain(start: f64, end: f64, domain: [f64; 2]) -> bo
                     ratio.get() <= 1.0 + EPS_CARRIERS_PARAMETERIZATION_PERIODIC_PCURVE_SPAN
                 })
         })
+}
+
+/// Whether a use-curve range lies in the domain of its open carrier. The
+/// stored range and the carrier's knots are separate decimal renderings of one
+/// interval, so an end may overshoot the domain by the roundoff of a parameter
+/// of the unit scale. The slack is that absolute roundoff, scaled up only when
+/// the domain is wider than one.
+fn use_curve_range_in_domain(start: f64, end: f64, domain: [f64; 2]) -> bool {
+    if ![start, end, domain[0], domain[1]]
+        .into_iter()
+        .all(f64::is_finite)
+        || domain[0] > domain[1]
+    {
+        return false;
+    }
+    let slack =
+        EPS_CARRIERS_PARAMETERIZATION_CHECK_PARAMETER_DOMAINS_E9 * (domain[1] - domain[0]).max(1.0);
+    [start, end]
+        .into_iter()
+        .all(|value| value >= domain[0] - slack && value <= domain[1] + slack)
 }
 
 fn parameter_in_domain(value: f64, domain: [f64; 2]) -> bool {

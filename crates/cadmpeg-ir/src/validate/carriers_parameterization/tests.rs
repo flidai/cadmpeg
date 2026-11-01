@@ -249,6 +249,17 @@ fn a_coedge_use_curve_may_start_anywhere_on_a_periodic_nurbs_for_one_period() {
     assert_eq!(use_curve_domain_findings(false, [0.5, 3.5]), 0);
 }
 
+#[test]
+fn a_coedge_use_curve_may_overshoot_an_open_nurbs_by_parameter_roundoff() {
+    // The stored range and the knots render one interval twice, so an end can
+    // overshoot the domain by a few units of the tenth decimal.
+    assert_eq!(use_curve_domain_findings(false, [-5.0e-11, 4.0]), 0);
+    assert_eq!(use_curve_domain_findings(false, [0.0, 4.0 + 5.0e-11]), 0);
+    // A wider overshoot is still outside the domain.
+    assert_eq!(use_curve_domain_findings(false, [-1.0e-6, 4.0]), 1);
+    assert_eq!(use_curve_domain_findings(false, [0.0, 4.0 + 1.0e-6]), 1);
+}
+
 fn nurbs_pcurve_leaf() -> PcurveGeometry {
     PcurveGeometry::Nurbs {
         nurbs: crate::geometry::pcurve::PcurveNurbs::from_lanes(
