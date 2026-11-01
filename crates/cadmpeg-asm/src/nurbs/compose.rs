@@ -3,7 +3,6 @@
 
 use cadmpeg_ir::geometry::nurbs::bezier::homogeneous_spans;
 use cadmpeg_ir::geometry::nurbs::NurbsCurve;
-use cadmpeg_ir::geometry::pcurve::PcurveNurbs;
 use cadmpeg_ir::math::Point3;
 
 /// Weighted control point `(w*x, w*y, w*z, w)`.
@@ -181,59 +180,11 @@ pub(super) fn join_curve_parts(parts: &[CurvePart], start: Option<f64>) -> Optio
     NurbsCurve::from_lanes(u32::try_from(degree).ok()?, knots, points, weights, false).ok()
 }
 
-/// A range of one parameter curve, in the curve's own parameter.
-pub(super) struct PcurvePart {
-    /// The parameter curve the part is cut from.
-    pub curve: PcurveNurbs,
-    /// Lower and upper parameter kept; an absent bound is the domain end.
-    pub range: [Option<f64>; 2],
-    /// Whether the part runs against its stored parameter direction.
-    pub reversed: bool,
-}
-
-/// Join the parts end to end as one parameter curve, as [`join_curve_parts`]
-/// joins curves: each part is lifted to the plane `z = 0`, joined, and lowered.
-pub(super) fn join_pcurve_parts(parts: &[PcurvePart], start: Option<f64>) -> Option<PcurveNurbs> {
-    let lifted = parts
-        .iter()
-        .map(|part| {
-            let mut curve = part
-                .curve
-                .lift(|point| Point3::new(point.u, point.v, 0.0))
-                .ok()?;
-            if part.reversed {
-                curve.reverse_parameterization();
-            }
-            Some(CurvePart {
-                curve,
-                range: part.range,
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let joined = join_curve_parts(&lifted, start)?;
-    let points: Vec<cadmpeg_ir::math::Point2> = joined
-        .control_points()
-        .iter()
-        .map(|point| cadmpeg_ir::math::Point2::new(point.get().x, point.get().y))
-        .collect();
-    PcurveNurbs::from_lanes(
-        joined.degree(),
-        joined.knots().as_slice().to_vec(),
-        points,
-        joined
-            .weights()
-            .map(|weights| weights.iter().map(|w| w.get()).collect()),
-        false,
-    )
-    .ok()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{join_curve_parts, join_pcurve_parts, CurvePart, PcurvePart};
+    use super::{join_curve_parts, CurvePart};
     use cadmpeg_ir::geometry::nurbs::NurbsCurve;
-    use cadmpeg_ir::geometry::pcurve::PcurveNurbs;
-    use cadmpeg_ir::math::{Point2, Point3};
+    use cadmpeg_ir::math::Point3;
 
     fn line(from: [f64; 3], to: [f64; 3], lower: f64, upper: f64) -> NurbsCurve {
         NurbsCurve::from_lanes(
@@ -334,41 +285,5 @@ mod tests {
             None,
         );
         assert!(joined.is_none());
-    }
-
-    #[test]
-    fn parameter_curves_join_on_consecutive_parameters_and_a_reversed_part_runs_backwards() {
-        let line = |from: [f64; 2], to: [f64; 2], lower: f64, upper: f64| {
-            PcurveNurbs::from_lanes(
-                1,
-                vec![lower, lower, upper, upper],
-                vec![Point2::new(from[0], from[1]), Point2::new(to[0], to[1])],
-                None,
-                false,
-            )
-            .expect("line")
-        };
-        let joined = join_pcurve_parts(
-            &[
-                PcurvePart {
-                    curve: line([0.0, 0.0], [1.0, 0.0], 0.0, 1.0),
-                    range: [None, None],
-                    reversed: false,
-                },
-                PcurvePart {
-                    curve: line([1.0, 1.0], [1.0, 0.0], 0.0, 2.0),
-                    range: [None, None],
-                    reversed: true,
-                },
-            ],
-            Some(3.0),
-        )
-        .expect("joined");
-        assert_eq!(joined.degree(), 1);
-        assert_eq!(joined.knots().as_slice(), [3.0, 3.0, 4.0, 6.0, 6.0]);
-        let points: Vec<Point2> = joined.control_points().iter().map(|p| p.get()).collect();
-        assert_eq!(points.len(), 3);
-        assert!((points[1].u - 1.0).abs() < 1.0e-12 && points[1].v.abs() < 1.0e-12);
-        assert!((points[2].u - 1.0).abs() < 1.0e-12 && (points[2].v - 1.0).abs() < 1.0e-12);
     }
 }
