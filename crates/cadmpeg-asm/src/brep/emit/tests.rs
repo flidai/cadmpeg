@@ -537,7 +537,11 @@ fn reversed_intcurve_context_uses_the_parsed_cache_domain() {
             panic!("cache-first spring")
         };
 
-        assert_eq!(context.parameter_range().endpoints(), [2.0, 5.0]);
+        // A reversed spring restates its support context on -t.
+        assert_eq!(
+            context.parameter_range().endpoints(),
+            if reversed { [-5.0, -2.0] } else { [2.0, 5.0] }
+        );
     }
 }
 
