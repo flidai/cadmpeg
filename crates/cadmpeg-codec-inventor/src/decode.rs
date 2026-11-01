@@ -724,8 +724,27 @@ fn decode_container<'a>(
         if kernel_stats.unknown_surface_faces() != 0 {
             losses.push(
                 InventorLossCode::GeometryProceduralSurfaceNotTransferred.note(format!(
-                    "{} face(s) use procedural surfaces without a decoded carrier.",
-                    kernel_stats.unknown_surface_faces()
+                    "{} face(s) use procedural surfaces without a decoded carrier{}.",
+                    kernel_stats.unknown_surface_faces(),
+                    kind_counts(&kernel_stats.unknown_surface_kinds)
+                )),
+            );
+        }
+        if kernel_stats.procedural_curve_edges() != 0 {
+            losses.push(
+                InventorLossCode::GeometryProceduralSurfaceNotTransferred.note(format!(
+                    "{} edge(s) use curves without a decoded carrier{}.",
+                    kernel_stats.procedural_curve_edges(),
+                    kind_counts(&kernel_stats.procedural_curve_kinds)
+                )),
+            );
+        }
+        if kernel_stats.undecoded_pcurve_refs() != 0 {
+            losses.push(
+                InventorLossCode::GeometryProceduralSurfaceNotTransferred.note(format!(
+                    "{} coedge parameter curve(s) have no decoded carrier{}.",
+                    kernel_stats.undecoded_pcurve_refs(),
+                    kind_counts(&kernel_stats.undecoded_pcurve_kinds)
                 )),
             );
         }
@@ -2392,3 +2411,30 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// The kinds behind a loss count as ` (kind: count, ...)`, or nothing when the
+/// map is empty.
+fn kind_counts(kinds: &std::collections::BTreeMap<String, usize>) -> String {
+    if kinds.is_empty() {
+        return String::new();
+    }
+    let listed: Vec<String> = kinds
+        .iter()
+        .map(|(kind, count)| format!("{kind}: {count}"))
+        .collect();
+    format!(" ({})", listed.join(", "))
+}
+
+#[cfg(test)]
+mod kind_count_tests {
+    use super::kind_counts;
+
+    #[test]
+    fn kinds_are_listed_in_name_order_or_omitted() {
+        let mut kinds = std::collections::BTreeMap::new();
+        assert_eq!(kind_counts(&kinds), "");
+        kinds.insert("spline".to_owned(), 3);
+        kinds.insert("cone".to_owned(), 1);
+        assert_eq!(kind_counts(&kinds), " (cone: 1, spline: 3)");
+    }
+}
