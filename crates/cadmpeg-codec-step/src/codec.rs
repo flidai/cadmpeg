@@ -36,12 +36,7 @@ impl StepCodec {
     /// argument, each shell's identity, the signed volume it encloses, and
     /// whether every face was measured. Without one the first shell stays the
     /// exterior. Fork-only: not for upstream.
-    pub fn set_shell_volume_provider(
-        provider: fn(
-            &cadmpeg_ir::document::CadIr,
-            &std::collections::BTreeSet<String>,
-        ) -> Vec<(String, f64, bool)>,
-    ) {
+    pub fn set_shell_volume_provider(provider: crate::export::ShellVolumeProvider) {
         crate::export::register_shell_volume_provider(provider);
     }
 }
