@@ -3132,13 +3132,13 @@ impl<'a> Builder<'a> {
     ///
     /// The tube radius `r` is signed and the torus point is
     /// `C + (R + r cos v) X + r sin v Z`. Its parametric normal is
-    /// `(R + r cos v) |r|` times the unit vector from the tube center to the
-    /// point, so it points away from the tube center where `rho = R + r cos v`
-    /// is positive and toward it where `rho` is negative. The face sense of a
-    /// carrier with a negative tube radius is relative to the normal turned
-    /// toward the tube center, so the written sense states the opposite
-    /// where `r` is negative and `rho` is positive. Faces on the inner sheet
-    /// are not corrected.
+    /// `rho |r|` times the unit vector from the tube center to the point,
+    /// where `rho = R + r cos v`, so it points away from the tube center where
+    /// `rho` is positive and toward it where `rho` is negative. The normal of
+    /// the carrier points away from the tube center for a positive `r` and
+    /// toward it for a negative one. The written record holds `|r|`, so a face
+    /// on the sheet where the sign of `rho` differs from the sign of `r` states
+    /// the opposite sense. A face with vertices on both sheets is left alone.
     fn apple_sense_flip(&self, face: &Face) -> bool {
         let Some(Some(SolvedSurfaceGeometry::Torus(torus))) = self
             .surfaces
@@ -3176,10 +3176,12 @@ impl<'a> Builder<'a> {
                     position.z - center.z,
                 ];
                 let height = offset[0] * axis.x + offset[1] * axis.y + offset[2] * axis.z;
-                let radial = (offset[0].powi(2) + offset[1].powi(2) + offset[2].powi(2)
-                    - height * height)
-                    .max(0.0)
-                    .sqrt();
+                let across = [
+                    offset[0] - height * axis.x,
+                    offset[1] - height * axis.y,
+                    offset[2] - height * axis.z,
+                ];
+                let radial = (across[0].powi(2) + across[1].powi(2) + across[2].powi(2)).sqrt();
                 let residual = |rho: f64| {
                     (((rho - major) / minor).powi(2) + (height / minor).powi(2) - 1.0).abs()
                 };
@@ -3192,9 +3194,8 @@ impl<'a> Builder<'a> {
             }
         }
         match (plus > 0, minus > 0) {
-            // Only the outer sheet is corrected: the inner-sheet rule was
-            // right on some reference solids and wrong on others.
             (true, false) => minor < 0.0,
+            (false, true) => minor > 0.0,
             _ => false,
         }
     }
