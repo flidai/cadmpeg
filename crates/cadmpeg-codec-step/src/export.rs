@@ -509,41 +509,55 @@ fn shell_vertex_boxes(ir: &CadIr) -> HashMap<&str, [f64; 6]> {
     boxes
 }
 
-/// The shells whose signed volume decides the roles of the shells of a
-/// region with several shells. Fork-only.
+/// The shells to measure, and the shells taken as the exterior of their
+/// region without a measurement. Fork-only.
 ///
-/// The first listed shell is the exterior unless its volume is not positive.
-/// When its vertex box holds the vertex box of every other shell of the
-/// region, it encloses them and only the other shells are measured, for the
-/// orientation of each void. Otherwise every shell of the region is measured.
-/// Measuring the faces of a large exterior shell dominates the conversion
-/// time of a file with many voids.
-pub(crate) fn shells_to_measure(ir: &CadIr) -> BTreeSet<String> {
+/// The first listed shell of a region is the exterior unless its volume is not
+/// positive. A shell whose vertex box holds the vertex box of every other
+/// shell of the region encloses them. When the first shell does, it is the
+/// exterior and only the other shells are measured, for the orientation of
+/// each void. When another shell does and the first is measured not to be
+/// positive, that shell is the exterior; it is not measured, and the first
+/// and the rest are. When no shell does, every shell is measured. Measuring
+/// the faces of a large exterior shell dominates the conversion time of a file
+/// with many voids.
+pub(crate) fn shells_to_measure(ir: &CadIr) -> (BTreeSet<String>, BTreeSet<String>) {
     let boxes = shell_vertex_boxes(ir);
     let mut scope: BTreeSet<String> = BTreeSet::new();
+    let mut assumed: BTreeSet<String> = BTreeSet::new();
     for region in ir.model.regions.iter().filter(|r| r.shells.len() > 1) {
-        let Some((first, rest)) = region.shells.split_first() else {
-            continue;
-        };
-        let encloses = boxes.get(first.as_str()).is_some_and(|outer| {
-            let slack = 1e-6
-                * (outer[3] - outer[0])
-                    .max(outer[4] - outer[1])
-                    .max(outer[5] - outer[2])
-                    .max(1.0);
-            rest.iter().all(|other| {
-                boxes.get(other.as_str()).is_some_and(|inner| {
-                    (0..3).all(|axis| {
-                        inner[axis] >= outer[axis] - slack
-                            && inner[axis + 3] <= outer[axis + 3] + slack
+        let encloses = |outer: &ShellId| {
+            boxes.get(outer.as_str()).is_some_and(|outer| {
+                let slack = 1e-6
+                    * (outer[3] - outer[0])
+                        .max(outer[4] - outer[1])
+                        .max(outer[5] - outer[2])
+                        .max(1.0);
+                region.shells.iter().all(|other| {
+                    boxes.get(other.as_str()).is_some_and(|inner| {
+                        (0..3).all(|axis| {
+                            inner[axis] >= outer[axis] - slack
+                                && inner[axis + 3] <= outer[axis + 3] + slack
+                        })
                     })
                 })
             })
-        });
-        let measured = if encloses { rest } else { &region.shells[..] };
-        scope.extend(measured.iter().map(|id| id.as_str().to_owned()));
+        };
+        let exterior = region.shells.iter().find(|id| encloses(id));
+        for id in &region.shells {
+            match exterior {
+                Some(exterior) if exterior == id => {
+                    if id != &region.shells[0] {
+                        assumed.insert(id.as_str().to_owned());
+                    }
+                }
+                _ => {
+                    scope.insert(id.as_str().to_owned());
+                }
+            }
+        }
     }
-    scope
+    (scope, assumed)
 }
 
 /// Signed volume of the shells in [`shells_to_measure`], read from the
@@ -558,7 +572,7 @@ fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     {
         return HashMap::new();
     }
-    let scope = shells_to_measure(ir);
+    let (scope, assumed) = shells_to_measure(ir);
     let arena = cadmpeg_core::decode::DecodeArena::new();
     let policy = cadmpeg_core::decode::DecodePolicy::desktop();
     let Ok(ctx) = cadmpeg_core::decode::DecodeContext::for_loaded_input(&arena, &policy, 0) else {
@@ -570,10 +584,16 @@ fn measured_shell_volumes(ir: &CadIr) -> HashMap<String, (f64, bool)> {
     };
     let volumes =
         cadmpeg_measure::shell_signed_volumes(&ctx, ir, options, &scope).unwrap_or_default();
-    volumes
+    let mut measured: HashMap<String, (f64, bool)> = volumes
         .into_iter()
         .map(|entry| (entry.shell, (entry.volume, entry.complete)))
-        .collect()
+        .collect();
+    // A shell that encloses its region and is listed after the first is the
+    // exterior when the first is not positive: it is taken as the largest.
+    for id in assumed {
+        measured.insert(id, (f64::INFINITY, false));
+    }
+    measured
 }
 
 impl<'a> Builder<'a> {

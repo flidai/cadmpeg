@@ -307,10 +307,12 @@ fn void_listed_first_is_written_as_a_void() {
 
 /// A cube with a box void whose vertex box lies inside the cube's: the cube,
 /// listed first, is the exterior without a measurement, so only the void shell
-/// is measured. When the void is listed first its box does not hold the cube's
-/// and both shells are measured. Fork-only.
+/// is measured. When the void is listed first, the cube is still the shell
+/// that encloses the other, so it is taken as the exterior without a
+/// measurement and the void is measured to find that it is not positive.
+/// Fork-only.
 #[test]
-fn only_the_voids_are_measured_when_the_first_shell_encloses_them() {
+fn the_shell_that_encloses_the_others_is_not_measured() {
     let outer = box_shell(10, [0.0; 3], [10.0; 3], BoxFaceUse::Outward);
     let void = box_shell(
         outer.next,
@@ -333,15 +335,16 @@ fn only_the_voids_are_measured_when_the_first_shell_encloses_them() {
     let mut ir = decoded.ir().clone();
     assert_eq!(ir.model.regions[0].shells.len(), 2);
     let outer_first = ir.model.regions[0].shells.clone();
-    let scope = crate::export::shells_to_measure(&ir);
-    assert_eq!(
-        scope.len(),
-        1,
-        "only the shell inside the first is measured: {scope:?}"
-    );
+    let (scope, assumed) = crate::export::shells_to_measure(&ir);
+    assert_eq!(scope.len(), 1, "only the void is measured: {scope:?}");
     assert!(!scope.contains(outer_first[0].as_str()));
+    assert!(assumed.is_empty(), "{assumed:?}");
     ir.model.regions[0].shells.reverse();
-    assert_eq!(crate::export::shells_to_measure(&ir).len(), 2);
+    let (scope, assumed) = crate::export::shells_to_measure(&ir);
+    assert_eq!(scope.len(), 1, "{scope:?}");
+    assert!(scope.contains(outer_first[1].as_str()));
+    assert_eq!(assumed.len(), 1, "{assumed:?}");
+    assert!(assumed.contains(outer_first[0].as_str()));
 }
 
 /// A solid cylinder with radius 10 and height 30, whose closed circle edges
