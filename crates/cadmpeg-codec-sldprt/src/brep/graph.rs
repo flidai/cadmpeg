@@ -544,6 +544,15 @@ pub(crate) struct Stats {
     /// Edges dropped because an endpoint vertex did not resolve and the edge is
     /// not a closed ring edge with a typed carrier.
     pub(crate) unresolved_edges: usize,
+    /// Of the unresolved edges, those with an endpoint whose vertex-use
+    /// reference is null.
+    pub(crate) unresolved_null_vertex_use: usize,
+    /// Of the unresolved edges, those with an endpoint whose vertex-use
+    /// record is absent from the tables.
+    pub(crate) unresolved_absent_vertex_use: usize,
+    /// Of the unresolved edges, those with an endpoint whose world-point
+    /// record is absent from the tables.
+    pub(crate) unresolved_absent_point: usize,
     /// Loops dropped because a coedge of the ring has no emitted edge.
     pub(crate) dropped_loops: usize,
     /// Faces dropped because none of their loops was kept.
@@ -2093,6 +2102,20 @@ fn decode_graph(
         };
         if !resolved_endpoints && closed_circle_point.is_none() {
             out.stats.unresolved_edges += 1;
+            // Name the first cause that blocks an endpoint, so that a reader of
+            // the loss can tell a null reference from a record that the
+            // tables do not hold.
+            let blocked = [start_v, end_v]
+                .into_iter()
+                .find(|vuse| !kept_vertices.contains(vuse));
+            match blocked {
+                Some(0) => out.stats.unresolved_null_vertex_use += 1,
+                Some(vuse) => match t.vertex_uses().get(&vuse) {
+                    None => out.stats.unresolved_absent_vertex_use += 1,
+                    Some(_) => out.stats.unresolved_absent_point += 1,
+                },
+                None => {}
+            }
             continue;
         }
         let (mut start_id, mut end_id) = if let Some(position) = closed_circle_point {

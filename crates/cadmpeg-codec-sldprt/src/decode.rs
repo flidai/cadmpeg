@@ -4074,8 +4074,13 @@ pub(crate) fn brep_losses(
     {
         ctx.reserve_vec(&mut losses, 1, "append SLDPRT geometry loss")?;
         losses.push(SldprtLossCode::TopologyBoundaryUnresolved.note(format!(
-            "{} edge(s) were dropped because an endpoint vertex did not resolve and the edge is not a typed closed ring; {} loop(s) were dropped because a coedge has no emitted edge; {} face(s) were dropped because none of their loops was kept.",
-            s.unresolved_edges, s.dropped_loops, s.faces_without_loops
+            "{} edge(s) were dropped because an endpoint vertex did not resolve and the edge is not a typed closed ring ({} with a null vertex reference, {} with an absent vertex record, {} with an absent point record); {} loop(s) were dropped because a coedge has no emitted edge; {} face(s) were dropped because none of their loops was kept.",
+            s.unresolved_edges,
+            s.unresolved_null_vertex_use,
+            s.unresolved_absent_vertex_use,
+            s.unresolved_absent_point,
+            s.dropped_loops,
+            s.faces_without_loops
         )));
     }
     if s.synthetic_body_grouping {
