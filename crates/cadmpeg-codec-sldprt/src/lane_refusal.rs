@@ -9,16 +9,40 @@ use cadmpeg_core::CodecError;
 /// limit bounds the wall time that failing solvers can take.
 const SOLVER_EXHAUSTION_LIMIT: u32 = 4;
 
-/// Counts the solver calls of one decode that ran out of work.
+/// Local work units that all solver calls of one decode may spend together.
+///
+/// A solver call that finds no answer spends its whole slice, and a decode can
+/// ask the same question of many edges. The session budget bounds that work
+/// only in the end; this total bounds the wall time that the optional solvers
+/// take and leaves the rest of the decode its time.
+const SOLVER_TOTAL_WORK: u64 = 24_000_000;
+
+/// Counts the solver calls of one decode that ran out of work and the work
+/// that they spent.
 #[derive(Debug, Default)]
 pub(crate) struct SolverGate {
     exhausted: std::cell::Cell<u32>,
+    spent: std::cell::Cell<u64>,
 }
 
 impl SolverGate {
     /// Whether another solver call may start.
     pub(crate) fn is_open(&self) -> bool {
-        self.exhausted.get() < SOLVER_EXHAUSTION_LIMIT
+        self.exhausted.get() < SOLVER_EXHAUSTION_LIMIT && self.spent.get() < SOLVER_TOTAL_WORK
+    }
+
+    /// The local work that the next solver call may spend.
+    pub(crate) fn allowance(&self) -> u64 {
+        SOLVER_TOTAL_WORK - self.spent.get().min(SOLVER_TOTAL_WORK)
+    }
+
+    /// Record the local work that a finished call spent.
+    pub(crate) fn note_spent(&self, units: u64) {
+        let total = match self.spent.get().checked_add(units) {
+            Some(total) if total < SOLVER_TOTAL_WORK => total,
+            _ => SOLVER_TOTAL_WORK,
+        };
+        self.spent.set(total);
     }
 
     /// Record a call that ran out of its work slice.

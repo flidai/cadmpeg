@@ -155,6 +155,7 @@ fn surface_spans(
 /// itself has less left.
 fn surface_solver_budget<'ctx>(
     ctx: &'ctx DecodeContext<'_>,
+    gate: &SolverGate,
     surface: &cadmpeg_ir::geometry::nurbs::NurbsSurface,
     operation: &'static str,
 ) -> Result<Option<cadmpeg_core::decode::WorkBudget<'ctx>>, CodecError> {
@@ -169,13 +170,14 @@ fn surface_solver_budget<'ctx>(
         Some(work) if work < SURFACE_SOLVER_LOCAL_CEILING => work.max(SURFACE_SOLVER_LOCAL_WORK),
         _ => SURFACE_SOLVER_LOCAL_CEILING,
     };
-    let affordable = ctx.work_remaining() / scale.get();
+    let affordable = (ctx.work_remaining() / scale.get()).min(gate.allowance());
     if affordable == 0 {
         return Ok(None);
     }
     Ok(Some(
         ctx.work_budget(wanted.min(affordable))
-            .with_session_work_scale(scale),
+            .with_session_work_scale(scale)
+            .advisory(),
     ))
 }
 
@@ -191,7 +193,7 @@ pub(super) fn nurbs_surface_parameter_within_tolerance(
     if !gate.is_open() {
         return Ok(Solved::Withheld);
     }
-    let Some(budget) = surface_solver_budget(ctx, surface, OPERATION)? else {
+    let Some(budget) = surface_solver_budget(ctx, gate, surface, OPERATION)? else {
         return Ok(Solved::Withheld);
     };
     let result = cadmpeg_ir::eval::nurbs_surface_parameter_within_tolerance_with_budget(
@@ -199,6 +201,7 @@ pub(super) fn nurbs_surface_parameter_within_tolerance(
     );
     // A zero charge observes the session's original sticky refusal.
     ctx.charge_work(0, OPERATION)?;
+    gate.note_spent(u64_from_index(budget.consumed()));
     if budget.exhausted() {
         gate.note_exhausted();
         return Ok(Solved::Withheld);
@@ -243,13 +246,14 @@ pub(super) fn nurbs_surface_parameter_segment_chord_bound(
         return Ok(Solved::Withheld);
     }
     ctx.charge_work(work, OPERATION)?;
-    let Some(budget) = surface_solver_budget(ctx, surface, OPERATION)? else {
+    let Some(budget) = surface_solver_budget(ctx, gate, surface, OPERATION)? else {
         return Ok(Solved::Withheld);
     };
     let result = cadmpeg_ir::eval::nurbs_surface_parameter_segment_chord_bound_with_budget(
         ctx, surface, parameters, chord, &budget,
     );
     ctx.charge_work(0, OPERATION)?;
+    gate.note_spent(u64_from_index(budget.consumed()));
     if budget.exhausted() {
         gate.note_exhausted();
         return Ok(Solved::Withheld);
@@ -349,6 +353,48 @@ mod tests {
             before,
             "a withheld call charges nothing"
         );
+        ctx.charge_work(1, "later work still runs").unwrap();
+        ctx.finish_session().unwrap();
+    }
+
+    #[test]
+    fn a_solver_that_runs_out_of_its_slice_is_withheld_and_the_session_stays_open() {
+        let surface = bilinear_plane();
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        // A point far from the plane has no answer, so the search spends its
+        // whole slice. The gate leaves a slice of 40 units.
+        let gate = crate::lane_refusal::SolverGate::default();
+        gate.note_spent(gate.allowance() - 40);
+        assert!(gate.is_open());
+        let point = Point3::new(0.25, 0.75, 5.0);
+        assert!(matches!(
+            super::nurbs_surface_parameter_within_tolerance(
+                &ctx, &gate, &surface, point, None, 1e-9,
+            ),
+            Ok(super::Solved::Withheld)
+        ));
+        assert!(!gate.is_open(), "the call spent the rest of the total");
+        ctx.charge_work(1, "later work still runs").unwrap();
+        ctx.finish_session().unwrap();
+
+        // The chord bound of a plane is cheap, so this call meets a gate that
+        // has spent its total.
+        let gate = crate::lane_refusal::SolverGate::default();
+        gate.note_spent(gate.allowance());
+        assert!(!gate.is_open());
+        let ends = [
+            cadmpeg_ir::math::Point2::new(0.0, 0.0),
+            cadmpeg_ir::math::Point2::new(1.0, 1.0),
+        ];
+        let chord = [Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 0.0)];
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        assert!(matches!(
+            super::nurbs_surface_parameter_segment_chord_bound(&ctx, &gate, &surface, ends, chord,),
+            Ok(super::Solved::Withheld)
+        ));
         ctx.charge_work(1, "later work still runs").unwrap();
         ctx.finish_session().unwrap();
     }
