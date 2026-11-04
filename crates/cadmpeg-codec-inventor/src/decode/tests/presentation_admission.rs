@@ -37,6 +37,8 @@ fn presentation_default_native_record_refuses_entity_limit_before_creation() {
         graphics_faces: Vec::new(),
         graphics_style_collections: Vec::new(),
         graphics_primary_color_styles: Vec::new(),
+        graphics_nodes: Vec::new(),
+        graphics_material_color_styles: Vec::new(),
         issues: Vec::new(),
     };
     let arena = DecodeArena::new();
@@ -137,6 +139,8 @@ fn presentation_other_native_records_refuse_entity_limits_before_creation() {
             token.clone(),
             1,
         )],
+        graphics_nodes: Vec::new(),
+        graphics_material_color_styles: Vec::new(),
         issues: Vec::new(),
     };
     let arena = DecodeArena::new();
@@ -203,6 +207,8 @@ fn rendering_conversion_issue_refuses_entity_limit_before_creation() {
         graphics_faces: Vec::new(),
         graphics_style_collections: Vec::new(),
         graphics_primary_color_styles: Vec::new(),
+        graphics_nodes: Vec::new(),
+        graphics_material_color_styles: Vec::new(),
         issues: Vec::new(),
     };
     let arena = DecodeArena::new();

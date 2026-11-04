@@ -33,6 +33,17 @@ const GRAPHICS_PRIMARY_COLOR_STYLE_TYPE: [u8; 16] = [
     0x0f, 0x56, 0x48, 0xaf, 0xd4, 0x11, 0xc7, 0x8d, 0x10, 0x00, 0xd5, 0x8d, 0xc0, 0x4a, 0x0a, 0xb5,
 ];
 
+/// A graphics group node: the parent of a body's graphics faces. Its styles
+/// reference states the style collection those faces display when they carry
+/// no style of their own.
+const GRAPHICS_NODE_TYPE: [u8; 16] = [
+    0xcf, 0xac, 0x9e, 0xa7, 0xd1, 0x11, 0x81, 0xc2, 0x60, 0x00, 0xa3, 0x8a, 0xb4, 0x6b, 0xce, 0xb0,
+];
+/// An 89-byte material-color style in a group node's style collection.
+const GRAPHICS_MATERIAL_COLOR_STYLE_TYPE: [u8; 16] = [
+    0x08, 0x86, 0xeb, 0x48, 0xd2, 0x11, 0x0c, 0x07, 0x60, 0x00, 0xf9, 0x9a, 0xc5, 0x36, 0x1a, 0xb0,
+];
+
 #[derive(Debug)]
 pub(crate) struct PresentationInventory<'a> {
     pub(crate) default_styles: Vec<Located<PmAppDefaultStyle<'a>>>,
@@ -40,7 +51,21 @@ pub(crate) struct PresentationInventory<'a> {
     pub(crate) graphics_faces: Vec<Located<PmGraphicsFace>>,
     pub(crate) graphics_style_collections: Vec<Located<PmGraphicsStyleCollection>>,
     pub(crate) graphics_primary_color_styles: Vec<Located<PmGraphicsPrimaryColorStyle>>,
+    pub(crate) graphics_nodes: Vec<Located<PmGraphicsNode>>,
+    pub(crate) graphics_material_color_styles: Vec<Located<PmGraphicsMaterialColorStyle>>,
     pub(crate) issues: Vec<RecordIssue>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PmGraphicsNode {
+    pub(crate) styles: PmDcReference,
+}
+
+#[derive(Debug)]
+pub(crate) struct PmGraphicsMaterialColorStyle {
+    /// The third of the record's five RGBA vectors, at the same payload offset
+    /// as a primary-color style's diffuse vector.
+    pub(crate) diffuse: [cadmpeg_ir::scalar::FiniteBinary32; 4],
 }
 
 #[derive(Debug)]
@@ -136,8 +161,8 @@ impl UnresolvedCause {
             Self::GraphicsFace => "graphics face key is ambiguous",
             Self::FaceKey => "model face key is ambiguous",
             Self::StyleCollection => "style collection is missing or ambiguous",
-            Self::ColorStyle => "primary color style is missing or ambiguous",
-            Self::Color => "primary color is invalid",
+            Self::ColorStyle => "color style is missing or ambiguous",
+            Self::Color => "face color is invalid",
         }
     }
 }
@@ -314,6 +339,15 @@ fn project_face_bindings(
             })
             .or_insert((Some(face), has_style));
     }
+    let nodes = index_records(&inventory.graphics_nodes);
+    let collections = index_records(&inventory.graphics_style_collections);
+    let primary_styles = index_records(&inventory.graphics_primary_color_styles);
+    let material_styles = index_records(&inventory.graphics_material_color_styles);
+    let unparsed_records = inventory
+        .issues
+        .iter()
+        .map(|issue| (issue.segment_token.as_str(), issue.record_ordinal))
+        .collect::<std::collections::HashSet<_>>();
     for (face_id, key) in ordered_face_keys {
         let Some((graphics_face, any_style)) = graphics_faces.get(key) else {
             continue;
@@ -327,66 +361,93 @@ fn project_face_bindings(
             }
             continue;
         };
-        let Some(collection_ordinal) = graphics_face.styles.index().checked_sub(1) else {
+        // A face without a style of its own displays its group node's style.
+        // Only a face's own style reports an unresolved override; an inherited
+        // style that does not resolve leaves the face to its body's default.
+        let own_style = graphics_face.styles.index() != 0;
+        let token = graphics_face.identity.segment_token.as_str();
+        let styles = if own_style {
+            graphics_face.styles
+        } else {
+            let Some(parent_ordinal) = graphics_face.parent.index().checked_sub(1) else {
+                continue;
+            };
+            match records_at(&nodes, token, parent_ordinal) {
+                [node] => node.styles,
+                _ => continue,
+            }
+        };
+        let Some(collection_ordinal) = styles.index().checked_sub(1) else {
             continue;
         };
         if key_counts.get(key) != Some(&1) {
-            count_unresolved(
-                &mut projection.unresolved_face_overrides,
-                UnresolvedCause::FaceKey,
-            )?;
-            continue;
-        }
-        let mut collections = Vec::new();
-        for collection in &inventory.graphics_style_collections {
-            if collection.identity.segment_token == graphics_face.identity.segment_token
-                && collection.identity.record_ordinal == collection_ordinal
-            {
-                collections.push(collection);
+            if own_style {
+                count_unresolved(
+                    &mut projection.unresolved_face_overrides,
+                    UnresolvedCause::FaceKey,
+                )?;
             }
-        }
-        if collections.len() != 1 {
-            count_unresolved(
-                &mut projection.unresolved_face_overrides,
-                UnresolvedCause::StyleCollection,
-            )?;
             continue;
         }
-        let collection = collections[0];
+        let [collection] = records_at(&collections, token, collection_ordinal) else {
+            if own_style {
+                count_unresolved(
+                    &mut projection.unresolved_face_overrides,
+                    UnresolvedCause::StyleCollection,
+                )?;
+            }
+            continue;
+        };
         let mut color_styles = Vec::new();
+        let mut material_colors = Vec::new();
+        let mut lists_unparsed_record = false;
         for ordinal in collection
             .style_references
             .references()
             .iter()
             .filter_map(|reference| reference.index().checked_sub(1))
         {
-            for style in &inventory.graphics_primary_color_styles {
-                if style.identity.segment_token == collection.identity.segment_token
-                    && style.identity.record_ordinal == ordinal
-                {
-                    color_styles.push(style);
+            color_styles.extend(records_at(&primary_styles, token, ordinal).iter().copied());
+            material_colors.extend(records_at(&material_styles, token, ordinal).iter().copied());
+            lists_unparsed_record |= unparsed_records.contains(&(token, ordinal));
+        }
+        // A primary-color style keeps its precedence. A record that failed to
+        // parse could be another color style, so only a face's own collection
+        // keeps r7's primary-color binding beside one; any other binding fails
+        // closed.
+        let (style_identity, diffuse, schema) =
+            match (color_styles.as_slice(), material_colors.as_slice()) {
+                ([style], _) if own_style || !lists_unparsed_record => (
+                    &style.identity,
+                    style.colors[1],
+                    "InventorPrimaryColorStyle",
+                ),
+                ([], [style]) if !lists_unparsed_record => {
+                    (&style.identity, style.diffuse, "InventorMaterialColorStyle")
                 }
-            }
-        }
-        if color_styles.len() != 1 {
-            count_unresolved(
-                &mut projection.unresolved_face_overrides,
-                UnresolvedCause::ColorStyle,
-            )?;
-            continue;
-        }
-        let style = color_styles[0];
-        let [r, g, b, a] = style.colors[1].map(cadmpeg_ir::scalar::FiniteBinary32::get);
+                _ => {
+                    if own_style {
+                        count_unresolved(
+                            &mut projection.unresolved_face_overrides,
+                            UnresolvedCause::ColorStyle,
+                        )?;
+                    }
+                    continue;
+                }
+            };
+        let [r, g, b, a] = diffuse.map(cadmpeg_ir::scalar::FiniteBinary32::get);
         let Some(color) = Color::new(r, g, b, a) else {
-            count_unresolved(
-                &mut projection.unresolved_face_overrides,
-                UnresolvedCause::Color,
-            )?;
+            if own_style {
+                count_unresolved(
+                    &mut projection.unresolved_face_overrides,
+                    UnresolvedCause::Color,
+                )?;
+            }
             continue;
         };
         let appearance_key = (
-            style.identity.segment_token.as_str(),
-            style.identity.record_ordinal,
+            style_identity.segment_token.as_str(),
+            style_identity.record_ordinal,
         );
         let appearance_id = if let Some(id) = appearance_ids.get(&appearance_key) {
             id.clone()
@@ -394,7 +455,7 @@ fn project_face_bindings(
             ctx.charge_entities(1, "project Inventor face appearance")?;
             let id = AppearanceId::compose(
                 &cadmpeg_ir::identity_namespace!("inventor", "presentation", "face-color"),
-                style.identity.key()?,
+                style_identity.key()?,
             );
             projection.appearances.push(Appearance {
                 id: id.clone(),
@@ -403,7 +464,7 @@ fn project_face_bindings(
                 library_id: None,
                 visual_guid: None,
                 physical_token: None,
-                schema: Some("InventorPrimaryColorStyle".into()),
+                schema: Some(schema.into()),
                 category: None,
                 base_color: Some(color),
                 properties: BTreeMap::new(),
@@ -435,6 +496,31 @@ fn project_face_bindings(
     Ok(())
 }
 
+/// Records of one family by segment token and zero-based record ordinal.
+type RecordIndex<'r, T> = std::collections::HashMap<(&'r str, u32), Vec<&'r Located<T>>>;
+
+fn index_records<T>(records: &[Located<T>]) -> RecordIndex<'_, T> {
+    let mut index = RecordIndex::new();
+    for record in records {
+        index
+            .entry((
+                record.identity.segment_token.as_str(),
+                record.identity.record_ordinal,
+            ))
+            .or_default()
+            .push(record);
+    }
+    index
+}
+
+fn records_at<'i, 'r, T>(
+    index: &'i RecordIndex<'r, T>,
+    token: &'r str,
+    ordinal: u32,
+) -> &'i [&'r Located<T>] {
+    index.get(&(token, ordinal)).map_or(&[], Vec::as_slice)
+}
+
 pub(crate) fn inventory<'a>(
     ctx: &DecodeContext<'a>,
     document: &RseInventory<'a>,
@@ -444,6 +530,8 @@ pub(crate) fn inventory<'a>(
     let mut graphics_faces = Vec::new();
     let mut graphics_style_collections = Vec::new();
     let mut graphics_primary_color_styles = Vec::new();
+    let mut graphics_nodes = Vec::new();
+    let mut graphics_material_color_styles = Vec::new();
     let mut issues = Vec::new();
     for segment in &document.segments {
         if !matches!(segment.kind, SegmentKind::PmApp | SegmentKind::PmGraphics) {
@@ -515,6 +603,34 @@ pub(crate) fn inventory<'a>(
                         );
                     })
                 }
+                GRAPHICS_NODE_TYPE
+                    if segment.kind == SegmentKind::PmGraphics
+                        && legacy_block_len(version) == 0 =>
+                {
+                    parse_graphics_node(record.payload).map(|value| {
+                        push_presentation_record(
+                            &mut graphics_nodes,
+                            value,
+                            record.type_id,
+                            token,
+                            ordinal,
+                        );
+                    })
+                }
+                GRAPHICS_MATERIAL_COLOR_STYLE_TYPE
+                    if segment.kind == SegmentKind::PmGraphics
+                        && legacy_block_len(version) == 0 =>
+                {
+                    parse_graphics_material_color_style(record.payload).map(|value| {
+                        push_presentation_record(
+                            &mut graphics_material_color_styles,
+                            value,
+                            record.type_id,
+                            token,
+                            ordinal,
+                        );
+                    })
+                }
                 _ => continue,
             };
             if let Err(error) = parsed {
@@ -537,8 +653,44 @@ pub(crate) fn inventory<'a>(
         graphics_faces,
         graphics_style_collections,
         graphics_primary_color_styles,
+        graphics_nodes,
+        graphics_material_color_styles,
         issues,
     })
+}
+
+fn parse_graphics_node(source: View<'_>) -> Result<PmGraphicsNode, CodecError> {
+    let mut cursor = Cursor::new(source);
+    cursor.u32("graphics-node header value")?;
+    cursor.u16("graphics-node header id")?;
+    cursor.u32("graphics-node flags")?;
+    let styles = cursor.node_reference("graphics-node styles reference")?;
+    // The surface, parent and child references that follow are not needed here.
+    Ok(PmGraphicsNode { styles })
+}
+
+fn parse_graphics_material_color_style(
+    source: View<'_>,
+) -> Result<PmGraphicsMaterialColorStyle, CodecError> {
+    let mut cursor = Cursor::new(source);
+    cursor.skip(4, "graphics material-color state")?;
+    // Only the diffuse vector is read; the other vectors need not be finite.
+    cursor.skip(32, "graphics material-color leading vectors")?;
+    let mut diffuse = [cadmpeg_ir::scalar::FiniteBinary32::ZERO; 4];
+    for component in &mut diffuse {
+        *component = cursor.finite_f32("graphics material-color diffuse component")?;
+    }
+    cursor.skip(32, "graphics material-color trailing vectors")?;
+    cursor.skip(4, "graphics material-color shininess")?;
+    cursor.skip(1, "graphics material-color terminal state")?;
+    let suffix = cursor.remainder()?;
+    if !suffix.window().is_empty() {
+        return Err(CodecError::malformed(format_args!(
+            "PmGraphics material-color record has {} trailing bytes",
+            suffix.window().len()
+        )));
+    }
+    Ok(PmGraphicsMaterialColorStyle { diffuse })
 }
 
 fn push_presentation_record<T>(
@@ -1043,16 +1195,18 @@ mod tests {
     use cadmpeg_ir::scalar::FiniteReal;
 
     use super::{
-        inventory, parse_default_style, parse_graphics_face, parse_graphics_primary_color_style,
-        parse_graphics_style_collection, parse_rendering_style, project_bindings,
-        project_default_bindings, Cursor, PmGraphicsFace, PmGraphicsPrimaryColorStyle,
+        inventory, parse_default_style, parse_graphics_face, parse_graphics_material_color_style,
+        parse_graphics_node, parse_graphics_primary_color_style, parse_graphics_style_collection,
+        parse_rendering_style, project_bindings, project_default_bindings, Cursor, PmGraphicsFace,
+        PmGraphicsMaterialColorStyle, PmGraphicsNode, PmGraphicsPrimaryColorStyle,
         PmGraphicsStyleCollection, PresentationInventory, UnresolvedCause, DEFAULT_STYLE_TYPE,
-        GRAPHICS_FACE_TYPE, GRAPHICS_PRIMARY_COLOR_STYLE_TYPE, GRAPHICS_STYLE_COLLECTION_TYPE,
-        RENDERING_STYLE_TYPE,
+        GRAPHICS_FACE_TYPE, GRAPHICS_MATERIAL_COLOR_STYLE_TYPE, GRAPHICS_NODE_TYPE,
+        GRAPHICS_PRIMARY_COLOR_STYLE_TYPE, GRAPHICS_STYLE_COLLECTION_TYPE, RENDERING_STYLE_TYPE,
     };
     use crate::container::InventorContainer;
     use crate::pmdc::{PmDcPairedReferenceList, PmDcReference};
     use crate::record_identity::Located;
+    use crate::record_issue::{RecordIssue, RecordIssueFamily};
     use crate::rse::{RecordFrameState, SegmentBulkState, SegmentKind};
     use crate::test_support::test_fixtures::primary_envelope_fixture;
     use crate::test_support::truncation::displayed_truncation;
@@ -1132,6 +1286,8 @@ mod tests {
             graphics_faces: Vec::new(),
             graphics_style_collections: Vec::new(),
             graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         };
         let face = FaceId::mint("inventor:test:face#1").expect("face id");
@@ -1228,6 +1384,8 @@ mod tests {
             graphics_faces: Vec::new(),
             graphics_style_collections: Vec::new(),
             graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         };
         let appearance = Appearance {
@@ -1277,7 +1435,9 @@ mod tests {
                 + result.rendering_styles.len()
                 + result.graphics_faces.len()
                 + result.graphics_style_collections.len()
-                + result.graphics_primary_color_styles.len(),
+                + result.graphics_primary_color_styles.len()
+                + result.graphics_nodes.len()
+                + result.graphics_material_color_styles.len(),
             result.issues,
         ))
     }
@@ -1332,6 +1492,18 @@ mod tests {
                 GRAPHICS_PRIMARY_COLOR_STYLE_TYPE,
                 primary_color_fixture([0.4; 4]),
                 "admit Inventor graphics primary color style record",
+            ),
+            (
+                SegmentKind::PmGraphics,
+                GRAPHICS_NODE_TYPE,
+                graphics_node_fixture(),
+                "admit Inventor graphics node record",
+            ),
+            (
+                SegmentKind::PmGraphics,
+                GRAPHICS_MATERIAL_COLOR_STYLE_TYPE,
+                material_color_fixture([0.4; 4]),
+                "admit Inventor graphics material color style record",
             ),
         ] {
             let admitted = inventory_with_record(kind, type_id, &payload, DecodePolicy::service())
@@ -1463,6 +1635,8 @@ mod tests {
             graphics_faces: Vec::new(),
             graphics_style_collections: Vec::new(),
             graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         };
         let appearance = Appearance {
@@ -1713,6 +1887,8 @@ mod tests {
             graphics_faces: vec![face],
             graphics_style_collections: vec![collection],
             graphics_primary_color_styles: vec![style],
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         }
     }
@@ -1842,6 +2018,546 @@ mod tests {
                     BTreeMap::new()
                 }
             );
+        }
+    }
+
+    /// A current graphics group node: header, flags, a qualified styles
+    /// reference to record 5, then surface, parent and child references the
+    /// reader does not need.
+    fn graphics_node_fixture() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend(1_u32.to_le_bytes());
+        bytes.extend(2_u16.to_le_bytes());
+        bytes.extend(3_u32.to_le_bytes());
+        bytes.extend(0x8000_0005_u32.to_le_bytes());
+        bytes.extend(0_u32.to_le_bytes());
+        bytes.extend(0x8000_0002_u32.to_le_bytes());
+        bytes.extend(2_u16.to_le_bytes());
+        bytes.extend(0x3000_u16.to_le_bytes());
+        bytes.extend(1_u32.to_le_bytes());
+        bytes.extend([0; 8]);
+        bytes.extend(0x8000_0003_u32.to_le_bytes());
+        bytes
+    }
+
+    /// An 89-byte material-color style: state, five color vectors of which
+    /// the third is diffuse, shininess and a terminal state.
+    fn material_color_fixture(diffuse: [f32; 4]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend(51_u32.to_le_bytes());
+        for color in [[0.1; 4], [0.3; 4], diffuse, [0.7; 4], [0.9; 4]] {
+            for component in color {
+                bytes.extend(component.to_le_bytes());
+            }
+        }
+        bytes.extend(0.5_f32.to_le_bytes());
+        bytes.push(52);
+        bytes
+    }
+
+    #[test]
+    fn parses_graphics_node_styles_reference() {
+        let bytes = graphics_node_fixture();
+        let arena = DecodeArena::new();
+        let (_, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic graphics node fits policy");
+
+        let node = parse_graphics_node(root).expect("graphics node parses");
+
+        assert_eq!(node.styles.index(), 5);
+        assert!(node.styles.qualified());
+    }
+
+    #[test]
+    fn a_truncated_graphics_node_names_its_styles_reference() {
+        let bytes = &graphics_node_fixture()[..12];
+        assert_eq!(
+            displayed_truncation(parse_graphics_node(View::over_retained(bytes))),
+            "truncated input during graphics-node styles reference at space 0 offset 10"
+        );
+    }
+
+    #[test]
+    fn parses_material_color_style_diffuse_at_offset_36() {
+        let bytes = material_color_fixture([0.2, 0.4, 0.6, 0.8]);
+        assert_eq!(bytes.len(), 89);
+        let diffuse_bytes = [0.2_f32, 0.4, 0.6, 0.8]
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<_>>();
+        assert_eq!(&bytes[36..52], diffuse_bytes.as_slice());
+        let arena = DecodeArena::new();
+        let (_, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic material-color style fits policy");
+
+        let style = parse_graphics_material_color_style(root)
+            .expect("graphics material-color style parses");
+
+        assert_eq!(
+            style.diffuse.map(cadmpeg_ir::scalar::FiniteBinary32::get),
+            [0.2, 0.4, 0.6, 0.8]
+        );
+    }
+
+    #[test]
+    fn material_color_reader_refuses_trailing_bytes_and_nonfinite_diffuse() {
+        let arena = DecodeArena::new();
+        let mut trailing = material_color_fixture([0.2; 4]);
+        trailing.push(0);
+        let (_, root) = DecodeContext::from_root_bytes(&trailing, &arena, &DecodePolicy::default())
+            .expect("synthetic material-color style fits policy");
+        assert!(parse_graphics_material_color_style(root)
+            .expect_err("a trailing byte is refused")
+            .to_string()
+            .contains("material-color record has 1 trailing bytes"));
+
+        let nonfinite = material_color_fixture([0.2, f32::INFINITY, 0.6, 0.8]);
+        let (_, root) =
+            DecodeContext::from_root_bytes(&nonfinite, &arena, &DecodePolicy::default())
+                .expect("synthetic material-color style fits policy");
+        assert!(parse_graphics_material_color_style(root)
+            .expect_err("a nonfinite diffuse component is refused")
+            .to_string()
+            .contains("graphics material-color diffuse component is not finite"));
+
+        let short = &material_color_fixture([0.2; 4])[..88];
+        let (_, root) = DecodeContext::from_root_bytes(short, &arena, &DecodePolicy::default())
+            .expect("synthetic material-color style fits policy");
+        assert!(parse_graphics_material_color_style(root).is_err());
+    }
+
+    #[test]
+    fn material_color_reader_ignores_the_vectors_it_does_not_use() {
+        let mut bytes = material_color_fixture([0.2, 0.4, 0.6, 0.8]);
+        bytes[4..8].copy_from_slice(&f32::NAN.to_le_bytes());
+        bytes[84..88].copy_from_slice(&f32::INFINITY.to_le_bytes());
+        let arena = DecodeArena::new();
+        let (_, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic material-color style fits policy");
+
+        let style = parse_graphics_material_color_style(root)
+            .expect("an unused nonfinite vector does not refuse the record");
+
+        assert_eq!(
+            style.diffuse.map(cadmpeg_ir::scalar::FiniteBinary32::get),
+            [0.2, 0.4, 0.6, 0.8]
+        );
+    }
+
+    fn located<T>(value: T, type_id: [u8; 16], ordinal: u32) -> Located<T> {
+        Located::new(
+            value,
+            crate::record_identity::RecordTypeId::from_bytes(type_id),
+            cadmpeg_ir::identity_key!("graphics").clone(),
+            ordinal,
+        )
+    }
+
+    fn reference(index: u32) -> PmDcReference {
+        PmDcReference::new(index, index != 0).expect("test reference index fits 31 bits")
+    }
+
+    /// A graphics face whose parent reference 9 names group node record 8.
+    fn graphics_face(key: u32, styles: u32, ordinal: u32) -> Located<PmGraphicsFace> {
+        graphics_face_under(key, styles, 9, ordinal)
+    }
+
+    fn graphics_face_under(
+        key: u32,
+        styles: u32,
+        parent: u32,
+        ordinal: u32,
+    ) -> Located<PmGraphicsFace> {
+        located(
+            PmGraphicsFace {
+                segment_version_major: 26,
+                header_value: 0,
+                header_id: 0,
+                flags: 0,
+                styles: reference(styles),
+                surface: reference(0),
+                parent: reference(parent),
+                state: 0,
+                edge_references: PmDcPairedReferenceList::default(),
+                visibility_state: 0,
+                bounds: [FiniteReal::ZERO; 6],
+                key,
+                values: [0; 2],
+            },
+            GRAPHICS_FACE_TYPE,
+            ordinal,
+        )
+    }
+
+    fn graphics_node(styles: u32) -> Located<PmGraphicsNode> {
+        located(
+            PmGraphicsNode {
+                styles: reference(styles),
+            },
+            GRAPHICS_NODE_TYPE,
+            8,
+        )
+    }
+
+    fn style_collection(ordinal: u32, styles: &[u32]) -> Located<PmGraphicsStyleCollection> {
+        located(
+            PmGraphicsStyleCollection {
+                segment_version_major: 26,
+                style_references: PmDcPairedReferenceList::new(
+                    Some([1, 2]),
+                    styles.iter().copied().map(reference).collect(),
+                )
+                .expect("valid reference list"),
+            },
+            GRAPHICS_STYLE_COLLECTION_TYPE,
+            ordinal,
+        )
+    }
+
+    fn material_color(ordinal: u32, diffuse: [f32; 4]) -> Located<PmGraphicsMaterialColorStyle> {
+        located(
+            PmGraphicsMaterialColorStyle {
+                diffuse: diffuse
+                    .map(|value| cadmpeg_ir::scalar::FiniteBinary32::new(value).expect("finite")),
+            },
+            GRAPHICS_MATERIAL_COLOR_STYLE_TYPE,
+            ordinal,
+        )
+    }
+
+    /// A face with no style of its own (record 2) under group node record 8.
+    /// The node's styles reference 13 names collection record 12, which lists
+    /// material-color style record 10.
+    fn inherited_color_inventory() -> PresentationInventory<'static> {
+        PresentationInventory {
+            default_styles: Vec::new(),
+            rendering_styles: Vec::new(),
+            graphics_faces: vec![graphics_face(42, 0, 2)],
+            graphics_style_collections: vec![style_collection(12, &[11])],
+            graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: vec![graphics_node(13)],
+            graphics_material_color_styles: vec![material_color(10, [0.9, 0.45, 0.0, 1.0])],
+            issues: Vec::new(),
+        }
+    }
+
+    fn project_faces(
+        inventory: &PresentationInventory<'_>,
+        keys: &[u64],
+    ) -> super::PresentationProjection {
+        let face_keys = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                (
+                    FaceId::mint(format!("inventor:test:face#{index}")).expect("identity grammar"),
+                    *key,
+                )
+            })
+            .collect();
+        let arena = DecodeArena::new();
+        let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service())
+            .expect("projection context");
+        project_bindings(&ctx, inventory, &[], &[], &face_keys).expect("face projection")
+    }
+
+    #[test]
+    fn unstyled_face_inherits_its_group_node_material_color() {
+        let projection = project_faces(&inherited_color_inventory(), &[42]);
+
+        assert!(projection.unresolved_face_overrides.is_empty());
+        let [appearance] = projection.appearances.as_slice() else {
+            panic!("one material-color appearance must be projected");
+        };
+        assert_eq!(
+            appearance.base_color,
+            Some(Color::new(0.9, 0.45, 0.0, 1.0).expect("valid color"))
+        );
+        let [binding] = projection.bindings.as_slice() else {
+            panic!("one face binding must be projected");
+        };
+        assert_eq!(
+            binding.target,
+            AppearanceTarget::Face(FaceId::mint("inventor:test:face#0").expect("identity grammar"))
+        );
+        assert_eq!(binding.appearance, appearance.id);
+    }
+
+    #[test]
+    fn faces_sharing_a_group_node_share_one_appearance() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_faces.push(graphics_face(43, 0, 3));
+
+        let projection = project_faces(&inventory, &[42, 43]);
+
+        assert_eq!(projection.appearances.len(), 1);
+        assert_eq!(projection.bindings.len(), 2);
+    }
+
+    #[test]
+    fn unstyled_face_without_one_group_node_binds_nothing() {
+        for nodes in [0, 2] {
+            let mut inventory = inherited_color_inventory();
+            inventory.graphics_nodes = (0..nodes).map(|_| graphics_node(13)).collect();
+
+            let projection = project_faces(&inventory, &[42]);
+
+            assert!(projection.bindings.is_empty(), "{nodes} nodes");
+            assert!(projection.appearances.is_empty(), "{nodes} nodes");
+            assert!(
+                projection.unresolved_face_overrides.is_empty(),
+                "{nodes} nodes"
+            );
+        }
+    }
+
+    #[test]
+    fn inherited_color_fails_closed_without_reporting_an_override() {
+        let mut two_collections = inherited_color_inventory();
+        two_collections
+            .graphics_style_collections
+            .push(style_collection(12, &[11]));
+        let mut two_material_colors = inherited_color_inventory();
+        two_material_colors.graphics_style_collections = vec![style_collection(12, &[11, 15])];
+        two_material_colors
+            .graphics_material_color_styles
+            .push(material_color(14, [0.1, 0.2, 0.3, 1.0]));
+        let mut no_color_style = inherited_color_inventory();
+        no_color_style.graphics_material_color_styles.clear();
+        let mut no_collection = inherited_color_inventory();
+        no_collection.graphics_style_collections.clear();
+        for (inventory, case) in [
+            (two_collections, "two collections"),
+            (two_material_colors, "two material colors"),
+            (no_color_style, "no color style"),
+            (no_collection, "no collection"),
+        ] {
+            let projection = project_faces(&inventory, &[42]);
+
+            assert!(projection.bindings.is_empty(), "{case}");
+            assert!(projection.appearances.is_empty(), "{case}");
+            assert!(projection.unresolved_face_overrides.is_empty(), "{case}");
+        }
+    }
+
+    #[test]
+    fn a_primary_color_keeps_precedence_over_a_material_color() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_style_collections = vec![style_collection(12, &[11, 7])];
+        inventory.graphics_primary_color_styles =
+            face_override_inventory(42, true).graphics_primary_color_styles;
+
+        let projection = project_faces(&inventory, &[42]);
+
+        let [appearance] = projection.appearances.as_slice() else {
+            panic!("one primary-color appearance must be projected");
+        };
+        assert_eq!(
+            appearance.base_color,
+            Some(Color::new(0.2, 0.4, 0.6, 0.8).expect("valid color"))
+        );
+        assert_eq!(
+            appearance.schema.as_deref(),
+            Some("InventorPrimaryColorStyle")
+        );
+    }
+
+    #[test]
+    fn a_face_style_of_its_own_may_list_a_material_color() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_faces = vec![graphics_face(42, 13, 2)];
+        inventory.graphics_nodes.clear();
+
+        let projection = project_faces(&inventory, &[42]);
+
+        assert!(projection.unresolved_face_overrides.is_empty());
+        let [appearance] = projection.appearances.as_slice() else {
+            panic!("one material-color appearance must be projected");
+        };
+        assert_eq!(
+            appearance.base_color,
+            Some(Color::new(0.9, 0.45, 0.0, 1.0).expect("valid color"))
+        );
+        assert_eq!(
+            appearance.schema.as_deref(),
+            Some("InventorMaterialColorStyle")
+        );
+    }
+
+    #[test]
+    fn an_unresolved_style_of_its_own_still_reports_an_override() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_faces = vec![graphics_face(42, 13, 2)];
+        inventory.graphics_material_color_styles.clear();
+
+        let projection = project_faces(&inventory, &[42]);
+
+        assert!(projection.bindings.is_empty());
+        assert_eq!(
+            projection.unresolved_face_overrides,
+            BTreeMap::from([(
+                UnresolvedCause::ColorStyle,
+                NonZeroUsize::new(1).expect("one is nonzero")
+            )])
+        );
+    }
+
+    #[test]
+    fn a_face_style_of_its_own_wins_over_its_group_node() {
+        let mut inventory = inherited_color_inventory();
+        let own = face_override_inventory(42, true);
+        inventory.graphics_faces = vec![graphics_face(42, 5, 2)];
+        inventory
+            .graphics_style_collections
+            .extend(own.graphics_style_collections);
+        inventory.graphics_primary_color_styles = own.graphics_primary_color_styles;
+
+        let projection = project_faces(&inventory, &[42]);
+
+        let [appearance] = projection.appearances.as_slice() else {
+            panic!("one primary-color appearance must be projected");
+        };
+        assert_eq!(
+            appearance.base_color,
+            Some(Color::new(0.2, 0.4, 0.6, 0.8).expect("valid color"))
+        );
+    }
+
+    /// Projects `inventory` once as inherited and once with the collection as
+    /// the face's own style. Asserts that neither binds and that only the own
+    /// style reports `own_cause`, once for each face.
+    fn assert_binds_nothing(
+        inventory: PresentationInventory<'static>,
+        keys: &[u64],
+        own_cause: UnresolvedCause,
+        case: &str,
+    ) {
+        let inherited = project_faces(&inventory, keys);
+        assert!(inherited.bindings.is_empty(), "{case}: inherited");
+        assert!(inherited.appearances.is_empty(), "{case}: inherited");
+        assert!(
+            inherited.unresolved_face_overrides.is_empty(),
+            "{case}: inherited"
+        );
+
+        let mut own = inventory;
+        own.graphics_faces = vec![graphics_face(42, 13, 2)];
+        own.graphics_nodes.clear();
+        let own = project_faces(&own, keys);
+        assert!(own.bindings.is_empty(), "{case}: own style");
+        assert!(own.appearances.is_empty(), "{case}: own style");
+        assert_eq!(
+            own.unresolved_face_overrides,
+            BTreeMap::from([(
+                own_cause,
+                NonZeroUsize::new(keys.len()).expect("faces are given")
+            )]),
+            "{case}: own style"
+        );
+    }
+
+    #[test]
+    fn a_material_color_beside_an_unparsed_record_binds_nothing() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_style_collections = vec![style_collection(12, &[11, 16])];
+        inventory.issues = vec![RecordIssue {
+            family: RecordIssueFamily::Presentation,
+            segment_token: cadmpeg_ir::identity_key!("graphics").clone(),
+            record_ordinal: 15,
+            detail: "unparsed primary-color style".into(),
+        }];
+
+        assert_binds_nothing(
+            inventory,
+            &[42],
+            UnresolvedCause::ColorStyle,
+            "unparsed record",
+        );
+    }
+
+    #[test]
+    fn a_primary_color_beside_an_unparsed_record_binds_only_an_own_style() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_style_collections = vec![style_collection(12, &[7, 16])];
+        inventory.graphics_material_color_styles.clear();
+        inventory.graphics_primary_color_styles =
+            face_override_inventory(42, true).graphics_primary_color_styles;
+        inventory.issues = vec![RecordIssue {
+            family: RecordIssueFamily::Presentation,
+            segment_token: cadmpeg_ir::identity_key!("graphics").clone(),
+            record_ordinal: 15,
+            detail: "unparsed color style".into(),
+        }];
+
+        let inherited = project_faces(&inventory, &[42]);
+        assert!(inherited.bindings.is_empty());
+        assert!(inherited.unresolved_face_overrides.is_empty());
+
+        inventory.graphics_faces = vec![graphics_face(42, 13, 2)];
+        let own = project_faces(&inventory, &[42]);
+        let [appearance] = own.appearances.as_slice() else {
+            panic!("a face's own primary-color style must still bind");
+        };
+        assert_eq!(
+            appearance.schema.as_deref(),
+            Some("InventorPrimaryColorStyle")
+        );
+        assert!(own.unresolved_face_overrides.is_empty());
+    }
+
+    #[test]
+    fn two_primary_colors_bind_nothing_beside_a_material_color() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_style_collections = vec![style_collection(12, &[11, 7, 17])];
+        let primary = face_override_inventory(42, true).graphics_primary_color_styles;
+        let mut second = face_override_inventory(42, true).graphics_primary_color_styles;
+        second[0].identity.record_ordinal = 16;
+        inventory.graphics_primary_color_styles = primary.into_iter().chain(second).collect();
+
+        assert_binds_nothing(
+            inventory,
+            &[42],
+            UnresolvedCause::ColorStyle,
+            "two primary colors",
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_material_color_binds_nothing() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_material_color_styles = vec![material_color(10, [1.5, 0.0, 0.0, 1.0])];
+
+        assert_binds_nothing(inventory, &[42], UnresolvedCause::Color, "out of range");
+    }
+
+    #[test]
+    fn a_duplicate_face_key_binds_nothing() {
+        assert_binds_nothing(
+            inherited_color_inventory(),
+            &[42, 42],
+            UnresolvedCause::FaceKey,
+            "duplicate face key",
+        );
+    }
+
+    #[test]
+    fn a_face_without_a_parent_or_under_an_unstyled_node_binds_nothing() {
+        let mut no_parent = inherited_color_inventory();
+        no_parent.graphics_faces = vec![graphics_face_under(42, 0, 0, 2)];
+        let mut parent_not_a_node = inherited_color_inventory();
+        parent_not_a_node.graphics_faces = vec![graphics_face_under(42, 0, 11, 2)];
+        let mut unstyled_node = inherited_color_inventory();
+        unstyled_node.graphics_nodes = vec![graphics_node(0)];
+        for (inventory, case) in [
+            (no_parent, "no parent"),
+            (parent_not_a_node, "parent not a node"),
+            (unstyled_node, "unstyled node"),
+        ] {
+            let projection = project_faces(&inventory, &[42]);
+
+            assert!(projection.bindings.is_empty(), "{case}");
+            assert!(projection.appearances.is_empty(), "{case}");
+            assert!(projection.unresolved_face_overrides.is_empty(), "{case}");
         }
     }
 

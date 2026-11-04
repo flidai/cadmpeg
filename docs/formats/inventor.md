@@ -190,6 +190,17 @@ The `key` is the graphics face's Design-join key. It joins the face to the uniqu
 
 A `PmGraphics` record with type identifier `0786eb48d2110c076000f99ac5361ab0` stores an object-style collection as one node-reference list. A graphics face's non-null `styles_reference` selects this record by its one-based reference in the same segment.
 
+A `PmGraphics` record with type identifier `cfac9ea7d11181c26000a38ab46bceb0` stores a graphics group node, the parent of a body's graphics faces. For segment major versions above 14, its payload starts with:
+
+```text
+header_value u32
+header_id u16
+flags u32
+styles_reference u32
+```
+
+Further references follow and are not read. For segment major versions above 14, a graphics face whose `styles_reference` is null displays the style collection that its `parent_reference` node's `styles_reference` selects. Only the direct parent is read; a null node `styles_reference` binds nothing.
+
 A `PmGraphics` record with type identifier `0f5648afd411c78d1000d58dc04a0ab5` stores a primary-color style. For segment major versions above 14, its 94-byte payload contains:
 
 ```text
@@ -203,7 +214,20 @@ values u16[2]
 terminal_state u8
 ```
 
-The four colors are RGBA vectors. The second vector is the diffuse color. A style collection supplies a face override when it contains exactly one reference to a primary-color style. The direct-color appearance binds the joined neutral face. A face binding has precedence over the document-default body binding for that face. A missing or ambiguous face, style collection, or primary-color reference does not produce a face binding.
+The four colors are RGBA vectors. The second vector is the diffuse color.
+
+A `PmGraphics` record with type identifier `0886eb48d2110c076000f99ac5361ab0` stores a material-color style. For segment major versions above 14, its 89-byte payload contains:
+
+```text
+state u32
+colors f32[5][4]
+shininess f32
+terminal_state u8
+```
+
+The five colors are RGBA vectors. The third vector is the diffuse color, at payload offset 36 like the primary-color diffuse vector. The other vectors are not read.
+
+A style collection supplies a face color when it contains exactly one reference to a primary-color style, or no primary-color reference and exactly one reference to a material-color style. When the collection also lists a record that failed to parse, only a face's own collection with exactly one primary-color reference supplies a color. The direct-color appearance binds the joined neutral face. A face binding has precedence over the document-default body binding for that face. A missing or ambiguous face, group node, style collection, or color-style reference does not produce a face binding. Only a face's own style reports an unresolved face override; a face whose inherited style does not resolve keeps its body's default.
 
 ## 11. Part parameters
 
