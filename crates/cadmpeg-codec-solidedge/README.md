@@ -2,9 +2,9 @@
 
 `cadmpeg-codec-solidedge` reads the Parasolid B-rep of Solid Edge `.par`,
 `.psm`, and `.asm` files into [`cadmpeg-ir`][ir]. A Solid Edge document is a
-Compound File Binary container. The codec finds the Parasolid partition and
-deltas pair in its `PARASOLID` storage (`STREAM0.P_B` and `STREAM0.D_B`) and
-decodes it with the Parasolid B-rep decoder shared with
+Compound File Binary container. The codec finds the first Parasolid body group
+in its `PARASOLID` storage (for example `STREAM0.P_B` and `STREAM0.D_B`), removes
+the text transmit header, and decodes the binary part with the Parasolid B-rep decoder shared with
 [`cadmpeg-codec-sldprt`][sldprt]. The stream content selects the codec; file
 extensions do not.
 

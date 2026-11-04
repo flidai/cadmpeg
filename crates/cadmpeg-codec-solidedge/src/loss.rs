@@ -32,12 +32,20 @@ const NAMESPACE: LossNamespace<'static> = match LossNamespace::new("solidedge") 
 pub(crate) enum SolidEdgeLossCode {
     /// The Compound File has no `PARASOLID` storage.
     ContainerNoParasolidStorage,
-    /// The `PARASOLID` storage has no partition stream `STREAM0.P_B`.
+    /// The Compound File is a family-of-parts master, which holds no model.
+    ContainerNotModelDocument,
+    /// The `PARASOLID` storage holds no stream that carries a body.
+    ContainerNoBodyStream,
+    /// The `PARASOLID` storage holds a deltas stream and no base state for it.
     ContainerNoPartitionStream,
-    /// The `PARASOLID` storage has no deltas stream `STREAM0.D_B`.
+    /// The decoded partition stream has no deltas stream.
     ContainerDeltasMissing,
     /// The `PARASOLID` storage holds an entry that decode does not read.
     ContainerStreamUntransferred,
+    /// The `PARASOLID` storage holds a sketch stream, which is not a body.
+    ContainerSketchUntransferred,
+    /// The `PARASOLID` storage holds a second body group that decode does not read.
+    ContainerBodyGroupUntransferred,
     /// A Parasolid stream has no readable transmit header.
     ParasolidHeaderUnreadable,
     /// The Parasolid streams decoded no surfaces, points, or faces.
@@ -57,9 +65,13 @@ impl SolidEdgeLossCode {
     #[cfg(test)]
     const ALL: &'static [SolidEdgeLossCode] = &[
         Self::ContainerNoParasolidStorage,
+        Self::ContainerNotModelDocument,
+        Self::ContainerNoBodyStream,
         Self::ContainerNoPartitionStream,
         Self::ContainerDeltasMissing,
         Self::ContainerStreamUntransferred,
+        Self::ContainerSketchUntransferred,
+        Self::ContainerBodyGroupUntransferred,
         Self::ParasolidHeaderUnreadable,
         Self::GeometryNotTransferred,
         Self::AppearanceFaceColorUntransferred,
@@ -73,9 +85,13 @@ impl SolidEdgeLossCode {
     const fn code(self) -> &'static str {
         match self {
             Self::ContainerNoParasolidStorage => "container.no-parasolid-storage",
+            Self::ContainerNotModelDocument => "container.not-a-model-document",
+            Self::ContainerNoBodyStream => "container.no-body-stream",
             Self::ContainerNoPartitionStream => "container.no-partition-stream",
             Self::ContainerDeltasMissing => "container.deltas-missing",
             Self::ContainerStreamUntransferred => "container.stream-untransferred",
+            Self::ContainerSketchUntransferred => "container.sketch-untransferred",
+            Self::ContainerBodyGroupUntransferred => "container.body-group-untransferred",
             Self::ParasolidHeaderUnreadable => "parasolid.header-unreadable",
             Self::GeometryNotTransferred => "geometry.not-transferred",
             Self::AppearanceFaceColorUntransferred => "appearance.face-color-untransferred",
@@ -91,10 +107,14 @@ impl SolidEdgeLossCode {
         match self {
             Self::GeometryNotTransferred => Severity::Blocking,
             Self::ContainerNoParasolidStorage
+            | Self::ContainerNotModelDocument
+            | Self::ContainerNoBodyStream
             | Self::ContainerNoPartitionStream
             | Self::ParasolidHeaderUnreadable => Severity::Error,
             Self::ContainerDeltasMissing
             | Self::ContainerStreamUntransferred
+            | Self::ContainerSketchUntransferred
+            | Self::ContainerBodyGroupUntransferred
             | Self::AppearanceFaceColorUntransferred
             | Self::SourceDialectUnverified
             | Self::KernelDialectUnverified
@@ -104,13 +124,16 @@ impl SolidEdgeLossCode {
 
     const fn shared_taxonomy(self) -> LossTaxonomy {
         match self {
-            Self::ContainerNoParasolidStorage | Self::ContainerNoPartitionStream => {
-                LossTaxonomy::MissingGeometryStream
-            }
+            Self::ContainerNoParasolidStorage
+            | Self::ContainerNotModelDocument
+            | Self::ContainerNoBodyStream
+            | Self::ContainerNoPartitionStream => LossTaxonomy::MissingGeometryStream,
             Self::ContainerDeltasMissing | Self::DialectLayerCollision => {
                 LossTaxonomy::DecodeDiagnostic
             }
-            Self::ContainerStreamUntransferred => LossTaxonomy::ObjectRecordsUntransferred,
+            Self::ContainerStreamUntransferred
+            | Self::ContainerSketchUntransferred
+            | Self::ContainerBodyGroupUntransferred => LossTaxonomy::ObjectRecordsUntransferred,
             Self::ParasolidHeaderUnreadable | Self::GeometryNotTransferred => {
                 LossTaxonomy::GeometryNotTransferred
             }
@@ -150,9 +173,13 @@ mod tests {
             codes,
             [
                 "container.no-parasolid-storage",
+                "container.not-a-model-document",
+                "container.no-body-stream",
                 "container.no-partition-stream",
                 "container.deltas-missing",
                 "container.stream-untransferred",
+                "container.sketch-untransferred",
+                "container.body-group-untransferred",
                 "parasolid.header-unreadable",
                 "geometry.not-transferred",
                 "appearance.face-color-untransferred",

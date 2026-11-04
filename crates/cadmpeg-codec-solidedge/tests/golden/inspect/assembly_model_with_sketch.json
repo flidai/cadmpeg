@@ -1,0 +1,128 @@
+{
+  "container_kind": "cfb",
+  "entries": [
+    {
+      "attributes": {
+        "directory_id": "1"
+      },
+      "compression": "storage",
+      "name": "PARASOLID",
+      "role": "storage"
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "2",
+        "parasolid_role": "sketch",
+        "start_sector": "0"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/SVSKETCH.P_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 1372
+      }
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "3",
+        "parasolid_role": "deltas",
+        "start_sector": "22"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/ASSEMBLYMODEL.D_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 560
+      }
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "4",
+        "parasolid_role": "partition",
+        "start_sector": "31"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/ASSEMBLYMODEL.P_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 1372
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [
+        {
+          "admission": "residual",
+          "declared": {
+            "carrier": "PARASOLID/ASSEMBLYMODEL.P_B",
+            "schema": "SCH_3201255_32001"
+          },
+          "dialect": "parasolid:unknown",
+          "instance": "PARASOLID/ASSEMBLYMODEL.P_B"
+        },
+        {
+          "admission": "residual",
+          "declared": {
+            "carrier": "PARASOLID/ASSEMBLYMODEL.D_B",
+            "schema": "SCH_3201255_32001"
+          },
+          "dialect": "parasolid:unknown",
+          "instance": "PARASOLID/ASSEMBLYMODEL.D_B"
+        }
+      ],
+      "primary": {
+        "admission": "admitted",
+        "declared": {
+          "storage": "PARASOLID"
+        },
+        "dialect": "solidedge:cfb-parasolid"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "container.sketch-untransferred",
+        "kind": "object_records_untransferred",
+        "namespace": "solidedge",
+        "scope": "namespaced"
+      },
+      "message": "PARASOLID/SVSKETCH.P_B is a sketch stream; sketches are not transferred",
+      "severity": "warning"
+    },
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at PARASOLID/ASSEMBLYMODEL.P_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    },
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at PARASOLID/ASSEMBLYMODEL.D_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    }
+  ],
+  "notes": [
+    "PARASOLID/ASSEMBLYMODEL.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
+    "PARASOLID/ASSEMBLYMODEL.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001"
+  ]
+}

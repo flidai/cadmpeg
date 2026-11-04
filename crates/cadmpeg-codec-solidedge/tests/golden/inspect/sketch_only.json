@@ -1,0 +1,65 @@
+{
+  "container_kind": "cfb",
+  "entries": [
+    {
+      "attributes": {
+        "directory_id": "1"
+      },
+      "compression": "storage",
+      "name": "PARASOLID",
+      "role": "storage"
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "2",
+        "parasolid_role": "sketch",
+        "start_sector": "0"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/SVSKETCH.P_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 1372
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [],
+      "primary": {
+        "admission": "admitted",
+        "declared": {
+          "storage": "PARASOLID"
+        },
+        "dialect": "solidedge:cfb-parasolid"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "container.no-body-stream",
+        "kind": "missing_geometry_stream",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "the PARASOLID storage holds no stream that carries a body",
+      "severity": "error"
+    },
+    {
+      "code": {
+        "code": "container.sketch-untransferred",
+        "kind": "object_records_untransferred",
+        "namespace": "solidedge",
+        "scope": "namespaced"
+      },
+      "message": "PARASOLID/SVSKETCH.P_B is a sketch stream; sketches are not transferred",
+      "severity": "warning"
+    }
+  ],
+  "notes": []
+}

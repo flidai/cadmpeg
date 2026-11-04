@@ -423,13 +423,13 @@ See the [format specification](formats/siemens_nx.md), [coverage contract](forma
 
 <!-- /generated: dialects solidedge -->
 
-The scored envelope is the `PARASOLID/STREAM0.P_B` and `PARASOLID/STREAM0.D_B` pair of a Compound File. Other streams of the storage, feature history, properties, and assembly structure are outside it.
+The scored envelope is the first Parasolid body group of the `PARASOLID` storage of a Compound File: a `<stem>.P_B` and `<stem>.D_B` pair or a standalone `<stem>.X_B` stream. Sketch streams, other body groups, feature history, properties, and assembly structure are outside it.
 
 ### Read profile
 
 - **Container and versions: Partial.** The codec reads the Compound File directory, locates the `PARASOLID` storage, classifies its streams by name, and reports each Parasolid transmit header. The writing application version is not read.
 - **Geometry and topology: Partial.** The partition and deltas pair decodes through the Parasolid B-rep decoder shared with the SolidWorks codec. Bodies, regions, shells, faces, loops, coedges, edges, vertices, points, analytic and NURBS carriers transfer. Geometry that the shared decoder does not type is reported as a loss.
-- **Design intent, product structure, presentation, and metadata: Not transferred.** A document without a partition stream reports no model and a typed loss.
+- **Design intent, product structure, presentation, and metadata: Not transferred.** A document without a body stream reports no model and a typed loss.
 
 See [`formats/solidedge.md`](formats/solidedge.md) and [`formats/solidedge-open-items.md`](formats/solidedge-open-items.md).
 

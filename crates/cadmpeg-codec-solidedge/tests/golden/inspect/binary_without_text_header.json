@@ -1,0 +1,76 @@
+{
+  "container_kind": "cfb",
+  "entries": [
+    {
+      "attributes": {
+        "directory_id": "1"
+      },
+      "compression": "storage",
+      "name": "PARASOLID",
+      "role": "storage"
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "2",
+        "parasolid_role": "partition",
+        "start_sector": "0"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/STREAM0.P_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 916
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [
+        {
+          "admission": "residual",
+          "declared": {
+            "carrier": "PARASOLID/STREAM0.P_B",
+            "schema": "SCH_3201255_32001"
+          },
+          "dialect": "parasolid:unknown"
+        }
+      ],
+      "primary": {
+        "admission": "admitted",
+        "declared": {
+          "storage": "PARASOLID"
+        },
+        "dialect": "solidedge:cfb-parasolid"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "container.deltas-missing",
+        "kind": "decode_diagnostic",
+        "namespace": "solidedge",
+        "scope": "namespaced"
+      },
+      "message": "the body group has a partition stream and no deltas stream; the partition stream is decoded alone",
+      "severity": "warning"
+    },
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at PARASOLID/STREAM0.P_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    }
+  ],
+  "notes": [
+    "PARASOLID/STREAM0.P_B: partition stream, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001"
+  ]
+}

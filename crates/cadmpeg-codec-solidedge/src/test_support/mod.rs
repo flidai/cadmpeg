@@ -13,7 +13,7 @@ use cadmpeg_core::decode::{DecodeArena, DecodeContext, DecodePolicy};
 use cfb::{compound_file, storage, stream, Node};
 use parasolid::{
     bridge, coedge, edge_use, line_carrier, loop_head, parasolid_with_body, plane_carrier,
-    typed_single_face_ownership, vertex_use, world_point,
+    typed_single_face_ownership, vertex_use, with_text_header, world_point,
 };
 
 /// Schema token of the synthetic streams.
@@ -70,13 +70,39 @@ pub(crate) fn moved_point_deltas_body() -> Vec<u8> {
     world_point(60, [0.02, 0.0, 0.0])
 }
 
-/// A partition transmit stream around `body`.
+/// A partition transmit stream around `body`, behind the standard text header.
 pub(crate) fn partition_stream(body: &[u8]) -> Vec<u8> {
+    with_text_header(SCHEMA, &binary_partition(body))
+}
+
+/// A partition transmit stream of one schema, behind the standard text header.
+pub(crate) fn partition_stream_of(schema: &str, body: &[u8]) -> Vec<u8> {
+    with_text_header(
+        schema,
+        &parasolid_with_body("TRANSMIT FILE (partition) created by test", schema, body),
+    )
+}
+
+/// A deltas transmit stream around `body`, behind the standard text header.
+pub(crate) fn deltas_stream(body: &[u8]) -> Vec<u8> {
+    with_text_header(SCHEMA, &binary_deltas(body))
+}
+
+/// A standalone transmit stream around `body`, behind the standard text header.
+pub(crate) fn transmit_stream(body: &[u8]) -> Vec<u8> {
+    with_text_header(
+        SCHEMA,
+        &parasolid_with_body("TRANSMIT FILE created by test", SCHEMA, body),
+    )
+}
+
+/// The binary part of a partition stream.
+pub(crate) fn binary_partition(body: &[u8]) -> Vec<u8> {
     parasolid_with_body("TRANSMIT FILE (partition) created by test", SCHEMA, body)
 }
 
-/// A deltas transmit stream around `body`.
-pub(crate) fn deltas_stream(body: &[u8]) -> Vec<u8> {
+/// The binary part of a deltas stream.
+pub(crate) fn binary_deltas(body: &[u8]) -> Vec<u8> {
     parasolid_with_body("TRANSMIT FILE (deltas) created by test", SCHEMA, body)
 }
 

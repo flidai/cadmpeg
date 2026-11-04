@@ -10,9 +10,11 @@ use cadmpeg_ir::report::Severity;
 
 use crate::loss::SolidEdgeLossCode;
 use crate::test_support::cfb::{storage, stream};
+use crate::test_support::parasolid::text_header;
 use crate::test_support::{
-    deltas_body, deltas_stream, document, moved_point_deltas_body, part_with_pair,
-    partition_stream, triangle_body, with_decode_context,
+    binary_deltas, binary_partition, deltas_body, deltas_stream, document, moved_point_deltas_body,
+    part_with_pair, partition_stream, partition_stream_of, transmit_stream, triangle_body,
+    with_decode_context,
 };
 use crate::SolidEdgeCodec;
 
@@ -247,7 +249,7 @@ fn a_partition_without_a_transmit_header_reports_no_model() {
 }
 
 #[test]
-fn entries_outside_the_stream0_pair_are_listed_and_not_decoded() {
+fn other_groups_and_other_entries_are_listed_and_not_decoded() {
     let mut streams = vec![
         stream("STREAM0.P_B", &partition_stream(&triangle_body())),
         stream("STREAM0.D_B", &deltas_stream(&deltas_body())),
@@ -256,13 +258,16 @@ fn entries_outside_the_stream0_pair_are_listed_and_not_decoded() {
     ];
     streams.reverse();
     let result = decode(&pair_without(streams));
-    let untransferred = result
-        .report()
-        .losses
-        .iter()
-        .filter(|loss| loss.code == SolidEdgeLossCode::ContainerStreamUntransferred.kind())
-        .count();
-    assert_eq!(untransferred, 2);
+    let count = |code: SolidEdgeLossCode| {
+        result
+            .report()
+            .losses
+            .iter()
+            .filter(|loss| loss.code == code.kind())
+            .count()
+    };
+    assert_eq!(count(SolidEdgeLossCode::ContainerStreamUntransferred), 1);
+    assert_eq!(count(SolidEdgeLossCode::ContainerBodyGroupUntransferred), 1);
     assert_eq!(result.ir().model.faces.len(), 1);
 }
 
@@ -330,4 +335,240 @@ fn a_larger_stream_reads_through_regular_sectors() {
     let bytes = pair_without(vec![stream("STREAM0.P_B", &partition_stream(&body))]);
     let result = decode(&bytes);
     assert_eq!(result.ir().model.faces.len(), 1);
+}
+
+fn assert_one_face(result: &DecodeResult) {
+    assert!(result.report().geometry_transferred());
+    assert_eq!(result.ir().model.faces.len(), 1);
+}
+
+#[test]
+fn a_binary_stream_without_a_text_header_decodes() {
+    let result = decode(&pair_without(vec![
+        stream("STREAM0.P_B", &binary_partition(&triangle_body())),
+        stream("STREAM0.D_B", &binary_deltas(&deltas_body())),
+    ]));
+    assert_one_face(&result);
+}
+
+#[test]
+fn the_text_header_schema_classifies_the_stream_layers() {
+    for schema in [
+        "SCH_1400184_14000",
+        "SCH_1700272_16100",
+        "SCH_2201216_20000",
+        "SCH_3001278_30100",
+        "SCH_3500239_35002",
+        "SCH_3501256_35102",
+    ] {
+        let result = decode(&pair_without(vec![stream(
+            "STREAM0.P_B",
+            &partition_stream_of(schema, &triangle_body()),
+        )]));
+        assert_one_face(&result);
+        let source = result.ir().source.as_ref().unwrap();
+        assert_eq!(
+            source
+                .attributes
+                .get("parasolid_schema")
+                .map(String::as_str),
+            Some(schema)
+        );
+        assert!(has_loss(
+            &result,
+            SolidEdgeLossCode::KernelDialectUnverified
+        ));
+    }
+}
+
+#[test]
+fn any_stream_index_and_case_names_the_pair() {
+    for (partition, deltas) in [
+        ("STREAM7.P_B", "STREAM7.D_B"),
+        ("Stream3.P_B", "Stream3.D_B"),
+        ("stream12.p_b", "stream12.d_b"),
+    ] {
+        let result = decode(&pair_without(vec![
+            stream(partition, &partition_stream(&triangle_body())),
+            stream(deltas, &deltas_stream(&deltas_body())),
+        ]));
+        assert_one_face(&result);
+        assert!(!has_loss(
+            &result,
+            SolidEdgeLossCode::ContainerDeltasMissing
+        ));
+    }
+}
+
+#[test]
+fn the_lowest_numbered_group_is_the_one_decoded() {
+    let result = decode(&pair_without(vec![
+        stream("STREAM9.P_B", &partition_stream(&triangle_body())),
+        stream("STREAM2.P_B", &partition_stream(&triangle_body())),
+        stream("STREAM2.D_B", &deltas_stream(&deltas_body())),
+    ]));
+    assert_one_face(&result);
+    let source = result.ir().source.as_ref().unwrap();
+    assert_eq!(
+        source
+            .attributes
+            .get("parasolid_stream_group")
+            .map(String::as_str),
+        Some("STREAM2")
+    );
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerBodyGroupUntransferred
+    ));
+}
+
+#[test]
+fn a_standalone_transmit_stream_decodes_as_a_base_state() {
+    let result = decode(&pair_without(vec![stream(
+        "Body.X_B",
+        &transmit_stream(&triangle_body()),
+    )]));
+    assert_one_face(&result);
+    assert!(!has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerDeltasMissing
+    ));
+}
+
+#[test]
+fn an_assembly_model_pair_decodes_as_a_body_group() {
+    let result = decode(&pair_without(vec![
+        stream("SVSKETCH.P_B", &partition_stream(&triangle_body())),
+        stream("ASSEMBLYMODEL.P_B", &partition_stream(&triangle_body())),
+        stream("ASSEMBLYMODEL.D_B", &deltas_stream(&deltas_body())),
+    ]));
+    assert_one_face(&result);
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerSketchUntransferred
+    ));
+}
+
+#[test]
+fn a_sketch_only_storage_is_a_typed_refusal() {
+    for name in ["SVSKETCH.P_B", "SKETCH.P_B"] {
+        let result = decode(&pair_without(vec![stream(
+            name,
+            &partition_stream(&triangle_body()),
+        )]));
+        assert!(!result.report().geometry_transferred());
+        assert!(result.ir().model.faces.is_empty());
+        assert!(has_loss(&result, SolidEdgeLossCode::ContainerNoBodyStream));
+        assert!(has_loss(
+            &result,
+            SolidEdgeLossCode::ContainerSketchUntransferred
+        ));
+        assert!(!has_loss(
+            &result,
+            SolidEdgeLossCode::ContainerNoPartitionStream
+        ));
+    }
+}
+
+#[test]
+fn an_empty_storage_is_a_typed_refusal() {
+    let result = decode(&pair_without(Vec::new()));
+    assert!(!result.report().geometry_transferred());
+    assert!(has_loss(&result, SolidEdgeLossCode::ContainerNoBodyStream));
+}
+
+#[test]
+fn a_family_master_is_identified_and_refused() {
+    let bytes = document(vec![
+        stream("FamilyInfo", b"info"),
+        stream("FamilyPropertyFlags", b"flags"),
+        storage("S:Master", vec![stream("Data", b"data")]),
+    ]);
+    let found = with_decode_context(&bytes, |ctx| {
+        SolidEdgeCodec
+            .detect(ctx, cadmpeg_core::decode::View::over_retained(&bytes))
+            .unwrap()
+    });
+    assert_eq!(found, Confidence::High);
+    let result = decode(&bytes);
+    assert!(!result.report().geometry_transferred());
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerNotModelDocument
+    ));
+    assert!(!has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerNoParasolidStorage
+    ));
+}
+
+#[test]
+fn a_model_document_without_geometry_is_a_typed_refusal_with_its_version() {
+    let bytes = document(vec![
+        stream("DocVersion2", &[1, 0, 223, 0]),
+        stream("PSMroots", b"roots"),
+    ]);
+    let found = with_decode_context(&bytes, |ctx| {
+        SolidEdgeCodec
+            .detect(ctx, cadmpeg_core::decode::View::over_retained(&bytes))
+            .unwrap()
+    });
+    assert_eq!(found, Confidence::High);
+    let result = decode(&bytes);
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerNoParasolidStorage
+    ));
+    assert!(!has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerNotModelDocument
+    ));
+    assert!(result
+        .report()
+        .notes
+        .iter()
+        .any(|note| note.contains("DocVersion2") && note.contains("223")));
+}
+
+#[test]
+fn directory_names_with_a_colon_are_read() {
+    let bytes = document(vec![
+        storage("S:JSite1", vec![stream("S:Data", b"data")]),
+        storage(
+            "PARASOLID",
+            vec![stream("STREAM0.P_B", &partition_stream(&triangle_body()))],
+        ),
+    ]);
+    assert_one_face(&decode(&bytes));
+}
+
+#[test]
+fn a_text_encoded_transmit_is_not_decoded() {
+    let mut text = text_header("SCH_3201255_32001", "text");
+    text.extend(binary_partition(&triangle_body()));
+    let result = decode(&pair_without(vec![stream("STREAM0.P_B", &text)]));
+    assert!(!result.report().geometry_transferred());
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ParasolidHeaderUnreadable
+    ));
+}
+
+#[test]
+fn a_text_header_without_binary_data_is_not_decoded() {
+    let text = text_header("SCH_3201255_32001", "binary");
+    let result = decode(&pair_without(vec![stream("STREAM0.P_B", &text)]));
+    assert!(!result.report().geometry_transferred());
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ParasolidHeaderUnreadable
+    ));
+    let source = result.ir().source.as_ref().unwrap();
+    assert_eq!(
+        source
+            .attributes
+            .get("parasolid_schema")
+            .map(String::as_str),
+        Some("SCH_3201255_32001")
+    );
 }

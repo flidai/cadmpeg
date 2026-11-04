@@ -24,6 +24,44 @@ pub(crate) fn parasolid_with_body(description: &str, schema: &str, body: &[u8]) 
     b
 }
 
+/// The standard text header of a Parasolid transmit file, up to and including
+/// the asterisks of the `**END_OF_HEADER` line. The layout follows the public
+/// Parasolid XT Format Reference. `format` is the value of the `FORMAT=` line.
+pub(crate) fn text_header(schema: &str, format: &str) -> Vec<u8> {
+    let stars = "*".repeat(26);
+    let lines = [
+        format!("**ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz{stars}"),
+        format!("**PARASOLID !\"#$%&'()*+,-./:;<=>?@[\\]^_`{{|}}~0123456789{stars}"),
+        "**PART1;".to_owned(),
+        "MC=synthetic".to_owned(),
+        "MC_MODEL=synthetic".to_owned(),
+        "MC_ID=0".to_owned(),
+        "OS=synthetic".to_owned(),
+        "FRU=synthetic".to_owned(),
+        "APPL=cadmpeg test fixture".to_owned(),
+        "SITE=synthetic".to_owned(),
+        format!("FORMAT={format}"),
+        "GUISE=transmit".to_owned(),
+        "KEY=synthetic".to_owned(),
+        "**PART2;".to_owned(),
+        format!("SCH={schema}"),
+        "USFLD_SIZE=0".to_owned(),
+        "**PART3;".to_owned(),
+    ];
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text.push_str("**END_OF_HEADER");
+    text.push_str(&"*".repeat(66));
+    text.into_bytes()
+}
+
+/// A binary transmit stream behind the standard text header.
+pub(crate) fn with_text_header(schema: &str, binary: &[u8]) -> Vec<u8> {
+    let mut stream = text_header(schema, "binary");
+    stream.extend_from_slice(binary);
+    stream
+}
+
 pub(crate) fn be16(b: &mut Vec<u8>, v: u16) {
     b.extend_from_slice(&v.to_be_bytes());
 }

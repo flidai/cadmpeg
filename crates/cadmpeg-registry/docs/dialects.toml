@@ -1303,7 +1303,7 @@ witness = "code:crates/cadmpeg-asm/src/dialect.rs"
 # --------------------------------------------------------------------------
 # A Solid Edge part (`.par`), sheet-metal part (`.psm`), or assembly (`.asm`)
 # is a Compound File Binary document. The B-rep of a part is a Parasolid
-# partition stream and a deltas stream in the `PARASOLID` storage:
+# partition stream and a deltas stream in the `PARASOLID` storage, for example
 # `PARASOLID/STREAM0.P_B` and `PARASOLID/STREAM0.D_B`. Specification:
 # docs/formats/solidedge.md. The file extension is not a discriminant, so an
 # assembly that carries a `PARASOLID` storage classifies the same way.
@@ -1320,9 +1320,10 @@ aliases = ["par", "psm"]
 
 [[dialect]]
 # `container::scan` finds a `PARASOLID` storage in the directory of a
-# Compound File. `SolidEdgeCodec::detect` accepts the same structure from the
-# prefix: the CFB signature plus a directory path whose first component is
-# `PARASOLID`, compared without regard to ASCII case.
+# Compound File. `SolidEdgeCodec::detect` accepts that structure and the
+# other Solid Edge root markers from the prefix: the CFB signature plus a
+# directory path whose first component is `PARASOLID`, `DocVersion2`,
+# `PSMroots`, or `FamilyInfo`, compared without regard to ASCII case.
 id = "solidedge:cfb-parasolid"
 title = "Solid Edge Compound File with a PARASOLID storage"
 discriminants = { cfb_magic = "present", storage = "PARASOLID" }

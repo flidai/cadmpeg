@@ -21,7 +21,7 @@
       "role": "parasolid-stream",
       "size": {
         "form": "exact",
-        "size": 104
+        "size": 560
       }
     },
     {
@@ -29,14 +29,14 @@
         "allocation": "mini",
         "directory_id": "3",
         "parasolid_role": "partition",
-        "start_sector": "2"
+        "start_sector": "9"
       },
       "compression": "stored",
       "name": "PARASOLID/STREAM0.P_B",
       "role": "parasolid-stream",
       "size": {
         "form": "exact",
-        "size": 916
+        "size": 1372
       }
     }
   ],
@@ -97,7 +97,7 @@
     }
   ],
   "notes": [
-    "PARASOLID/STREAM0.P_B: partition stream, description \"TRANSMIT FILE (partition) created by test\", schema SCH_3201255_32001",
-    "PARASOLID/STREAM0.D_B: deltas stream, description \"TRANSMIT FILE (deltas) created by test\", schema SCH_3201255_32001"
+    "PARASOLID/STREAM0.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
+    "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001"
   ]
 }

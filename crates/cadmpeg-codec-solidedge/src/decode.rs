@@ -2,11 +2,11 @@
 //! Inspection and decoding of a Solid Edge Compound File.
 //!
 //! [`analyze`] reads the directory once and classifies the `PARASOLID`
-//! storage: which streams form the decoded pair, which entries decode skips,
-//! and which losses the structure alone charges. [`inspect`] reports that
-//! analysis. [`decode`] hands the partition stream, and the deltas stream when
-//! present, to the shared Parasolid B-rep decoder and writes the result into
-//! the document.
+//! storage: which body group decode reads, which entries it skips, and which
+//! losses the structure alone charges. [`inspect`] reports that analysis.
+//! [`decode`] removes the text transmit header from the base stream and from
+//! the deltas stream when present, then hands the binary parts to the shared
+//! Parasolid B-rep decoder and writes the result into the document.
 
 use cadmpeg_codec_sldprt::{decode_hosted_brep, read_hosted_header, HostedHeader};
 use cadmpeg_core::decode::{u64_from_index, DecodeContext, View};
@@ -19,21 +19,52 @@ use cadmpeg_ir::unknown::UnknownRecord;
 use cadmpeg_ir::{ContainerKind, ContainerSummary, SourceFidelity};
 use cadmpeg_parasolid::{Carrier, OwnedSchemaToken};
 
-use crate::container::{self, ParasolidEntry, Scan, StreamRole, BODY_STREAM_INDEX};
+use crate::container::{self, DocumentKind, ParasolidEntry, Scan, StreamRole};
 use crate::dialect::{self, LayerClassification};
 use crate::loss::SolidEdgeLossCode;
+use crate::transmit::{self, Transmit};
 
-/// One opened stream of the decoded pair.
+/// Name of the root stream that holds the document version code.
+const DOC_VERSION_STREAM: &str = "DocVersion2";
+
+/// One opened stream of the decoded group.
 struct BodyStream<'a> {
     entry: &'a ParasolidEntry,
+    role: StreamRole,
     view: View<'a>,
     directory_id: u32,
+    transmit: Transmit,
+    /// The header of the binary part, when the decoder can read it.
     header: Option<HostedHeader>,
+}
+
+impl BodyStream<'_> {
+    /// The binary part of the stream.
+    fn binary(&self) -> &[u8] {
+        let window = self.view.window();
+        window.get(self.transmit.binary_offset..).unwrap_or(window)
+    }
+
+    /// The schema token that classifies the stream: the text header states it
+    /// first, the binary header second.
+    fn schema(&self) -> Option<&OwnedSchemaToken> {
+        self.transmit
+            .text_schema
+            .as_ref()
+            .or_else(|| self.header.as_ref().map(|header| &header.schema))
+    }
+
+    /// Whether the decoder can read the binary part.
+    fn decodable(&self) -> bool {
+        self.header.is_some() && !self.transmit.text_encoded
+    }
 }
 
 /// The structure of one document, shared by inspection and decode.
 struct Analysis<'a> {
-    partition: Option<BodyStream<'a>>,
+    /// The key of the body group that decode reads.
+    group: Option<String>,
+    base: Option<BodyStream<'a>>,
     deltas: Option<BodyStream<'a>>,
     classification: LayerClassification,
     losses: Vec<LossNote>,
@@ -43,37 +74,69 @@ struct Analysis<'a> {
 fn open_body<'a>(
     ctx: &DecodeContext<'a>,
     scan: &'a Scan<'a>,
+    entry: &'a ParasolidEntry,
     role: StreamRole,
-) -> Result<Option<BodyStream<'a>>, CodecError> {
-    let Some(entry) = scan.body_stream(role) else {
-        return Ok(None);
-    };
+) -> Result<BodyStream<'a>, CodecError> {
     let directory_id = scan
         .stream(entry)
         .map(|stream| stream.id().directory_id())
         .ok_or_else(|| CodecError::malformed("Solid Edge stream entry has no directory stream"))?;
     let view = scan.open(ctx, entry)?;
-    let header = read_hosted_header(ctx, view.window())?;
-    Ok(Some(BodyStream {
+    let transmit = transmit::split(ctx, view.window())?;
+    let binary = view
+        .window()
+        .get(transmit.binary_offset..)
+        .unwrap_or(view.window());
+    let header = read_hosted_header(ctx, binary)?;
+    Ok(BodyStream {
         entry,
+        role,
         view,
         directory_id,
+        transmit,
         header,
-    }))
+    })
+}
+
+fn push_loss(
+    ctx: &DecodeContext<'_>,
+    losses: &mut Vec<LossNote>,
+    code: SolidEdgeLossCode,
+    message: impl Into<String>,
+) -> Result<(), CodecError> {
+    ctx.push_vec(losses, code.note(message), "collect Solid Edge losses")
 }
 
 fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'a>, CodecError> {
-    let partition = open_body(ctx, scan, StreamRole::Partition)?;
-    let deltas = open_body(ctx, scan, StreamRole::Deltas)?;
+    let groups = scan.body_groups(ctx)?;
+    let primary = groups.iter().position(|group| group.base().is_some());
     let mut losses = Vec::new();
     let mut notes = Vec::new();
 
+    let mut base = None;
+    let mut deltas = None;
+    let mut group_key = None;
+    if let Some(group) = primary.and_then(|index| groups.get(index)) {
+        group_key = Some(ctx.copy_retained_text(group.key, "retain Solid Edge group key")?);
+        if let Some((entry, role)) = group.base() {
+            base = Some(open_body(ctx, scan, entry, role)?);
+        }
+        if base
+            .as_ref()
+            .is_some_and(|body| body.role == StreamRole::Partition)
+        {
+            if let Some(entry) = group.deltas {
+                deltas = Some(open_body(ctx, scan, entry, StreamRole::Deltas)?);
+            }
+        }
+    }
+
     let mut kernels = Vec::new();
-    for body in [&partition, &deltas].into_iter().flatten() {
-        if let Some(header) = &body.header {
+    for body in [&base, &deltas].into_iter().flatten() {
+        if let Some(schema) = body.schema() {
             let carrier = ctx.copy_retained_text(&body.entry.path, "retain Solid Edge carrier")?;
             let schema = OwnedSchemaToken::try_from(
-                ctx.copy_retained_text(header.schema.value(), "retain Solid Edge schema")?,
+                ctx.copy_retained_text(schema.value(), "retain Solid Edge schema")?,
             )
             .map_err(|_| CodecError::malformed("invalid admitted Parasolid schema"))?;
             ctx.push_vec(
@@ -81,90 +144,149 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
                 (schema, Carrier::new(carrier)),
                 "collect Solid Edge kernel layers",
             )?;
-        } else {
+        }
+        if !body.decodable() {
+            let reason = if body.transmit.text_encoded {
+                "declares a text encoding of the transmit data"
+            } else if body.transmit.has_text_header {
+                "has a text header that the binary transmit data does not follow"
+            } else {
+                "has no Parasolid transmit header"
+            };
             let message = ctx.format_retained(
                 format_args!(
-                    "{} has no Parasolid transmit header; the stream is retained and not decoded",
+                    "{} {reason}; the stream is retained and not decoded",
                     body.entry.path
                 ),
                 "retain Solid Edge header loss",
             )?;
-            ctx.push_vec(
+            push_loss(
+                ctx,
                 &mut losses,
-                SolidEdgeLossCode::ParasolidHeaderUnreadable.note(message),
-                "collect Solid Edge losses",
+                SolidEdgeLossCode::ParasolidHeaderUnreadable,
+                message,
             )?;
         }
     }
 
-    match (scan.storage(), &partition, &deltas) {
-        (None, ..) => ctx.push_vec(
+    match (scan.storage(), primary) {
+        (None, _) if scan.kind() == DocumentKind::FamilyMaster => push_loss(
+            ctx,
             &mut losses,
-            SolidEdgeLossCode::ContainerNoParasolidStorage.note(
-                "the Compound File has no PARASOLID storage; no geometry stream exists to read",
-            ),
-            "collect Solid Edge losses",
+            SolidEdgeLossCode::ContainerNotModelDocument,
+            "the Compound File is a family-of-parts master; it holds no model and no \
+             geometry stream",
         )?,
-        (Some(_), None, None) => ctx.push_vec(
+        (None, _) => push_loss(
+            ctx,
             &mut losses,
-            SolidEdgeLossCode::ContainerNoPartitionStream.note(
-                "the PARASOLID storage has no STREAM0.P_B partition stream and no deltas stream",
-            ),
-            "collect Solid Edge losses",
+            SolidEdgeLossCode::ContainerNoParasolidStorage,
+            "the Compound File has no PARASOLID storage; no geometry stream exists to read",
         )?,
-        (Some(_), None, Some(_)) => ctx.push_vec(
-            &mut losses,
-            SolidEdgeLossCode::ContainerNoPartitionStream.note(
-                "the PARASOLID storage has no STREAM0.P_B partition stream; a deltas stream \
-                 alone has no base state to apply to and is not decoded",
-            ),
-            "collect Solid Edge losses",
-        )?,
-        (Some(_), Some(_), None) => ctx.push_vec(
-            &mut losses,
-            SolidEdgeLossCode::ContainerDeltasMissing.note(
-                "the PARASOLID storage has no STREAM0.D_B deltas stream; the partition stream \
-                 is decoded alone",
-            ),
-            "collect Solid Edge losses",
-        )?,
-        (Some(_), Some(_), Some(_)) => {}
+        (Some(_), None) => {
+            if groups.iter().any(|group| group.deltas.is_some()) {
+                push_loss(
+                    ctx,
+                    &mut losses,
+                    SolidEdgeLossCode::ContainerNoPartitionStream,
+                    "the PARASOLID storage has a deltas stream and no partition or standalone \
+                     transmit stream; deltas alone have no base state to apply to and are not \
+                     decoded",
+                )?;
+            } else {
+                push_loss(
+                    ctx,
+                    &mut losses,
+                    SolidEdgeLossCode::ContainerNoBodyStream,
+                    "the PARASOLID storage holds no stream that carries a body",
+                )?;
+            }
+        }
+        (Some(_), Some(_)) => {
+            if base
+                .as_ref()
+                .is_some_and(|body| body.role == StreamRole::Partition)
+                && deltas.is_none()
+            {
+                push_loss(
+                    ctx,
+                    &mut losses,
+                    SolidEdgeLossCode::ContainerDeltasMissing,
+                    "the body group has a partition stream and no deltas stream; the partition \
+                     stream is decoded alone",
+                )?;
+            }
+        }
     }
 
-    for entry in scan.entries() {
-        let in_pair = entry
-            .name
-            .is_some_and(|name| name.index == BODY_STREAM_INDEX);
-        if in_pair {
+    for (index, group) in groups.iter().enumerate() {
+        if Some(index) == primary || (primary.is_none() && group.base().is_none()) {
             continue;
         }
         let message = ctx.format_retained(
             format_args!(
-                "{} is not part of the STREAM0 pair that decode reads; it is listed in the \
-                 container summary and not transferred",
+                "the body group {} is not the group that decode reads; its streams are listed \
+                 in the container summary and not transferred",
+                group.key
+            ),
+            "retain Solid Edge body group loss",
+        )?;
+        push_loss(
+            ctx,
+            &mut losses,
+            SolidEdgeLossCode::ContainerBodyGroupUntransferred,
+            message,
+        )?;
+    }
+    for entry in scan.sketches() {
+        let message = ctx.format_retained(
+            format_args!(
+                "{} is a sketch stream; sketches are not transferred",
+                entry.path
+            ),
+            "retain Solid Edge sketch loss",
+        )?;
+        push_loss(
+            ctx,
+            &mut losses,
+            SolidEdgeLossCode::ContainerSketchUntransferred,
+            message,
+        )?;
+    }
+    for entry in scan.entries().iter().filter(|entry| entry.name.is_none()) {
+        let message = ctx.format_retained(
+            format_args!(
+                "{} is not a Parasolid transmit stream; it is listed in the container \
+                 summary and not transferred",
                 entry.path
             ),
             "retain Solid Edge untransferred stream loss",
         )?;
-        ctx.push_vec(
+        push_loss(
+            ctx,
             &mut losses,
-            SolidEdgeLossCode::ContainerStreamUntransferred.note(message),
-            "collect Solid Edge losses",
+            SolidEdgeLossCode::ContainerStreamUntransferred,
+            message,
         )?;
     }
 
     let classification = dialect::classify_layers(ctx, scan.storage(), kernels)?;
-    for body in [&partition, &deltas].into_iter().flatten() {
+    for body in [&base, &deltas].into_iter().flatten() {
         let header = body.header.as_ref();
         let note = ctx.format_retained(
             format_args!(
-                "{}: {} stream{}",
+                "{}: {} stream{}{}",
                 body.entry.path,
-                body.entry
-                    .name
-                    .map_or("unclassified", |name| name.role.label()),
+                body.role.label(),
+                body.transmit
+                    .text_schema
+                    .as_ref()
+                    .map_or(String::new(), |schema| format!(
+                        ", text header schema {}",
+                        schema.value()
+                    )),
                 header.map_or(String::new(), |header| format!(
-                    ", description {:?}, schema {}",
+                    ", description {:?}, binary schema {}",
                     header.description,
                     header.schema.value()
                 ))
@@ -173,8 +295,20 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
         )?;
         ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
     }
+    if let Some(mut view) = scan.open_root_stream(ctx, DOC_VERSION_STREAM)? {
+        let length = view.window().len();
+        let code = view.skip(2).and_then(|()| view.u16_le());
+        if let (4, Some(code)) = (length, code) {
+            let note = ctx.format_retained(
+                format_args!("{DOC_VERSION_STREAM}: second u16 is {code}"),
+                "retain Solid Edge version note",
+            )?;
+            ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
+        }
+    }
     Ok(Analysis {
-        partition,
+        group: group_key,
+        base,
         deltas,
         classification,
         losses,
@@ -209,7 +343,8 @@ pub(crate) fn inspect(
 pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded, CodecError> {
     let scan = container::scan(ctx, root)?;
     let Analysis {
-        partition,
+        group,
+        base,
         deltas,
         classification,
         mut losses,
@@ -219,14 +354,22 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
     ctx.extend_vec(&mut losses, dialect_losses, "collect Solid Edge losses")?;
 
     let mut attributes = std::collections::BTreeMap::new();
-    if let Some(header) = partition.as_ref().and_then(|body| body.header.as_ref()) {
+    if let Some(schema) = base.as_ref().and_then(BodyStream::schema) {
         attributes.insert(
             cadmpeg_core::nonblank_literal!("parasolid_schema"),
-            ctx.copy_retained_text(header.schema.value(), "retain Solid Edge schema")?,
+            ctx.copy_retained_text(schema.value(), "retain Solid Edge schema")?,
         );
+    }
+    if let Some(header) = base.as_ref().and_then(|body| body.header.as_ref()) {
         attributes.insert(
             cadmpeg_core::nonblank_literal!("parasolid_description"),
             ctx.copy_retained_text(&header.description, "retain Solid Edge description")?,
+        );
+    }
+    if let Some(group) = group {
+        attributes.insert(
+            cadmpeg_core::nonblank_literal!("parasolid_stream_group"),
+            group,
         );
     }
     attributes.insert(
@@ -237,7 +380,7 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
 
     let mut unknowns = Vec::new();
     let mut source = None;
-    for body in [&partition, &deltas].into_iter().flatten() {
+    for body in [&base, &deltas].into_iter().flatten() {
         ctx.charge_entities(1, "admit Solid Edge Parasolid streams")?;
         let id = UnknownId::compose(
             &cadmpeg_ir::identity_namespace!("solidedge", "file", "parasolid-stream"),
@@ -259,17 +402,14 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
         )?;
     }
 
-    let decodable = partition
-        .as_ref()
-        .filter(|body| body.header.is_some())
-        .zip(source);
+    let decodable = base.as_ref().filter(|body| body.decodable()).zip(source);
     let mut annotations = cadmpeg_ir::Annotations::default();
     let mut geometry_transferred = false;
-    if let (false, Some((partition, source))) = (ctx.container_only(), decodable) {
+    if let (false, Some((base, source))) = (ctx.container_only(), decodable) {
         let mut streams: Vec<&[u8]> = ctx.collection_vec(2, "pair Solid Edge streams")?;
-        streams.push(partition.view.window());
-        if let Some(deltas) = deltas.as_ref().filter(|body| body.header.is_some()) {
-            streams.push(deltas.view.window());
+        streams.push(base.binary());
+        if let Some(deltas) = deltas.as_ref().filter(|body| body.decodable()) {
+            streams.push(deltas.binary());
         }
         let hosted = decode_hosted_brep(
             ctx,
@@ -313,8 +453,7 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             ctx.push_vec(
                 &mut losses,
                 SolidEdgeLossCode::GeometryNotTransferred.note(
-                    "no B-rep geometry was transferred: the Parasolid streams, when present, \
-                     decoded no surfaces, points, or faces; they are retained as unknown records",
+                    "no B-rep geometry was transferred; the other losses of this report state why",
                 ),
                 "collect Solid Edge losses",
             )?;

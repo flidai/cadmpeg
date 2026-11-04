@@ -106,7 +106,7 @@
           "scope": "namespaced",
           "strict_floor": "warning"
         },
-        "message": "no B-rep geometry was transferred: the Parasolid streams, when present, decoded no surfaces, points, or faces; they are retained as unknown records",
+        "message": "no B-rep geometry was transferred; the other losses of this report state why",
         "severity": "blocking"
       }
     ],

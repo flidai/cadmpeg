@@ -13,7 +13,8 @@ use cadmpeg_test_support::EditableDecodeResult;
 
 use crate::test_support::cfb::{storage, stream};
 use crate::test_support::{
-    deltas_body, deltas_stream, document, part_with_pair, partition_stream, triangle_body,
+    binary_partition, deltas_body, deltas_stream, document, part_with_pair, partition_stream,
+    transmit_stream, triangle_body,
 };
 use crate::SolidEdgeCodec;
 
@@ -62,6 +63,56 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
         (
             "no_parasolid_storage".to_string(),
             document(vec![stream("Other", b"payload")]),
+        ),
+        (
+            "numbered_group_mixed_case".to_string(),
+            document(vec![storage(
+                "PARASOLID",
+                vec![
+                    stream("Stream7.P_B", &partition),
+                    stream("Stream7.D_B", &deltas_stream(&deltas_body())),
+                ],
+            )]),
+        ),
+        (
+            "standalone_transmit".to_string(),
+            document(vec![storage(
+                "PARASOLID",
+                vec![stream("Body.X_B", &transmit_stream(&triangle_body()))],
+            )]),
+        ),
+        (
+            "binary_without_text_header".to_string(),
+            document(vec![storage(
+                "PARASOLID",
+                vec![stream("STREAM0.P_B", &binary_partition(&triangle_body()))],
+            )]),
+        ),
+        (
+            "assembly_model_with_sketch".to_string(),
+            document(vec![storage(
+                "PARASOLID",
+                vec![
+                    stream("SVSKETCH.P_B", &partition),
+                    stream("ASSEMBLYMODEL.P_B", &partition),
+                    stream("ASSEMBLYMODEL.D_B", &deltas_stream(&deltas_body())),
+                ],
+            )]),
+        ),
+        (
+            "sketch_only".to_string(),
+            document(vec![storage(
+                "PARASOLID",
+                vec![stream("SVSKETCH.P_B", &partition)],
+            )]),
+        ),
+        (
+            "family_master".to_string(),
+            document(vec![
+                stream("FamilyInfo", b"info"),
+                stream("FamilyPropertyFlags", b"flags"),
+                storage("S:Master", vec![stream("Data", b"data")]),
+            ]),
         ),
     ]
 }

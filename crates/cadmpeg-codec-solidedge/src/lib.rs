@@ -3,12 +3,15 @@
 //! Read the Parasolid B-rep of Solid Edge `.par`, `.psm`, and `.asm` files.
 //!
 //! A Solid Edge document is a Compound File Binary container. Its B-rep is a
-//! Parasolid partition stream and a deltas stream in the `PARASOLID` storage:
-//! `STREAM0.P_B` and `STREAM0.D_B`. [`SolidEdgeCodec`] locates that pair by
-//! directory path, hands it to the Parasolid B-rep decoder shared with the
-//! `SolidWorks` codec, and writes the bodies, faces, edges, vertices, and
-//! carriers into [`cadmpeg_ir::document::CadIr`]. Content selects the codec,
-//! never the file extension.
+//! Parasolid partition stream and a deltas stream in the `PARASOLID` storage,
+//! for example `STREAM0.P_B` and `STREAM0.D_B`, or a standalone transmit stream
+//! `<name>.X_B`. Each stream starts with the text transmit header of a
+//! Parasolid transmit file. [`SolidEdgeCodec`] locates the first body group by
+//! directory path, removes the text header, hands the binary part to the
+//! Parasolid B-rep decoder shared with the `SolidWorks` codec, and writes the
+//! bodies, faces, edges, vertices, and carriers into
+//! [`cadmpeg_ir::document::CadIr`]. Content selects the codec, never the file
+//! extension.
 //!
 //! <!-- generated: capability solidedge -->
 //! Support: L1 ([ladder](https://github.com/cadmpeg/cadmpeg/blob/main/docs/format-support.md#siemens-solid-edge-par-psm-and-asm)).
@@ -35,11 +38,12 @@
 //!
 //! # Model and loss boundaries
 //!
-//! Only the B-rep transfers. Feature history, sketches, document properties,
-//! materials, and assembly structure are not read; the report does not itemize
-//! them. A document without a `PARASOLID` storage, without a partition stream,
-//! or whose pair decodes no geometry yields a container-only result with a
-//! machine-readable loss and no model. Parasolid lengths are metres; decoded
+//! Only the B-rep transfers. Feature history, document properties, materials,
+//! and assembly structure are not read; the report does not itemize them. A
+//! sketch stream and a second body group each get a typed loss. A document
+//! without a `PARASOLID` storage, a family-of-parts master, a document whose
+//! storage holds only sketch streams, or one whose body decodes no geometry
+//! yields a container-only result with a machine-readable loss and no model. Parasolid lengths are metres; decoded
 //! coordinates are millimetres.
 //!
 //! The Parasolid decode is shared with the `SolidWorks` codec. Entity identities
@@ -50,6 +54,7 @@ mod container;
 mod decode;
 mod dialect;
 mod loss;
+mod transmit;
 
 use cadmpeg_core::decode::{DecodeContext, View};
 use cadmpeg_core::CodecError;

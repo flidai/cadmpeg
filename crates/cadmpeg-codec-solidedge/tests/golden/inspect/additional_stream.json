@@ -21,7 +21,7 @@
       "role": "parasolid-stream",
       "size": {
         "form": "exact",
-        "size": 104
+        "size": 560
       }
     },
     {
@@ -29,14 +29,14 @@
         "allocation": "mini",
         "directory_id": "3",
         "parasolid_role": "partition",
-        "start_sector": "2"
+        "start_sector": "9"
       },
       "compression": "stored",
       "name": "PARASOLID/STREAM0.P_B",
       "role": "parasolid-stream",
       "size": {
         "form": "exact",
-        "size": 916
+        "size": 1372
       }
     },
     {
@@ -44,14 +44,14 @@
         "allocation": "mini",
         "directory_id": "4",
         "parasolid_role": "partition",
-        "start_sector": "17"
+        "start_sector": "31"
       },
       "compression": "stored",
       "name": "PARASOLID/STREAM1.P_B",
       "role": "parasolid-stream",
       "size": {
         "form": "exact",
-        "size": 916
+        "size": 1372
       }
     }
   ],
@@ -90,12 +90,12 @@
   "losses": [
     {
       "code": {
-        "code": "container.stream-untransferred",
+        "code": "container.body-group-untransferred",
         "kind": "object_records_untransferred",
         "namespace": "solidedge",
         "scope": "namespaced"
       },
-      "message": "PARASOLID/STREAM1.P_B is not part of the STREAM0 pair that decode reads; it is listed in the container summary and not transferred",
+      "message": "the body group STREAM1 is not the group that decode reads; its streams are listed in the container summary and not transferred",
       "severity": "warning"
     },
     {
@@ -122,7 +122,7 @@
     }
   ],
   "notes": [
-    "PARASOLID/STREAM0.P_B: partition stream, description \"TRANSMIT FILE (partition) created by test\", schema SCH_3201255_32001",
-    "PARASOLID/STREAM0.D_B: deltas stream, description \"TRANSMIT FILE (deltas) created by test\", schema SCH_3201255_32001"
+    "PARASOLID/STREAM0.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
+    "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001"
   ]
 }
