@@ -33,6 +33,17 @@ const GRAPHICS_PRIMARY_COLOR_STYLE_TYPE: [u8; 16] = [
     0x0f, 0x56, 0x48, 0xaf, 0xd4, 0x11, 0xc7, 0x8d, 0x10, 0x00, 0xd5, 0x8d, 0xc0, 0x4a, 0x0a, 0xb5,
 ];
 
+/// A graphics group node: the parent of a body's graphics faces. Its styles
+/// reference states the style collection those faces display when they carry
+/// no style of their own.
+const GRAPHICS_NODE_TYPE: [u8; 16] = [
+    0xcf, 0xac, 0x9e, 0xa7, 0xd1, 0x11, 0x81, 0xc2, 0x60, 0x00, 0xa3, 0x8a, 0xb4, 0x6b, 0xce, 0xb0,
+];
+/// An 89-byte material-color style in a group node's style collection.
+const GRAPHICS_MATERIAL_COLOR_STYLE_TYPE: [u8; 16] = [
+    0x08, 0x86, 0xeb, 0x48, 0xd2, 0x11, 0x0c, 0x07, 0x60, 0x00, 0xf9, 0x9a, 0xc5, 0x36, 0x1a, 0xb0,
+];
+
 #[derive(Debug)]
 pub(crate) struct PresentationInventory<'a> {
     pub(crate) default_styles: Vec<Located<PmAppDefaultStyle<'a>>>,
@@ -40,7 +51,21 @@ pub(crate) struct PresentationInventory<'a> {
     pub(crate) graphics_faces: Vec<Located<PmGraphicsFace>>,
     pub(crate) graphics_style_collections: Vec<Located<PmGraphicsStyleCollection>>,
     pub(crate) graphics_primary_color_styles: Vec<Located<PmGraphicsPrimaryColorStyle>>,
+    pub(crate) graphics_nodes: Vec<Located<PmGraphicsNode>>,
+    pub(crate) graphics_material_color_styles: Vec<Located<PmGraphicsMaterialColorStyle>>,
     pub(crate) issues: Vec<RecordIssue>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PmGraphicsNode {
+    pub(crate) styles: PmDcReference,
+}
+
+#[derive(Debug)]
+pub(crate) struct PmGraphicsMaterialColorStyle {
+    /// Five RGBA vectors; the third is the diffuse color, at the same payload
+    /// offset as a primary-color style's diffuse vector.
+    pub(crate) colors: [[cadmpeg_ir::scalar::FiniteBinary32; 4]; 5],
 }
 
 #[derive(Debug)]
@@ -327,7 +352,23 @@ fn project_face_bindings(
             }
             continue;
         };
-        let Some(collection_ordinal) = graphics_face.styles.index().checked_sub(1) else {
+        // A face without a style of its own displays its group node's style.
+        let styles = if graphics_face.styles.index() != 0 {
+            graphics_face.styles
+        } else {
+            let Some(parent_ordinal) = graphics_face.parent.index().checked_sub(1) else {
+                continue;
+            };
+            let mut parents = inventory.graphics_nodes.iter().filter(|node| {
+                node.identity.segment_token == graphics_face.identity.segment_token
+                    && node.identity.record_ordinal == parent_ordinal
+            });
+            match (parents.next(), parents.next()) {
+                (Some(node), None) => node.styles,
+                _ => continue,
+            }
+        };
+        let Some(collection_ordinal) = styles.index().checked_sub(1) else {
             continue;
         };
         if key_counts.get(key) != Some(&1) {
@@ -354,6 +395,7 @@ fn project_face_bindings(
         }
         let collection = collections[0];
         let mut color_styles = Vec::new();
+        let mut material_colors = Vec::new();
         for ordinal in collection
             .style_references
             .references()
@@ -367,16 +409,31 @@ fn project_face_bindings(
                     color_styles.push(style);
                 }
             }
+            for style in &inventory.graphics_material_color_styles {
+                if style.identity.segment_token == collection.identity.segment_token
+                    && style.identity.record_ordinal == ordinal
+                {
+                    material_colors.push(style);
+                }
+            }
         }
-        if color_styles.len() != 1 {
+        let (style_identity, diffuse) = match (color_styles.as_slice(), material_colors.as_slice())
+        {
+            ([style], []) => (&style.identity, style.colors[1]),
+            ([], [style]) => (&style.identity, style.colors[2]),
+            _ => (
+                &collection.identity,
+                [cadmpeg_ir::scalar::FiniteBinary32::ZERO; 4],
+            ),
+        };
+        if color_styles.len() + material_colors.len() != 1 {
             count_unresolved(
                 &mut projection.unresolved_face_overrides,
                 UnresolvedCause::ColorStyle,
             )?;
             continue;
         }
-        let style = color_styles[0];
-        let [r, g, b, a] = style.colors[1].map(cadmpeg_ir::scalar::FiniteBinary32::get);
+        let [r, g, b, a] = diffuse.map(cadmpeg_ir::scalar::FiniteBinary32::get);
         let Some(color) = Color::new(r, g, b, a) else {
             count_unresolved(
                 &mut projection.unresolved_face_overrides,
@@ -385,8 +442,8 @@ fn project_face_bindings(
             continue;
         };
         let appearance_key = (
-            style.identity.segment_token.as_str(),
-            style.identity.record_ordinal,
+            style_identity.segment_token.as_str(),
+            style_identity.record_ordinal,
         );
         let appearance_id = if let Some(id) = appearance_ids.get(&appearance_key) {
             id.clone()
@@ -394,7 +451,7 @@ fn project_face_bindings(
             ctx.charge_entities(1, "project Inventor face appearance")?;
             let id = AppearanceId::compose(
                 &cadmpeg_ir::identity_namespace!("inventor", "presentation", "face-color"),
-                style.identity.key()?,
+                style_identity.key()?,
             );
             projection.appearances.push(Appearance {
                 id: id.clone(),
@@ -444,6 +501,8 @@ pub(crate) fn inventory<'a>(
     let mut graphics_faces = Vec::new();
     let mut graphics_style_collections = Vec::new();
     let mut graphics_primary_color_styles = Vec::new();
+    let mut graphics_nodes = Vec::new();
+    let mut graphics_material_color_styles = Vec::new();
     let mut issues = Vec::new();
     for segment in &document.segments {
         if !matches!(segment.kind, SegmentKind::PmApp | SegmentKind::PmGraphics) {
@@ -515,6 +574,30 @@ pub(crate) fn inventory<'a>(
                         );
                     })
                 }
+                GRAPHICS_NODE_TYPE if segment.kind == SegmentKind::PmGraphics && version > 14 => {
+                    parse_graphics_node(record.payload).map(|value| {
+                        push_presentation_record(
+                            &mut graphics_nodes,
+                            value,
+                            record.type_id,
+                            token,
+                            ordinal,
+                        );
+                    })
+                }
+                GRAPHICS_MATERIAL_COLOR_STYLE_TYPE
+                    if segment.kind == SegmentKind::PmGraphics && version > 14 =>
+                {
+                    parse_graphics_material_color_style(record.payload).map(|value| {
+                        push_presentation_record(
+                            &mut graphics_material_color_styles,
+                            value,
+                            record.type_id,
+                            token,
+                            ordinal,
+                        );
+                    })
+                }
                 _ => continue,
             };
             if let Err(error) = parsed {
@@ -537,8 +620,43 @@ pub(crate) fn inventory<'a>(
         graphics_faces,
         graphics_style_collections,
         graphics_primary_color_styles,
+        graphics_nodes,
+        graphics_material_color_styles,
         issues,
     })
+}
+
+fn parse_graphics_node(source: View<'_>) -> Result<PmGraphicsNode, CodecError> {
+    let mut cursor = Cursor::new(source);
+    cursor.u32("graphics-node header value")?;
+    cursor.u16("graphics-node header id")?;
+    cursor.u32("graphics-node flags")?;
+    let styles = cursor.node_reference("graphics-node styles reference")?;
+    // The surface, parent and child references that follow are not needed here.
+    Ok(PmGraphicsNode { styles })
+}
+
+fn parse_graphics_material_color_style(
+    source: View<'_>,
+) -> Result<PmGraphicsMaterialColorStyle, CodecError> {
+    let mut cursor = Cursor::new(source);
+    cursor.u32("graphics material-color state")?;
+    let mut colors = [[cadmpeg_ir::scalar::FiniteBinary32::ZERO; 4]; 5];
+    for color in &mut colors {
+        for component in color {
+            *component = cursor.finite_f32("graphics material-color component")?;
+        }
+    }
+    cursor.finite_f32("graphics material-color shininess")?;
+    cursor.u8("graphics material-color terminal state")?;
+    let suffix = cursor.remainder()?;
+    if !suffix.window().is_empty() {
+        return Err(CodecError::malformed(format_args!(
+            "PmGraphics material-color record has {} trailing bytes",
+            suffix.window().len()
+        )));
+    }
+    Ok(PmGraphicsMaterialColorStyle { colors })
 }
 
 fn push_presentation_record<T>(
@@ -1132,6 +1250,8 @@ mod tests {
             graphics_faces: Vec::new(),
             graphics_style_collections: Vec::new(),
             graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         };
         let face = FaceId::mint("inventor:test:face#1").expect("face id");
@@ -1228,6 +1348,8 @@ mod tests {
             graphics_faces: Vec::new(),
             graphics_style_collections: Vec::new(),
             graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         };
         let appearance = Appearance {
@@ -1463,6 +1585,8 @@ mod tests {
             graphics_faces: Vec::new(),
             graphics_style_collections: Vec::new(),
             graphics_primary_color_styles: Vec::new(),
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         };
         let appearance = Appearance {
@@ -1713,6 +1837,8 @@ mod tests {
             graphics_faces: vec![face],
             graphics_style_collections: vec![collection],
             graphics_primary_color_styles: vec![style],
+            graphics_nodes: Vec::new(),
+            graphics_material_color_styles: Vec::new(),
             issues: Vec::new(),
         }
     }
