@@ -1264,6 +1264,8 @@ face → 00 0f loop head → 00 11 coedge ring → 00 10 edge-use → support cu
 
 Magic-bearing records use `c2 bc 92 8f 99 6e 00 00`.
 
+The magic is a big-endian f64 with the value -3.14158e13. It sits in the tolerance field of the node and marks a node that has no tolerance of its own. A tolerant vertex states its tolerance there instead, as a big-endian f64 in metres. The scan reads a `00 12` record with a finite tolerance from 1e-12 to 1e-2 as a tolerant vertex-use, in the plain layout and in the tripled layout. The scan keeps it only when its point attr names a world point of the same stream and no vertex-use with the same attr exists. Edge-use and bridge records carry the same tolerance field, and the scan reads them with the magic only.
+
 The `00 0c`, `00 0d`, `00 0e`, and `00 13` tags are Parasolid XT node types
 BODY, SHELL, FACE, and REGION. Their node pointers use one big-endian u16 for
 values `0` through `0x7ffe`. A larger pointer uses two big-endian u16 values:
