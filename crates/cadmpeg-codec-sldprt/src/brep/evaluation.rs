@@ -170,8 +170,8 @@ fn surface_solver_budget<'ctx>(
         Some(work) if work < SURFACE_SOLVER_LOCAL_CEILING => work.max(SURFACE_SOLVER_LOCAL_WORK),
         _ => SURFACE_SOLVER_LOCAL_CEILING,
     };
-    let affordable =
-        (ctx.work_remaining().min(gate.session_allowance(ctx)) / scale.get()).min(gate.allowance());
+    let affordable = (ctx.work_remaining().min(SolverGate::session_allowance(ctx)) / scale.get())
+        .min(gate.allowance());
     if affordable == 0 {
         return Ok(None);
     }
@@ -197,14 +197,12 @@ pub(super) fn nurbs_surface_parameter_within_tolerance(
     let Some(budget) = surface_solver_budget(ctx, gate, surface, OPERATION)? else {
         return Ok(Solved::Withheld);
     };
-    let before = ctx.work_remaining();
     let result = cadmpeg_ir::eval::nurbs_surface_parameter_within_tolerance_with_budget(
         ctx, surface, point, seed, tolerance, &budget,
     );
     // A zero charge observes the session's original sticky refusal.
     ctx.charge_work(0, OPERATION)?;
     gate.note_spent(u64_from_index(budget.consumed()));
-    gate.note_session_spent(before, ctx);
     if budget.exhausted() {
         gate.note_exhausted();
         return Ok(Solved::Withheld);
@@ -245,10 +243,9 @@ pub(super) fn nurbs_surface_parameter_segment_chord_bound(
         .and_then(|work| work.checked_mul(64))
         .and_then(|work| work.checked_mul(splits))
         .ok_or_else(|| ctx.refuse_codec_limit(OPERATION, u64::MAX - 1, u64::MAX))?;
-    if work > ctx.work_remaining().min(gate.session_allowance(ctx)) {
+    if work > ctx.work_remaining().min(SolverGate::session_allowance(ctx)) {
         return Ok(Solved::Withheld);
     }
-    let before = ctx.work_remaining();
     ctx.charge_work(work, OPERATION)?;
     let Some(budget) = surface_solver_budget(ctx, gate, surface, OPERATION)? else {
         return Ok(Solved::Withheld);
@@ -258,7 +255,6 @@ pub(super) fn nurbs_surface_parameter_segment_chord_bound(
     );
     ctx.charge_work(0, OPERATION)?;
     gate.note_spent(u64_from_index(budget.consumed()));
-    gate.note_session_spent(before, ctx);
     if budget.exhausted() {
         gate.note_exhausted();
         return Ok(Solved::Withheld);
@@ -405,17 +401,22 @@ mod tests {
     }
 
     #[test]
-    fn solvers_may_spend_a_quarter_of_the_session_allowance_together() {
+    fn solvers_leave_a_third_of_the_session_allowance_to_the_rest_of_the_decode() {
         let arena = DecodeArena::new();
         let mut policy = DecodePolicy::service();
-        policy.limits.max_work_units = 4_000;
+        policy.limits.max_work_units = 3_000;
         let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
-        let gate = crate::lane_refusal::SolverGate::default();
-        assert_eq!(gate.session_allowance(&ctx), 1_000);
-        let before = ctx.work_remaining();
-        ctx.charge_work(600, "stand-in solver work").unwrap();
-        gate.note_session_spent(before, &ctx);
-        assert_eq!(gate.session_allowance(&ctx), 400);
+        assert_eq!(
+            crate::lane_refusal::SolverGate::session_allowance(&ctx),
+            2_000
+        );
+        ctx.charge_work(1_500, "stand-in work").unwrap();
+        assert_eq!(
+            crate::lane_refusal::SolverGate::session_allowance(&ctx),
+            500
+        );
+        ctx.charge_work(600, "stand-in work").unwrap();
+        assert_eq!(crate::lane_refusal::SolverGate::session_allowance(&ctx), 0);
     }
 
     #[test]

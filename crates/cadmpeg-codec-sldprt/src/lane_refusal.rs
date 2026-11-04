@@ -17,10 +17,12 @@ const SOLVER_EXHAUSTION_LIMIT: u32 = 4;
 /// take and leaves the rest of the decode its time.
 const SOLVER_TOTAL_WORK: u64 = 24_000_000;
 
-/// The part of the session work allowance that the optional solvers may spend
-/// together, as a divisor of the allowance. The rest of the decode needs the
-/// remaining work for the records that it must transfer.
-const SOLVER_SESSION_SHARE: u64 = 4;
+/// The part of the session work allowance that the optional solvers leave
+/// unspent, as a divisor of the allowance. The rest of the decode needs it for
+/// the records that it must transfer. The reserve is a share of what the limit
+/// allows, so a body that needs little work before the solvers leaves them
+/// more.
+const SOLVER_SESSION_RESERVE: u64 = 3;
 
 /// Counts the solver calls of one decode that ran out of work and the work
 /// that they spent.
@@ -28,7 +30,6 @@ const SOLVER_SESSION_SHARE: u64 = 4;
 pub(crate) struct SolverGate {
     exhausted: std::cell::Cell<u32>,
     spent: std::cell::Cell<u64>,
-    session_spent: std::cell::Cell<u64>,
 }
 
 impl SolverGate {
@@ -42,24 +43,14 @@ impl SolverGate {
         SOLVER_TOTAL_WORK - self.spent.get().min(SOLVER_TOTAL_WORK)
     }
 
-    /// The session work that the solvers may still spend.
-    pub(crate) fn session_allowance(&self, ctx: &DecodeContext<'_>) -> u64 {
-        let share = ctx.policy().limits.max_work_units / SOLVER_SESSION_SHARE;
-        let Some(left) = share.checked_sub(self.session_spent.get()) else {
+    /// The session work that the solvers may still spend: what the session has
+    /// left above the reserve.
+    pub(crate) fn session_allowance(ctx: &DecodeContext<'_>) -> u64 {
+        let reserve = ctx.policy().limits.max_work_units / SOLVER_SESSION_RESERVE;
+        let Some(left) = ctx.work_remaining().checked_sub(reserve) else {
             return 0;
         };
         left
-    }
-
-    /// Record the session work that a call spent since `before`, the session
-    /// work remaining when the call began.
-    pub(crate) fn note_session_spent(&self, before: u64, ctx: &DecodeContext<'_>) {
-        let Some(spent) = before.checked_sub(ctx.work_remaining()) else {
-            return;
-        };
-        if let Some(total) = self.session_spent.get().checked_add(spent) {
-            self.session_spent.set(total);
-        }
     }
 
     /// Record the local work that a finished call spent.
