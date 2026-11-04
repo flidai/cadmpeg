@@ -126,6 +126,7 @@ These hold across every codec, every dialect, and every release. A change that b
 | `cadmpeg-codec-creo`     | Creo `.prt` section decode, placed geometry, and neutral projection.                                                                   |
 | `cadmpeg-codec-sat`      | Bare ASM/ACIS `.sat`/`.smt`/`.smb`/`.sab` stream inspection and B-rep transfer outside any container.                                  |
 | `cadmpeg-codec-solidedge` | Solid Edge `.par`/`.psm`/`.asm` `PARASOLID` storage location, shared Parasolid B-rep decode, and neutral projection.                 |
+| `cadmpeg-codec-parasolid` | Standalone Parasolid `.x_b` transmit text header, shared Parasolid B-rep decode, and neutral projection; `.x_t` text transmit refusal.   |
 | `cadmpeg-codec-iges`     | IGES Fixed ASCII, Compressed ASCII, and Binary decode; retained replay; and bounded Fixed ASCII semantic writing.                       |
 | `cadmpeg-codec-step`     | STEP Part 21 inspection, decode, semantic writing, and export loss accounting.                                                         |
 | `cadmpeg-fuzz`           | Nightly `cargo-fuzz` targets outside the default workspace.                                                                            |

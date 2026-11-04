@@ -69,7 +69,8 @@
 #
 # `parasolid:` is owned by `cadmpeg-parasolid`. The sldprt, nx, and solidedge
 # hosts classify its schema tokens as extra layers from the same parsed stream
-# headers used by decode.
+# headers used by decode. The parasolid codec classifies the schema token of a
+# standalone transmit file as its only, primary layer.
 # Two of them are written even so: the sldprt writer stamps a Parasolid schema
 # token on every stream it generates, which is synthesis at the kernel layer,
 # and an embedded-kernel dialect is never its host's `targets()` row.
@@ -154,6 +155,14 @@ scored = ["sat:text"]
 [format.solidedge]
 level = 1
 scored = ["solidedge:cfb-parasolid"]
+
+[format.parasolid]
+level = 1
+scored = [
+  "parasolid:sch-sw-33103",
+  "parasolid:sch-sw-32001",
+  "parasolid:format-13006",
+]
 
 
 # --------------------------------------------------------------------------
@@ -1049,7 +1058,7 @@ dialect = "parasolid:sch-sw-33103"
 read = "detected"
 write = "emitted"
 reason = """
-the sldprt, nx, and solidedge readers classify this id from a framed Parasolid stream's
+the sldprt, nx, solidedge, and parasolid readers classify this id from a framed Parasolid stream's
 `SCH_SW_33103_11000` token. The sldprt writer also stamps
 `SCH_SW_33103_11000` on every Parasolid stream it generates whose bodies are
 all solid (writer.rs:126-130), which is the default branch"""
@@ -1059,7 +1068,7 @@ dialect = "parasolid:sch-sw-32001"
 read = "detected"
 write = "emitted"
 reason = """
-the sldprt, nx, and solidedge readers classify this id from a framed Parasolid stream's
+the sldprt, nx, solidedge, and parasolid readers classify this id from a framed Parasolid stream's
 `SCH_SW_32001_11000` token. The sldprt writer also stamps
 `SCH_SW_32001_11000` on a generated Parasolid stream when any body is a
 sheet (writer.rs:120-130)"""
@@ -1069,7 +1078,7 @@ dialect = "parasolid:format-13006"
 read = "detected"
 write = "none"
 reason = """
-the sldprt, nx, and solidedge readers emit this layer when a framed Parasolid stream's
+the sldprt, nx, solidedge, and parasolid readers emit this layer when a framed Parasolid stream's
 schema token ends in `_13006`; the same suffix selects the mesh stream
 grammar"""
 
@@ -1078,7 +1087,7 @@ dialect = "parasolid:unknown"
 read = "unclassified-recovered"
 write = "none"
 reason = """
-the sldprt, nx, and solidedge readers emit this residual layer for every other schema token
+the sldprt, nx, solidedge, and parasolid readers emit this residual layer for every other schema token
 extracted from a framed Parasolid stream. The source token names no classified
 row, so recovery is admitted without claiming a verified dialect. The hosts
 charge source.kernel-dialect-unverified from this layer"""

@@ -56,6 +56,7 @@ edit without a re-render fails the gate.
 | Fusion 360 `.f3d`                                 | L4    |
 | Siemens NX `.prt`                                 | L1    |
 | Siemens Solid Edge `.par`, `.psm`, and `.asm`     | L1    |
+| Parasolid transmit `.x_b` and `.x_t` files        | L1    |
 | CATIA V5 `.CATPart`                               | L1    |
 | Creo Parametric `.prt`                            | L1    |
 | STEP Part 21                                      | L9    |
@@ -432,6 +433,33 @@ The scored envelope is every Parasolid body group of the `PARASOLID` storage of 
 - **Design intent, product structure, presentation, and metadata: Not transferred.** A document without a body stream reports no model and a typed loss.
 
 See [`formats/solidedge.md`](formats/solidedge.md) and [`formats/solidedge-open-items.md`](formats/solidedge-open-items.md).
+
+## Parasolid transmit `.x_b` and `.x_t` files
+
+**Kernel:** Parasolid, standalone transmit file
+
+<!-- generated: dialects parasolid -->
+
+**Ladder: L1.**
+
+| Dialect                  | Read                   | Write   |
+| ------------------------ | ---------------------- | ------- |
+| `parasolid:sch-sw-33103` | detected               | emitted |
+| `parasolid:sch-sw-32001` | detected               | emitted |
+| `parasolid:format-13006` | detected               | none    |
+| `parasolid:unknown`      | unclassified-recovered | none    |
+
+<!-- /generated: dialects parasolid -->
+
+The scored envelope is a standalone transmit file: the text header with a `SCH=` schema token, followed by binary transmit data. A header that declares `FORMAT=text` (an `.x_t` file) is outside it. Feature history, document properties, and assembly structure are outside it.
+
+### Read profile
+
+- **Container and versions: Partial.** The codec reads the text header, takes the schema token, and classifies it as the one `parasolid:` layer of the file. The text encoding of the transmit data is identified and refused with `parasolid.text-transmit-unsupported`.
+- **Geometry and topology: Partial.** Binary transmit data decodes through the Parasolid B-rep decoder shared with the SolidWorks codec. Bodies, regions, shells, faces, loops, coedges, edges, vertices, points, analytic and NURBS carriers transfer. Geometry that the shared decoder does not type is reported as a loss.
+- **Design intent, product structure, presentation, and metadata: Not transferred.**
+
+See [`formats/parasolid.md`](formats/parasolid.md) and [`formats/parasolid-open-items.md`](formats/parasolid-open-items.md).
 
 ## CATIA V5 `.CATPart`
 

@@ -13,7 +13,9 @@ EVALUATIONS_REL = Path("docs") / "evaluations.toml"
 
 # Formats whose registry rows describe neutral identity or embedded kernel
 # layers rather than a top-level codec with published support surfaces.
-REGISTRY_ONLY_FORMATS = frozenset({"cadir", "acis", "parasolid"})
+# `parasolid` is a codec format too: a standalone transmit file has no host
+# layer, so its schema row is the primary layer.
+REGISTRY_ONLY_FORMATS = frozenset({"cadir", "acis"})
 
 
 class RegistryDataError(ValueError):

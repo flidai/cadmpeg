@@ -84,6 +84,12 @@ fuzz = "absent"
 fuzz_reason = "focused targets call SolidEdgeCodec"
 
 [[crate]]
+id = "parasolid"
+names = ["ParasolidCodec"]
+fuzz = "absent"
+fuzz_reason = "focused targets call ParasolidCodec"
+
+[[crate]]
 id = "step"
 names = [
     "StepCodec",

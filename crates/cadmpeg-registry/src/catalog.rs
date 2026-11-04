@@ -222,7 +222,8 @@ impl InputCatalog {
                             feature = "step",
                             feature = "iges",
                             feature = "sat",
-                            feature = "solidedge"
+                            feature = "solidedge",
+                            feature = "parasolid"
                         ))]
                         crate::descriptors::FormatKind::Native(native) => InputKind::Native {
                             native,
