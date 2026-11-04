@@ -553,6 +553,13 @@ pub(crate) struct Stats {
     /// Of the unresolved edges, those with an endpoint whose world-point
     /// record is absent from the tables.
     pub(crate) unresolved_absent_point: usize,
+    /// Edges that the coedges name and that no edge record or coedge fixes as
+    /// the canonical coedge, so no edge was emitted for them.
+    pub(crate) skipped_edges_no_canonical: usize,
+    /// Of the dropped loops, those with a coedge that the tables do not hold.
+    pub(crate) dropped_loops_missing_coedge: usize,
+    /// Of the dropped loops, those with a coedge whose edge was not emitted.
+    pub(crate) dropped_loops_unemitted_edge: usize,
     /// Loops dropped because a coedge of the ring has no emitted edge.
     pub(crate) dropped_loops: usize,
     /// Faces dropped because none of their loops was kept.
@@ -2004,6 +2011,7 @@ fn decode_graph(
         let canonical =
             canonical_coedge_attr(edge_attr, t.edge_uses().get(&edge_attr), t.coedges());
         let Some(canonical) = canonical else {
+            out.stats.skipped_edges_no_canonical += 1;
             continue;
         };
         let Some((_, start_vuse, ring_end_vuse)) = incidences
@@ -2078,7 +2086,9 @@ fn decode_graph(
         out.vertices.push(Vertex {
             id: id_vertex(a),
             point: id_point(point_attr),
-            tolerance: None,
+            tolerance: rec
+                .tolerance_m
+                .and_then(|metres| cadmpeg_ir::scalar::PositiveReal::new(metres * LEN_TO_MM)),
         });
     }
 
@@ -2315,6 +2325,11 @@ fn decode_graph(
                 ctx.insert_hash_set(&mut kept_loops, *loop_attr, "track kept Parasolid loops")?;
             } else {
                 out.stats.dropped_loops += 1;
+                if ring.iter().any(|c| !t.coedges().contains_key(c)) {
+                    out.stats.dropped_loops_missing_coedge += 1;
+                } else {
+                    out.stats.dropped_loops_unemitted_edge += 1;
+                }
             }
         }
     }
