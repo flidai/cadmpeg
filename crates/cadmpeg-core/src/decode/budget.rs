@@ -55,6 +55,22 @@ impl DecodeBudget {
         self.fuse.get()
     }
 
+    /// Session work units still available. A fused session has none.
+    pub(super) fn work_remaining(&self) -> u64 {
+        if self.fuse.get().is_some() {
+            return 0;
+        }
+        let Some(remaining) = self
+            .policy
+            .limits
+            .max_work_units
+            .checked_sub(self.work.get())
+        else {
+            return 0;
+        };
+        remaining
+    }
+
     pub(super) fn decompression_allowance(&self) -> u64 {
         let policy_limit = self.policy.limits.max_decompressed_bytes_total;
         let Some(proportional) = DECOMPRESSED_TOTAL_PER_INPUT_BYTE
