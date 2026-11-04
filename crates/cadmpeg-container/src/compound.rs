@@ -245,14 +245,12 @@ impl DirectoryName {
                 "CFB empty live directory names cannot be represented as paths".into(),
             ));
         }
-        if name.encode_utf16().count() > 31
-            || name
-                .chars()
-                .any(|character| matches!(character, '/' | '\\' | ':' | '!'))
-        {
-            return malformed(
-                "CFB directory name contains a forbidden character or exceeds 31 UTF-16 units",
-            );
+        // [MS-CFB] 2.6.1 forbids `/`, `\`, `:`, and `!` in a name. Writers other
+        // than the Structured Storage API emit the last three, for example
+        // `S:Master`, so they are read as ordinary characters. Only `/` is
+        // refused because it is the path separator of every path built here.
+        if name.encode_utf16().count() > 31 || name.contains('/') {
+            return malformed("CFB directory name contains `/` or exceeds 31 UTF-16 units");
         }
         Ok(Self(name))
     }
@@ -2618,6 +2616,55 @@ mod tests {
             snapshot.entry("STORE"),
             Some(CompoundEntry::Storage(_))
         ));
+    }
+
+    #[test]
+    fn names_with_colon_bang_or_backslash_are_ordinary_characters() {
+        for name in ["A:mal", "A!mal", "A\\mal"] {
+            let mut file = fixture();
+            directory_entry(
+                sector_mut(&mut file, 0),
+                1,
+                name,
+                2,
+                NO_STREAM,
+                2,
+                NO_STREAM,
+                0,
+                5,
+            );
+            let arena = DecodeArena::new();
+            let policy = DecodePolicy::default();
+            let (ctx, root) = DecodeContext::from_root_bytes(&file, &arena, &policy)
+                .expect("synthetic CFB fits the decode policy");
+            let snapshot = CompoundSnapshot::new(&ctx, root).expect("the name parses");
+            let stream = snapshot.stream(name).expect("the named stream exists");
+            assert_eq!(
+                snapshot.open(&ctx, stream).expect("stream opens").window(),
+                b"small"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_with_the_path_separator_is_refused() {
+        let mut file = fixture();
+        directory_entry(
+            sector_mut(&mut file, 0),
+            1,
+            "A/mal",
+            2,
+            NO_STREAM,
+            2,
+            NO_STREAM,
+            0,
+            5,
+        );
+        let arena = DecodeArena::new();
+        let policy = DecodePolicy::default();
+        let (ctx, root) = DecodeContext::from_root_bytes(&file, &arena, &policy)
+            .expect("synthetic CFB fits the decode policy");
+        assert!(CompoundSnapshot::new(&ctx, root).is_err());
     }
 
     #[test]
