@@ -1,0 +1,77 @@
+{
+  "container_kind": "cfb",
+  "entries": [
+    {
+      "attributes": {
+        "directory_id": "1"
+      },
+      "compression": "storage",
+      "name": "PARASOLID",
+      "role": "storage"
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "2",
+        "parasolid_role": "deltas",
+        "start_sector": "0"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/STREAM0.D_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 104
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [
+        {
+          "admission": "residual",
+          "declared": {
+            "carrier": "PARASOLID/STREAM0.D_B",
+            "schema": "SCH_3201255_32001"
+          },
+          "dialect": "parasolid:unknown"
+        }
+      ],
+      "primary": {
+        "admission": "admitted",
+        "declared": {
+          "storage": "PARASOLID"
+        },
+        "dialect": "solidedge:cfb-parasolid"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "container.no-partition-stream",
+        "kind": "missing_geometry_stream",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "the PARASOLID storage has no STREAM0.P_B partition stream; a deltas stream alone has no base state to apply to and is not decoded",
+      "severity": "error"
+    },
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at PARASOLID/STREAM0.D_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    }
+  ],
+  "notes": [
+    "PARASOLID/STREAM0.D_B: deltas stream, description \"TRANSMIT FILE (deltas) created by test\", schema SCH_3201255_32001"
+  ]
+}
