@@ -154,7 +154,7 @@ Visibility is a property of a design-view representation. `DesignViewSegment` st
 
 **Question.** Which `PmGraphics` or `FBAttribute` style families bind a Protein appearance asset, texture, or non-diffuse presentation channel to a face?
 
-**Known.** The `PmApp` document-default record selects one rendering-style record by a carrier-local one-based record reference. The rendering style stores the Protein asset GUID and asset-library identifier. Their unique catalog join supplies the default appearance for every part body. A PmGraphics face joins a transferred ASM face through the shared nonnegative Design key. Its object-style collection can select one primary-color style whose second RGBA vector is a direct diffuse face override. The face override has precedence over the body default.
+**Known.** The `PmApp` document-default record selects one rendering-style record by a carrier-local one-based record reference. The rendering style stores the Protein asset GUID and asset-library identifier. Their unique catalog join supplies the default appearance for every part body. A PmGraphics face joins a transferred ASM face through the shared nonnegative Design key. Its object-style collection, or for a face without one the collection of its parent group node, can select one primary-color style whose second RGBA vector, or one material-color style whose third RGBA vector, is the direct diffuse face color. The face color has precedence over the body default.
 
 **Need.** Each additional style family requires an exact owner path, channel semantics, and precedence before transfer.
 

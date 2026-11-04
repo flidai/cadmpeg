@@ -41,6 +41,11 @@ a release. The rounds below it are fork-only.
   their counts in the loss notes (`c/r7-loss-kind-counts`). The STEP writer's note for faces
   omitted for an unknown or unsupported surface names the kinds too (fork-only).
 
+- `crates/cadmpeg-codec-inventor`, `docs/formats/inventor.md`: color a graphics face that has no
+  style of its own from the style collection of its parent group node, and read the 89-byte
+  material-color style such a collection lists (`c/r7-graphics-parent-colour`, to be proposed
+  upstream).
+
 - `crates/cadmpeg-codec-step` writer: write an apostrophe in text that also holds a comma as the
   wide escape of U+0027, so readers that end a string at a doubled apostrophe followed by a comma
   read the file (`fix/step-apostrophe-wide-escape`).
