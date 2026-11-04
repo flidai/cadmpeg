@@ -16,7 +16,7 @@
 //! directly. Untyped carriers use opaque IR geometry while resolvable topology
 //! remains available.
 
-use self::index::scan_carriers;
+use self::index::{scan_carriers, scan_carriers_stored};
 use self::spline::patch_nurbs_curve;
 
 use cadmpeg_core::decode::{DecodeContext, View};
@@ -108,6 +108,10 @@ mod tag {
     pub(super) const TORUS: u8 = 0x36;
 }
 
+/// Orientation marker of a compact analytic record whose curve runs against
+/// its owning edge.
+const MARKER_REVERSED: u8 = 0x2d;
+
 const COMPACT_REF_COUNT: usize = 5;
 const DELTAS_REF_STRIDE: usize = 3;
 const DELTAS_MARKER_OFFSET: usize = analytic::REFS + COMPACT_REF_COUNT * DELTAS_REF_STRIDE;
@@ -184,6 +188,29 @@ pub(crate) struct CurveCarrier {
     pub(crate) end: usize,
     pub(crate) geometry: CurveGeometry,
     parameter_range: Option<cadmpeg_ir::units::FiniteVector<2>>,
+    /// The stored orientation marker is `0x2d`: the owning edge runs against
+    /// the stored parameter direction.
+    reversed: bool,
+}
+
+impl CurveCarrier {
+    /// Rewrite the geometry so that its parameter direction is the owning
+    /// edge direction. Only lines, circles and ellipses carry the marker.
+    fn into_edge_oriented(mut self) -> Self {
+        if !self.reversed {
+            return self;
+        }
+        if let CurveGeometry::Solved(solved) = &mut self.geometry {
+            match solved {
+                SolvedCurveGeometry::Line(line) => line.reverse_parameterization(),
+                SolvedCurveGeometry::Circle(circle) => circle.reverse_parameterization(),
+                SolvedCurveGeometry::Ellipse(ellipse) => ellipse.reverse_parameterization(),
+                _ => {}
+            }
+        }
+        self.reversed = false;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -246,7 +273,7 @@ fn parse_carrier_at_marker(
         return None;
     }
 
-    decode_carrier_values(tt, vals, attr, off, end)
+    decode_carrier_values(tt, vals, attr, off, end, body[marker_at] == MARKER_REVERSED)
 }
 
 /// Try to parse a compact analytic carrier whose tag byte pair `00 TT` begins at
@@ -280,6 +307,7 @@ fn decode_carrier_values(
     attr: u16,
     offset: usize,
     end: usize,
+    marker_reversed: bool,
 ) -> Option<Carrier> {
     let curve = |geometry| {
         Carrier::Curve(CurveCarrier {
@@ -288,6 +316,7 @@ fn decode_carrier_values(
             end,
             geometry,
             parameter_range: None,
+            reversed: marker_reversed,
         })
     };
     let surface = |geometry| {
@@ -377,7 +406,7 @@ pub(crate) fn curve_by_attr(
     body: &[u8],
     attr: u16,
 ) -> Result<Option<CurveGeometry>, cadmpeg_core::CodecError> {
-    let carriers = scan_carriers(ctx, body)?;
+    let carriers = scan_carriers_stored(ctx, body)?;
     carriers
         .curve(attr)
         .map(|indexed| {
@@ -396,7 +425,7 @@ pub(crate) fn patch_compact_values(
     attr: u16,
     values: &[f64],
 ) -> Result<bool, cadmpeg_core::CodecError> {
-    let carriers = scan_carriers(ctx, body)?;
+    let carriers = scan_carriers_stored(ctx, body)?;
     let Some(indexed) = carriers.curve(attr) else {
         return Ok(false);
     };
@@ -644,6 +673,85 @@ mod tests {
         assert!((major_radius - 2.2).abs() < 1.0e-12);
         assert!((minor_radius - 0.2).abs() < 1.0e-12);
         assert!(!carrier.orientation_reversed);
+    }
+
+    fn with_reversed_marker(mut bytes: Vec<u8>) -> Vec<u8> {
+        const MARKER_AT: usize = 18;
+        assert_eq!(bytes[MARKER_AT], 0x2b);
+        bytes[MARKER_AT] = super::MARKER_REVERSED;
+        bytes
+    }
+
+    fn scan_context() -> (
+        cadmpeg_core::decode::DecodeArena,
+        cadmpeg_core::decode::DecodePolicy,
+    ) {
+        (
+            cadmpeg_core::decode::DecodeArena::new(),
+            cadmpeg_core::decode::DecodePolicy::service(),
+        )
+    }
+
+    #[test]
+    fn reversed_marker_turns_a_circle_toward_the_edge_direction() {
+        let (arena, policy) = scan_context();
+        let (ctx, _) =
+            cadmpeg_core::decode::DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
+        let values = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.002];
+        let bytes = with_reversed_marker(compact_carrier(tag::CIRCLE, 8, &values));
+
+        let axis_of = |index: &super::index::CarrierIndex| {
+            let Some(SolvedCurveGeometry::Circle(circle)) =
+                index.curve(8).expect("circle").carrier().geometry.solved()
+            else {
+                panic!("expected circle");
+            };
+            *circle.frame().axis().as_raw()
+        };
+        let oriented = scan_carriers(&ctx, &bytes).expect("oriented scan");
+        let stored = super::index::scan_carriers_stored(&ctx, &bytes).expect("stored scan");
+
+        assert_eq!(axis_of(&oriented), Vector3::new(0.0, 0.0, -1.0));
+        assert_eq!(axis_of(&stored), Vector3::new(0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn reversed_marker_turns_a_line_and_an_ellipse() {
+        let (arena, policy) = scan_context();
+        let (ctx, _) =
+            cadmpeg_core::decode::DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
+        let mut bytes = with_reversed_marker(compact_carrier(
+            tag::LINE,
+            7,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        ));
+        bytes.extend(with_reversed_marker(compact_carrier(
+            tag::ELLIPSE,
+            8,
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.004, 0.002],
+        )));
+
+        let carriers = scan_carriers(&ctx, &bytes).expect("oriented scan");
+
+        let Some(SolvedCurveGeometry::Line(line)) =
+            carriers.curve(7).expect("line").carrier().geometry.solved()
+        else {
+            panic!("expected line");
+        };
+        assert_eq!(*line.direction().as_raw(), Vector3::new(-1.0, 0.0, 0.0));
+        let Some(SolvedCurveGeometry::Ellipse(ellipse)) = carriers
+            .curve(8)
+            .expect("ellipse")
+            .carrier()
+            .geometry
+            .solved()
+        else {
+            panic!("expected ellipse");
+        };
+        assert_eq!(
+            *ellipse.frame().axis().as_raw(),
+            Vector3::new(0.0, 0.0, -1.0)
+        );
     }
 
     #[test]

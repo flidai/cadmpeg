@@ -1216,6 +1216,7 @@ pub(crate) fn scan_curve_carriers(
         };
         ctx.reserve_map(&mut out, 1, "collect Parasolid curve carriers")?;
         out.entry(attr).or_insert(CurveCarrier {
+            reversed: false,
             attr,
             offset: off,
             end: off + 2,

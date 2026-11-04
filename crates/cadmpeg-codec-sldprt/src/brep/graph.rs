@@ -7892,6 +7892,7 @@ mod tests {
             .unwrap(),
         ));
         let carrier = CurveCarrier {
+            reversed: false,
             attr: 1,
             offset: 0,
             end: 0,
@@ -8160,6 +8161,7 @@ mod tests {
     #[test]
     fn line_edge_parameters_convert_from_metres_to_millimetres() {
         let carrier = crate::brep::CurveCarrier {
+            reversed: false,
             attr: 1,
             offset: 0,
             end: 0,
