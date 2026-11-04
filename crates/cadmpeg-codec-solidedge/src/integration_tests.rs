@@ -637,3 +637,14 @@ fn a_text_header_without_binary_data_is_not_decoded() {
         Some("SCH_3201255_32001")
     );
 }
+
+#[test]
+fn a_model_whose_ranges_pass_the_checks_keeps_every_range() {
+    let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let before = ir.clone();
+    let withheld = with_decode_context(&[], |ctx| {
+        crate::decode::withhold_rejected_ranges(ctx, &mut ir).unwrap()
+    });
+    assert_eq!(withheld, (0, 0));
+    assert_eq!(ir, before);
+}

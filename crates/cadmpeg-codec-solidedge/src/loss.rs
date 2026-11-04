@@ -50,6 +50,8 @@ pub(crate) enum SolidEdgeLossCode {
     ContainerSketchUntransferred,
     /// The `PARASOLID` storage holds a second body group that decode does not read.
     ContainerBodyGroupUntransferred,
+    /// An edge or pcurve parameter range failed a model check and was withheld.
+    GeometryRangeWithheld,
     /// A Parasolid stream has no readable transmit header.
     ParasolidHeaderUnreadable,
     /// The Parasolid streams decoded no surfaces, points, or faces.
@@ -79,6 +81,7 @@ impl SolidEdgeLossCode {
         Self::ContainerSketchUntransferred,
         Self::ContainerBodyGroupUntransferred,
         Self::ParasolidHeaderUnreadable,
+        Self::GeometryRangeWithheld,
         Self::GeometryNotTransferred,
         Self::AppearanceFaceColorUntransferred,
         Self::SourceDialectUnverified,
@@ -101,6 +104,7 @@ impl SolidEdgeLossCode {
             Self::ContainerSketchUntransferred => "container.sketch-untransferred",
             Self::ContainerBodyGroupUntransferred => "container.body-group-untransferred",
             Self::ParasolidHeaderUnreadable => "parasolid.header-unreadable",
+            Self::GeometryRangeWithheld => "geometry.range-withheld",
             Self::GeometryNotTransferred => "geometry.not-transferred",
             Self::AppearanceFaceColorUntransferred => "appearance.face-color-untransferred",
             Self::SourceDialectUnverified => "source.dialect-unverified",
@@ -125,6 +129,7 @@ impl SolidEdgeLossCode {
             | Self::ContainerStreamUntransferred
             | Self::ContainerSketchUntransferred
             | Self::ContainerBodyGroupUntransferred
+            | Self::GeometryRangeWithheld
             | Self::AppearanceFaceColorUntransferred
             | Self::SourceDialectUnverified
             | Self::KernelDialectUnverified
@@ -141,6 +146,7 @@ impl SolidEdgeLossCode {
             | Self::ContainerNoPartitionStream => LossTaxonomy::MissingGeometryStream,
             Self::ContainerCfbTolerated
             | Self::ContainerDeltasMissing
+            | Self::GeometryRangeWithheld
             | Self::DialectLayerCollision => LossTaxonomy::DecodeDiagnostic,
             Self::ContainerStreamUntransferred
             | Self::ContainerSketchUntransferred
@@ -194,6 +200,7 @@ mod tests {
                 "container.sketch-untransferred",
                 "container.body-group-untransferred",
                 "parasolid.header-unreadable",
+                "geometry.range-withheld",
                 "geometry.not-transferred",
                 "appearance.face-color-untransferred",
                 "source.dialect-unverified",

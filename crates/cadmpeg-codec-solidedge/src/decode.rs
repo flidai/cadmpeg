@@ -16,6 +16,7 @@ use cadmpeg_ir::codec::{DecodeBody, Decoded};
 use cadmpeg_ir::document::{CadIr, SourceMeta};
 use cadmpeg_ir::ids::UnknownId;
 use cadmpeg_ir::report::loss::LossNote;
+use cadmpeg_ir::topology::EdgeCarrier;
 use cadmpeg_ir::unknown::UnknownRecord;
 use cadmpeg_ir::{ContainerKind, ContainerSummary, SourceFidelity};
 use cadmpeg_parasolid::{Carrier, OwnedSchemaToken};
@@ -414,6 +415,52 @@ pub(crate) fn inspect(
     ))
 }
 
+/// Withhold every edge range and coedge pcurve range that the model range
+/// checks reject, and count them. A range that fails the checks is wrong or not
+/// provable from the stream. The vertices bound the edge without it, and a
+/// wrong range would make the exported curve wrong.
+pub(crate) fn withhold_rejected_ranges(
+    ctx: &DecodeContext<'_>,
+    ir: &mut CadIr,
+) -> Result<(usize, usize), CodecError> {
+    let findings = cadmpeg_ir::validate::range_findings(ctx, ir)?;
+    if findings.is_empty() {
+        return Ok((0, 0));
+    }
+    let mut rejected = std::collections::HashSet::new();
+    for finding in &findings {
+        if let Some(id) = finding.entity.as_deref() {
+            ctx.insert_hash_set(&mut rejected, id, "index rejected Solid Edge ranges")?;
+        }
+    }
+    let mut edges = 0;
+    for edge in &mut ir.model.edges {
+        if !rejected.contains(edge.id.as_str()) {
+            continue;
+        }
+        let carrier = std::mem::replace(&mut edge.carrier, EdgeCarrier::Free);
+        edge.carrier = match carrier {
+            EdgeCarrier::Bounded(curve, _) => {
+                edges += 1;
+                EdgeCarrier::Curve(curve)
+            }
+            other => other,
+        };
+    }
+    let mut pcurves = 0;
+    for coedge in &mut ir.model.coedges {
+        if !rejected.contains(coedge.id.as_str()) {
+            continue;
+        }
+        for use_ in &mut coedge.pcurves {
+            if use_.parameter_range.take().is_some() {
+                pcurves += 1;
+            }
+        }
+    }
+    Ok((edges, pcurves))
+}
+
 /// Decode the Parasolid body groups into the neutral B-rep.
 pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded, CodecError> {
     let scan = match scan_or_unreadable(ctx, root)? {
@@ -571,6 +618,22 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             )?;
             ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
             decoded_groups += 1;
+        }
+        let (edges, pcurves) = withhold_rejected_ranges(ctx, &mut ir)?;
+        if edges + pcurves > 0 {
+            let message = ctx.format_retained(
+                format_args!(
+                    "{edges} edge parameter range(s) and {pcurves} coedge pcurve range(s) failed \
+                     the model range checks and are withheld; the vertices still bound each edge"
+                ),
+                "retain Solid Edge range loss",
+            )?;
+            push_loss(
+                ctx,
+                &mut losses,
+                SolidEdgeLossCode::GeometryRangeWithheld,
+                message,
+            )?;
         }
         if face_colors > 0 {
             let message = ctx.format_retained(
