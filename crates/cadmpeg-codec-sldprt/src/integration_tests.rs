@@ -18,7 +18,9 @@ use crate::test_support::container::make_block;
 use crate::test_support::container::sldprt_with_body;
 use crate::test_support::container::sldprt_with_body_and_envelope;
 use crate::test_support::container::sldprt_with_colliding_sites;
+use crate::test_support::container::sldprt_with_empty_model_and_local_bodies;
 use crate::test_support::container::sldprt_with_partition_and_deltas;
+use crate::test_support::container::sldprt_with_partition_and_local_bodies;
 use crate::test_support::container::synthetic_sldprt;
 use crate::test_support::history::sldprt_with_body_and_history;
 use crate::test_support::history::sldprt_with_nested_arc_sketch;
@@ -598,4 +600,33 @@ fn the_generation_path_names_the_catalog_row() {
     let mut written = Vec::new();
     plan.write_to(&mut written).unwrap();
     assert_eq!(classify(written), claimed);
+}
+
+#[test]
+fn local_bodies_supply_the_body_when_the_partition_states_no_geometry() {
+    let result = decode(sldprt_with_partition_and_local_bodies(
+        &[0; 8],
+        &triangle_body(),
+    ));
+
+    assert_eq!(result.ir().model.bodies.len(), 1);
+    assert_eq!(result.ir().model.faces.len(), 1);
+    assert_valid(&result);
+}
+
+#[test]
+fn local_bodies_do_not_join_a_partition_that_states_geometry() {
+    let result = decode(sldprt_with_partition_and_local_bodies(
+        &owned_triangle(0, 700, 0.0),
+        &owned_triangle(0, 701, 10.0),
+    ));
+
+    assert_eq!(result.ir().model.faces.len(), 1);
+}
+
+#[test]
+fn local_bodies_replace_an_empty_partition_and_deltas_model() {
+    let result = decode(sldprt_with_empty_model_and_local_bodies(&triangle_body()));
+
+    assert_eq!(result.ir().model.faces.len(), 1);
 }

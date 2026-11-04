@@ -700,9 +700,13 @@ fn decode_keeps_container_stream_and_model_entity_admission_additive() {
         &cadmpeg_core::decode::DecodePolicy::service(),
     )
     .unwrap();
-    let stream_entities = crate::decode::active_body_streams(&ctx, &scan)
-        .unwrap()
-        .len();
+    let stream_entities = crate::decode::active_body_streams(
+        &ctx,
+        &scan,
+        crate::decode::BodyStreamSource::Partitions,
+    )
+    .unwrap()
+    .len();
     let decoded = SldprtCodec
         .decode(&mut Cursor::new(fixture.clone()), &DecodeOptions::default())
         .expect("decode triangle body");
