@@ -13,6 +13,13 @@
           "regions": [
             "sldprt:brep:region#902"
           ]
+        },
+        {
+          "id": "sldprt:brep:group-stream1/body#900",
+          "kind": "solid",
+          "regions": [
+            "sldprt:brep:group-stream1/region#902"
+          ]
         }
       ],
       "coedges": [
@@ -50,6 +57,42 @@
             }
           ],
           "radial_next": "sldprt:brep:coedge#32",
+          "sense": "forward"
+        },
+        {
+          "edge": "sldprt:brep:group-stream1/edge#40",
+          "id": "sldprt:brep:group-stream1/coedge#30",
+          "owner_loop": "sldprt:brep:group-stream1/loop#20",
+          "pcurves": [
+            {
+              "pcurve": "sldprt:brep:group-stream1/pcurve#30"
+            }
+          ],
+          "radial_next": "sldprt:brep:group-stream1/coedge#30",
+          "sense": "forward"
+        },
+        {
+          "edge": "sldprt:brep:group-stream1/edge#41",
+          "id": "sldprt:brep:group-stream1/coedge#31",
+          "owner_loop": "sldprt:brep:group-stream1/loop#20",
+          "pcurves": [
+            {
+              "pcurve": "sldprt:brep:group-stream1/pcurve#31"
+            }
+          ],
+          "radial_next": "sldprt:brep:group-stream1/coedge#31",
+          "sense": "forward"
+        },
+        {
+          "edge": "sldprt:brep:group-stream1/edge#42",
+          "id": "sldprt:brep:group-stream1/coedge#32",
+          "owner_loop": "sldprt:brep:group-stream1/loop#20",
+          "pcurves": [
+            {
+              "pcurve": "sldprt:brep:group-stream1/pcurve#32"
+            }
+          ],
+          "radial_next": "sldprt:brep:group-stream1/coedge#32",
           "sense": "forward"
         }
       ],
@@ -102,6 +145,54 @@
             }
           },
           "id": "sldprt:brep:curve#103"
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 1.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          },
+          "id": "sldprt:brep:group-stream1/curve#101"
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": -0.7071067811865476,
+              "y": 0.7071067811865476,
+              "z": 0.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 100.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          },
+          "id": "sldprt:brep:group-stream1/curve#102"
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": -1.0,
+              "z": 0.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 0.0,
+              "y": 100.0,
+              "z": 0.0
+            }
+          },
+          "id": "sldprt:brep:group-stream1/curve#103"
         }
       ],
       "drawings": [],
@@ -129,6 +220,30 @@
           "end": "sldprt:brep:vertex#50",
           "id": "sldprt:brep:edge#42",
           "start": "sldprt:brep:vertex#52"
+        },
+        {
+          "carrier": {
+            "curve": "sldprt:brep:group-stream1/curve#101"
+          },
+          "end": "sldprt:brep:group-stream1/vertex#51",
+          "id": "sldprt:brep:group-stream1/edge#40",
+          "start": "sldprt:brep:group-stream1/vertex#50"
+        },
+        {
+          "carrier": {
+            "curve": "sldprt:brep:group-stream1/curve#102"
+          },
+          "end": "sldprt:brep:group-stream1/vertex#52",
+          "id": "sldprt:brep:group-stream1/edge#41",
+          "start": "sldprt:brep:group-stream1/vertex#51"
+        },
+        {
+          "carrier": {
+            "curve": "sldprt:brep:group-stream1/curve#103"
+          },
+          "end": "sldprt:brep:group-stream1/vertex#50",
+          "id": "sldprt:brep:group-stream1/edge#42",
+          "start": "sldprt:brep:group-stream1/vertex#52"
         }
       ],
       "faces": [
@@ -143,10 +258,34 @@
           "sense": "forward",
           "shell": "sldprt:brep:shell#901",
           "surface": "sldprt:brep:surf#10"
+        },
+        {
+          "id": "sldprt:brep:group-stream1/face#10",
+          "loops": {
+            "classification": "unspecified",
+            "loops": [
+              "sldprt:brep:group-stream1/loop#20"
+            ]
+          },
+          "sense": "forward",
+          "shell": "sldprt:brep:group-stream1/shell#901",
+          "surface": "sldprt:brep:group-stream1/surf#10"
         }
       ],
       "features": [],
       "loops": [
+        {
+          "boundary": {
+            "coedges": [
+              "sldprt:brep:group-stream1/coedge#30",
+              "sldprt:brep:group-stream1/coedge#31",
+              "sldprt:brep:group-stream1/coedge#32"
+            ],
+            "kind": "ring"
+          },
+          "face": "sldprt:brep:group-stream1/face#10",
+          "id": "sldprt:brep:group-stream1/loop#20"
+        },
         {
           "boundary": {
             "coedges": [
@@ -163,6 +302,60 @@
       "occurrences": [],
       "parameters": [],
       "pcurves": [
+        {
+          "geometry": {
+            "direction": {
+              "u": 1.0,
+              "v": 0.0
+            },
+            "kind": "line",
+            "origin": {
+              "u": 0.0,
+              "v": 0.0
+            }
+          },
+          "id": "sldprt:brep:group-stream1/pcurve#30",
+          "metadata": {
+            "form": {},
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "u": -0.7071067811865476,
+              "v": 0.7071067811865476
+            },
+            "kind": "line",
+            "origin": {
+              "u": 100.0,
+              "v": 0.0
+            }
+          },
+          "id": "sldprt:brep:group-stream1/pcurve#31",
+          "metadata": {
+            "form": {},
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "u": 0.0,
+              "v": -1.0
+            },
+            "kind": "line",
+            "origin": {
+              "u": 0.0,
+              "v": 100.0
+            }
+          },
+          "id": "sldprt:brep:group-stream1/pcurve#32",
+          "metadata": {
+            "form": {},
+            "source": "general"
+          }
+        },
         {
           "geometry": {
             "direction": {
@@ -221,6 +414,30 @@
       "pmi": [],
       "points": [
         {
+          "id": "sldprt:brep:group-stream1/point#60",
+          "position": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "sldprt:brep:group-stream1/point#61",
+          "position": {
+            "x": 100.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "sldprt:brep:group-stream1/point#62",
+          "position": {
+            "x": 0.0,
+            "y": 100.0,
+            "z": 0.0
+          }
+        },
+        {
           "id": "sldprt:brep:point#60",
           "position": {
             "x": 0.0,
@@ -252,6 +469,13 @@
       "product_definitions": [],
       "regions": [
         {
+          "body": "sldprt:brep:group-stream1/body#900",
+          "id": "sldprt:brep:group-stream1/region#902",
+          "shells": [
+            "sldprt:brep:group-stream1/shell#901"
+          ]
+        },
+        {
           "body": "sldprt:brep:body#900",
           "id": "sldprt:brep:region#902",
           "shells": [
@@ -261,6 +485,16 @@
       ],
       "semantic_annotations": [],
       "shells": [
+        {
+          "id": "sldprt:brep:group-stream1/shell#901",
+          "members": [
+            {
+              "id": "sldprt:brep:group-stream1/face#10",
+              "kind": "face"
+            }
+          ],
+          "region": "sldprt:brep:group-stream1/region#902"
+        },
         {
           "id": "sldprt:brep:shell#901",
           "members": [
@@ -299,11 +533,44 @@
               "z": 0.0
             }
           },
+          "id": "sldprt:brep:group-stream1/surf#10"
+        },
+        {
+          "geometry": {
+            "kind": "plane",
+            "normal": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "origin": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "u_axis": {
+              "x": 1.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          },
           "id": "sldprt:brep:surf#10"
         }
       ],
       "tessellations": [],
       "vertices": [
+        {
+          "id": "sldprt:brep:group-stream1/vertex#50",
+          "point": "sldprt:brep:group-stream1/point#60"
+        },
+        {
+          "id": "sldprt:brep:group-stream1/vertex#51",
+          "point": "sldprt:brep:group-stream1/point#61"
+        },
+        {
+          "id": "sldprt:brep:group-stream1/vertex#52",
+          "point": "sldprt:brep:group-stream1/point#62"
+        },
         {
           "id": "sldprt:brep:vertex#50",
           "point": "sldprt:brep:point#60"
@@ -327,12 +594,16 @@
           },
           {
             "id": "solidedge:file:parasolid-stream#3"
+          },
+          {
+            "id": "solidedge:file:parasolid-stream#4"
           }
         ]
       }
     },
     "source": {
       "attributes": {
+        "parasolid_body_groups": "STREAM0,STREAM1",
         "parasolid_description": "TRANSMIT FILE (partition) created by test",
         "parasolid_schema": "SCH_3201255_32001",
         "parasolid_stream_count": "3",
@@ -359,6 +630,15 @@
               },
               "dialect": "parasolid:unknown",
               "instance": "PARASOLID/STREAM0.D_B"
+            },
+            {
+              "admission": "residual",
+              "declared": {
+                "carrier": "PARASOLID/STREAM1.P_B",
+                "schema": "SCH_3201255_32001"
+              },
+              "dialect": "parasolid:unknown",
+              "instance": "PARASOLID/STREAM1.P_B"
             }
           ],
           "primary": {
@@ -401,6 +681,15 @@
             },
             "dialect": "parasolid:unknown",
             "instance": "PARASOLID/STREAM0.D_B"
+          },
+          {
+            "admission": "residual",
+            "declared": {
+              "carrier": "PARASOLID/STREAM1.P_B",
+              "schema": "SCH_3201255_32001"
+            },
+            "dialect": "parasolid:unknown",
+            "instance": "PARASOLID/STREAM1.P_B"
           }
         ],
         "primary": {
@@ -415,12 +704,12 @@
     "losses": [
       {
         "code": {
-          "code": "container.body-group-untransferred",
-          "kind": "object_records_untransferred",
+          "code": "container.deltas-missing",
+          "kind": "decode_diagnostic",
           "namespace": "solidedge",
           "scope": "namespaced"
         },
-        "message": "the body group STREAM1 is not the group that decode reads; its streams are listed in the container summary and not transferred",
+        "message": "the body group STREAM1 has a partition stream and no deltas stream; the partition stream is decoded alone",
         "severity": "warning"
       },
       {
@@ -444,11 +733,25 @@
         },
         "message": "The Parasolid stream at PARASOLID/STREAM0.D_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
         "severity": "warning"
+      },
+      {
+        "code": {
+          "code": "source.kernel-dialect-unverified",
+          "kind": "source_dialect_unverified",
+          "namespace": "solidedge",
+          "scope": "namespaced",
+          "strict_floor": "warning"
+        },
+        "message": "The Parasolid stream at PARASOLID/STREAM1.P_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+        "severity": "warning"
       }
     ],
     "notes": [
       "PARASOLID/STREAM0.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
-      "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001"
+      "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001",
+      "PARASOLID/STREAM1.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
+      "body group STREAM0: 24 entities decoded",
+      "body group STREAM1: 24 entities decoded; identities carry the group scope"
     ],
     "transfer": {
       "geometry_transferred": true,
@@ -458,6 +761,24 @@
   "source_fidelity": {
     "annotations": {
       "exactness": {
+        "sldprt:brep:group-stream1/pcurve#30": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "sldprt:brep:group-stream1/pcurve#31": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "sldprt:brep:group-stream1/pcurve#32": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "sldprt:brep:group-stream1/surf#10": {
+          "fields": {
+            "geometry.u_axis": "derived"
+          },
+          "scope": "fields"
+        },
         "sldprt:brep:pcurve#30": {
           "entity": "derived",
           "scope": "entity"
@@ -532,6 +853,126 @@
           "offset": 292,
           "stream": "solidedge:parasolid",
           "tag": "00_0e"
+        },
+        "sldprt:brep:group-stream1/body#900": {
+          "offset": 704,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_51_body"
+        },
+        "sldprt:brep:group-stream1/coedge#30": {
+          "offset": 347,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_11"
+        },
+        "sldprt:brep:group-stream1/coedge#31": {
+          "offset": 370,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_11"
+        },
+        "sldprt:brep:group-stream1/coedge#32": {
+          "offset": 393,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_11"
+        },
+        "sldprt:brep:group-stream1/curve#101": {
+          "offset": 91,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "compact_curve"
+        },
+        "sldprt:brep:group-stream1/curve#102": {
+          "offset": 158,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "compact_curve"
+        },
+        "sldprt:brep:group-stream1/curve#103": {
+          "offset": 225,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "compact_curve"
+        },
+        "sldprt:brep:group-stream1/edge#40": {
+          "offset": 416,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_10"
+        },
+        "sldprt:brep:group-stream1/edge#41": {
+          "offset": 446,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_10"
+        },
+        "sldprt:brep:group-stream1/edge#42": {
+          "offset": 476,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_10"
+        },
+        "sldprt:brep:group-stream1/face#10": {
+          "offset": 292,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_0e"
+        },
+        "sldprt:brep:group-stream1/loop#20": {
+          "offset": 331,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_0f"
+        },
+        "sldprt:brep:group-stream1/pcurve#30": {
+          "offset": 0,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "derived_planar_pcurve"
+        },
+        "sldprt:brep:group-stream1/pcurve#31": {
+          "offset": 0,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "derived_planar_pcurve"
+        },
+        "sldprt:brep:group-stream1/pcurve#32": {
+          "offset": 0,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "derived_planar_pcurve"
+        },
+        "sldprt:brep:group-stream1/point#60": {
+          "offset": 584,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_1d"
+        },
+        "sldprt:brep:group-stream1/point#61": {
+          "offset": 624,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_1d"
+        },
+        "sldprt:brep:group-stream1/point#62": {
+          "offset": 664,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_1d"
+        },
+        "sldprt:brep:group-stream1/region#902": {
+          "offset": 799,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_51_region"
+        },
+        "sldprt:brep:group-stream1/shell#901": {
+          "offset": 774,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_51_shell"
+        },
+        "sldprt:brep:group-stream1/surf#10": {
+          "offset": 0,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "compact_surface"
+        },
+        "sldprt:brep:group-stream1/vertex#50": {
+          "offset": 506,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_12"
+        },
+        "sldprt:brep:group-stream1/vertex#51": {
+          "offset": 532,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_12"
+        },
+        "sldprt:brep:group-stream1/vertex#52": {
+          "offset": 558,
+          "stream": "solidedge:parasolid:stream1",
+          "tag": "00_12"
         },
         "sldprt:brep:loop#20": {
           "offset": 331,
@@ -615,6 +1056,14 @@
           "retention": "inline"
         },
         "offset": 2624,
+        "stream": ""
+      },
+      "solidedge:file:parasolid-stream#4": {
+        "bytes": {
+          "data": "KipBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6KioqKioqKioqKioqKioqKioqKioqKioqKioKKipQQVJBU09MSUQgISIjJCUmJygpKissLS4vOjs8PT4/QFtcXV5fYHt8fX4wMTIzNDU2Nzg5KioqKioqKioqKioqKioqKioqKioqKioqKioKKipQQVJUMTsKTUM9c3ludGhldGljCk1DX01PREVMPXN5bnRoZXRpYwpNQ19JRD0wCk9TPXN5bnRoZXRpYwpGUlU9c3ludGhldGljCkFQUEw9Y2FkbXBlZyB0ZXN0IGZpeHR1cmUKU0lURT1zeW50aGV0aWMKRk9STUFUPWJpbmFyeQpHVUlTRT10cmFuc21pdApLRVk9c3ludGhldGljCioqUEFSVDI7ClNDSD1TQ0hfMzIwMTI1NV8zMjAwMQpVU0ZMRF9TSVpFPTAKKipQQVJUMzsKKipFTkRfT0ZfSEVBREVSKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqUFMAAAApVFJBTlNNSVQgRklMRSAocGFydGl0aW9uKSBjcmVhdGVkIGJ5IHRlc3QAABFTQ0hfMzIwMTI1NV8zMjAwMQAyAGQAAAAAAAAAAAAAAAAAACsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/AAAAAAAAA/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgBlAAAAAAAAAAAAAAAAAAArAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB4AZgAAAAAAAAAAAAAAAAAAKz+5mZmZmZmaAAAAAAAAAAAAAAAAAAAAAL/moJ5mfzvNP+agnmZ/O80AAAAAAAAAAAAeAGcAAAAAAAAAAAAAAAAAACsAAAAAAAAAAD+5mZmZmZmaAAAAAAAAAAAAAAAAAAAAAL/wAAAAAAAAAAAAAAAAAAAADgAKAAAAAAAAwrySj5luAAAAAAAAABQAAABkKwAAAAAAAAAAAAAADwAUAAAAAAAAAB4ACgAAABEAHgAAABQAAAAfADIAAAAoAAAAACsAEQAfAAAAFAAAACAAMwAAACkAAAAAKwARACAAAAAUAAAAHgA0AAAAKgAAAAArABAAKAAAAAAAAMK8ko+ZbgAAAAAAAAAAAGUAAAAAABAAKQAAAAAAAMK8ko+ZbgAAAAAAAAAAAGYAAAAAABAAKgAAAAAAAMK8ko+ZbgAAAAAAAAAAAGcAAAAAABIAMgAAAAAAAAAAAAAAAAA8wrySj5luAAAAEgAzAAAAAAAAAAAAAAAAAD3CvJKPmW4AAAASADQAAAAAAAAAAAAAAAAAPsK8ko+ZbgAAAB0APAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdAD0AAAAAAAAAAAAAAAA/uZmZmZmZmgAAAAAAAAAAAAAAAAAAAAAAHQA+AAAAAAAAAAAAAAAAAAAAAAAAAAA/uZmZmZmZmgAAAAAAAAAAAAz/A4QAAYokAAUABgABAAEAAQABQI9AAAAAAAA+RXmO4jCMOgABAAEAAQEAAgEBA4UAAQABAAEAAQABAAEDhgABAAEAAQAN/wOFAAMQxQABA4QAAQABAAEAAQOGAAEAE/8DhgAEl2YAAQOEAAEAAQOFUwAO/wAKAAYaigABwrySj5luAAAAAQABAAADhQBkKw==",
+          "retention": "inline"
+        },
+        "offset": 4032,
         "stream": ""
       }
     }

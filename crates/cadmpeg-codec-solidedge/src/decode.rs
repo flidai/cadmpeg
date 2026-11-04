@@ -10,9 +10,10 @@
 
 use cadmpeg_codec_sldprt::{decode_hosted_brep, read_hosted_header, HostedHeader};
 use cadmpeg_core::decode::{u64_from_index, DecodeContext, View};
+use cadmpeg_core::dialect::DialectLayers;
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::codec::{DecodeBody, Decoded};
-use cadmpeg_ir::document::{CadIr, SourceMeta};
+use cadmpeg_ir::document::{CadIr, EntityRewrite, SourceMeta};
 use cadmpeg_ir::ids::UnknownId;
 use cadmpeg_ir::report::loss::LossNote;
 use cadmpeg_ir::unknown::UnknownRecord;
@@ -60,12 +61,24 @@ impl BodyStream<'_> {
     }
 }
 
+/// The streams of one body group that decode reads.
+struct Group<'a> {
+    /// The stem of the group in ASCII upper case.
+    key: String,
+    base: BodyStream<'a>,
+    deltas: Option<BodyStream<'a>>,
+}
+
+impl<'a> Group<'a> {
+    fn streams(&self) -> impl Iterator<Item = &BodyStream<'a>> {
+        std::iter::once(&self.base).chain(self.deltas.as_ref())
+    }
+}
+
 /// The structure of one document, shared by inspection and decode.
 struct Analysis<'a> {
-    /// The key of the body group that decode reads.
-    group: Option<String>,
-    base: Option<BodyStream<'a>>,
-    deltas: Option<BodyStream<'a>>,
+    /// Every body group with a base state, in decode order.
+    groups: Vec<Group<'a>>,
     classification: LayerClassification,
     losses: Vec<LossNote>,
     notes: Vec<String>,
@@ -108,31 +121,50 @@ fn push_loss(
 }
 
 fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'a>, CodecError> {
-    let groups = scan.body_groups(ctx)?;
-    let primary = groups.iter().position(|group| group.base().is_some());
+    let found = scan.body_groups(ctx)?;
     let mut losses = Vec::new();
     let mut notes = Vec::new();
 
-    let mut base = None;
-    let mut deltas = None;
-    let mut group_key = None;
-    if let Some(group) = primary.and_then(|index| groups.get(index)) {
-        group_key = Some(ctx.copy_retained_text(group.key, "retain Solid Edge group key")?);
-        if let Some((entry, role)) = group.base() {
-            base = Some(open_body(ctx, scan, entry, role)?);
-        }
-        if base
-            .as_ref()
-            .is_some_and(|body| body.role == StreamRole::Partition)
-        {
-            if let Some(entry) = group.deltas {
-                deltas = Some(open_body(ctx, scan, entry, StreamRole::Deltas)?);
+    let mut groups = Vec::new();
+    let mut deltas_only = 0_usize;
+    for group in &found {
+        let Some((entry, role)) = group.base() else {
+            deltas_only += 1;
+            continue;
+        };
+        let base = open_body(ctx, scan, entry, role)?;
+        let deltas = match (role, group.deltas) {
+            (StreamRole::Partition, Some(entry)) => {
+                Some(open_body(ctx, scan, entry, StreamRole::Deltas)?)
             }
+            _ => None,
+        };
+        if role == StreamRole::Partition && deltas.is_none() {
+            let message = ctx.format_retained(
+                format_args!(
+                    "the body group {} has a partition stream and no deltas stream; the \
+                     partition stream is decoded alone",
+                    group.key
+                ),
+                "retain Solid Edge deltas loss",
+            )?;
+            push_loss(
+                ctx,
+                &mut losses,
+                SolidEdgeLossCode::ContainerDeltasMissing,
+                message,
+            )?;
         }
+        let key = ctx.copy_retained_text(group.key, "retain Solid Edge group key")?;
+        ctx.push_vec(
+            &mut groups,
+            Group { key, base, deltas },
+            "collect Solid Edge body groups",
+        )?;
     }
 
     let mut kernels = Vec::new();
-    for body in [&base, &deltas].into_iter().flatten() {
+    for body in groups.iter().flat_map(Group::streams) {
         if let Some(schema) = body.schema() {
             let carrier = ctx.copy_retained_text(&body.entry.path, "retain Solid Edge carrier")?;
             let schema = OwnedSchemaToken::try_from(
@@ -169,7 +201,7 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
         }
     }
 
-    match (scan.storage(), primary) {
+    match (scan.storage(), groups.is_empty()) {
         (None, _) if scan.kind() == DocumentKind::FamilyMaster => push_loss(
             ctx,
             &mut losses,
@@ -183,60 +215,39 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
             SolidEdgeLossCode::ContainerNoParasolidStorage,
             "the Compound File has no PARASOLID storage; no geometry stream exists to read",
         )?,
-        (Some(_), None) => {
-            if groups.iter().any(|group| group.deltas.is_some()) {
-                push_loss(
-                    ctx,
-                    &mut losses,
-                    SolidEdgeLossCode::ContainerNoPartitionStream,
-                    "the PARASOLID storage has a deltas stream and no partition or standalone \
-                     transmit stream; deltas alone have no base state to apply to and are not \
-                     decoded",
-                )?;
-            } else {
-                push_loss(
-                    ctx,
-                    &mut losses,
-                    SolidEdgeLossCode::ContainerNoBodyStream,
-                    "the PARASOLID storage holds no stream that carries a body",
-                )?;
-            }
-        }
-        (Some(_), Some(_)) => {
-            if base
-                .as_ref()
-                .is_some_and(|body| body.role == StreamRole::Partition)
-                && deltas.is_none()
-            {
-                push_loss(
-                    ctx,
-                    &mut losses,
-                    SolidEdgeLossCode::ContainerDeltasMissing,
-                    "the body group has a partition stream and no deltas stream; the partition \
-                     stream is decoded alone",
-                )?;
-            }
-        }
-    }
-
-    for (index, group) in groups.iter().enumerate() {
-        if Some(index) == primary || (primary.is_none() && group.base().is_none()) {
-            continue;
-        }
-        let message = ctx.format_retained(
-            format_args!(
-                "the body group {} is not the group that decode reads; its streams are listed \
-                 in the container summary and not transferred",
-                group.key
-            ),
-            "retain Solid Edge body group loss",
-        )?;
-        push_loss(
+        (Some(_), true) if deltas_only > 0 => push_loss(
             ctx,
             &mut losses,
-            SolidEdgeLossCode::ContainerBodyGroupUntransferred,
-            message,
-        )?;
+            SolidEdgeLossCode::ContainerNoPartitionStream,
+            "the PARASOLID storage has a deltas stream and no partition or standalone \
+             transmit stream; deltas alone have no base state to apply to and are not decoded",
+        )?,
+        (Some(_), true) => push_loss(
+            ctx,
+            &mut losses,
+            SolidEdgeLossCode::ContainerNoBodyStream,
+            "the PARASOLID storage holds no stream that carries a body",
+        )?,
+        (Some(_), false) => {}
+    }
+
+    if !groups.is_empty() {
+        for group in found.iter().filter(|group| group.base().is_none()) {
+            let message = ctx.format_retained(
+                format_args!(
+                    "the body group {} has a deltas stream and no base state; its streams are \
+                     listed in the container summary and not transferred",
+                    group.key
+                ),
+                "retain Solid Edge body group loss",
+            )?;
+            push_loss(
+                ctx,
+                &mut losses,
+                SolidEdgeLossCode::ContainerBodyGroupUntransferred,
+                message,
+            )?;
+        }
     }
     for entry in scan.sketches() {
         let message = ctx.format_retained(
@@ -271,7 +282,7 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
     }
 
     let classification = dialect::classify_layers(ctx, scan.storage(), kernels)?;
-    for body in [&base, &deltas].into_iter().flatten() {
+    for body in groups.iter().flat_map(Group::streams) {
         let header = body.header.as_ref();
         let note = ctx.format_retained(
             format_args!(
@@ -307,13 +318,49 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
         }
     }
     Ok(Analysis {
-        group: group_key,
-        base,
-        deltas,
+        groups,
         classification,
         losses,
         notes,
     })
+}
+
+/// The result for a Compound File whose directory cannot be read: the failing
+/// check is named in the loss.
+fn unreadable(
+    ctx: &DecodeContext<'_>,
+    detail: &str,
+) -> Result<(DialectLayers, Vec<LossNote>), CodecError> {
+    let mut losses = Vec::new();
+    let message = ctx.format_retained(
+        format_args!(
+            "the Compound File directory cannot be read: {detail}; no stream was listed or \
+             decoded"
+        ),
+        "retain Solid Edge unreadable loss",
+    )?;
+    push_loss(
+        ctx,
+        &mut losses,
+        SolidEdgeLossCode::ContainerUnreadable,
+        message,
+    )?;
+    let (layers, dialect_losses) = dialect::classify_layers(ctx, None, Vec::new())?.into_parts();
+    ctx.extend_vec(&mut losses, dialect_losses, "collect Solid Edge losses")?;
+    Ok((layers, losses))
+}
+
+/// Scan the directory. A structural defect of the Compound File is a typed
+/// result and not an error; every other failure stays an error.
+fn scan_or_unreadable<'a>(
+    ctx: &DecodeContext<'a>,
+    root: View<'a>,
+) -> Result<Result<Scan<'a>, String>, CodecError> {
+    match container::scan(ctx, root) {
+        Ok(scan) => Ok(Ok(scan)),
+        Err(CodecError::Malformed(detail) | CodecError::NotImplemented(detail)) => Ok(Err(detail)),
+        Err(error) => Err(error),
+    }
 }
 
 /// Report the directory structure without building the model.
@@ -321,7 +368,19 @@ pub(crate) fn inspect(
     ctx: &DecodeContext<'_>,
     root: View<'_>,
 ) -> Result<ContainerSummary, CodecError> {
-    let scan = container::scan(ctx, root)?;
+    let scan = match scan_or_unreadable(ctx, root)? {
+        Ok(scan) => scan,
+        Err(detail) => {
+            let (layers, losses) = unreadable(ctx, &detail)?;
+            return Ok(ContainerSummary::classified(
+                layers,
+                ContainerKind::Cfb,
+                Vec::new(),
+                losses,
+                Vec::new(),
+            ));
+        }
+    };
     let Analysis {
         classification,
         mut losses,
@@ -339,37 +398,108 @@ pub(crate) fn inspect(
     ))
 }
 
-/// Decode the Parasolid pair into the neutral B-rep.
+/// Rescope an identity of the shared B-rep decoder to one body group. The group
+/// scope leads the third namespace component, so that two groups never state
+/// one identity.
+fn rescope(ctx: &DecodeContext<'_>, id: &str, scope: &str) -> Result<String, CodecError> {
+    if !id.starts_with("sldprt:") {
+        return ctx.copy_retained_text(id, "rescope Solid Edge identity");
+    }
+    let mut colons = id.match_indices(':').map(|(index, _)| index);
+    match (colons.next(), colons.next()) {
+        (Some(_), Some(second)) => ctx.format_retained(
+            format_args!("{}{scope}/{}", &id[..=second], &id[second + 1..]),
+            "rescope Solid Edge identity",
+        ),
+        _ => ctx.copy_retained_text(id, "rescope Solid Edge identity"),
+    }
+}
+
+struct GroupScope<'a, 'b> {
+    scope: &'a str,
+    ctx: &'a DecodeContext<'b>,
+}
+
+impl EntityRewrite for GroupScope<'_, '_> {
+    type Error = CodecError;
+
+    fn rewrite<T: cadmpeg_ir::schema::rewrite::typed::RewriteIdentities>(
+        &mut self,
+        entity: T,
+    ) -> Result<T, Self::Error> {
+        cadmpeg_ir::schema::rewrite::identities(
+            self.ctx,
+            "solidedge_group_rescope",
+            entity,
+            |id: &str| rescope(self.ctx, id, self.scope),
+        )
+    }
+}
+
+/// Decode the Parasolid body groups into the neutral B-rep.
 pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded, CodecError> {
-    let scan = container::scan(ctx, root)?;
+    let scan = match scan_or_unreadable(ctx, root)? {
+        Ok(scan) => scan,
+        Err(detail) => {
+            let (layers, mut losses) = unreadable(ctx, &detail)?;
+            let ir = CadIr::decoded(SourceMeta::classified(
+                layers,
+                std::collections::BTreeMap::new(),
+            ));
+            let transfer = if ctx.container_only() {
+                cadmpeg_ir::report::decode::DecodeTransfer::ContainerOnly {}
+            } else {
+                push_loss(
+                    ctx,
+                    &mut losses,
+                    SolidEdgeLossCode::GeometryNotTransferred,
+                    "no B-rep geometry was transferred; the other losses of this report state why",
+                )?;
+                cadmpeg_ir::report::decode::DecodeTransfer::full(false)
+            };
+            return Ok(Decoded {
+                ir,
+                body: DecodeBody {
+                    losses,
+                    ..DecodeBody::new(transfer)
+                },
+                source_fidelity: SourceFidelity::with_annotations(
+                    cadmpeg_ir::Annotations::default(),
+                ),
+            });
+        }
+    };
     let Analysis {
-        group,
-        base,
-        deltas,
+        groups,
         classification,
         mut losses,
-        notes,
+        mut notes,
     } = analyze(ctx, &scan)?;
     let (layers, dialect_losses) = classification.into_parts();
     ctx.extend_vec(&mut losses, dialect_losses, "collect Solid Edge losses")?;
 
     let mut attributes = std::collections::BTreeMap::new();
-    if let Some(schema) = base.as_ref().and_then(BodyStream::schema) {
-        attributes.insert(
-            cadmpeg_core::nonblank_literal!("parasolid_schema"),
-            ctx.copy_retained_text(schema.value(), "retain Solid Edge schema")?,
-        );
-    }
-    if let Some(header) = base.as_ref().and_then(|body| body.header.as_ref()) {
-        attributes.insert(
-            cadmpeg_core::nonblank_literal!("parasolid_description"),
-            ctx.copy_retained_text(&header.description, "retain Solid Edge description")?,
-        );
-    }
-    if let Some(group) = group {
+    if let Some(first) = groups.first() {
+        if let Some(schema) = first.base.schema() {
+            attributes.insert(
+                cadmpeg_core::nonblank_literal!("parasolid_schema"),
+                ctx.copy_retained_text(schema.value(), "retain Solid Edge schema")?,
+            );
+        }
+        if let Some(header) = first.base.header.as_ref() {
+            attributes.insert(
+                cadmpeg_core::nonblank_literal!("parasolid_description"),
+                ctx.copy_retained_text(&header.description, "retain Solid Edge description")?,
+            );
+        }
         attributes.insert(
             cadmpeg_core::nonblank_literal!("parasolid_stream_group"),
-            group,
+            ctx.copy_retained_text(&first.key, "retain Solid Edge group key")?,
+        );
+        let keys: Vec<&str> = groups.iter().map(|group| group.key.as_str()).collect();
+        attributes.insert(
+            cadmpeg_core::nonblank_literal!("parasolid_body_groups"),
+            keys.join(","),
         );
     }
     attributes.insert(
@@ -379,83 +509,144 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
     let mut ir = CadIr::decoded(SourceMeta::classified(layers, attributes));
 
     let mut unknowns = Vec::new();
-    let mut source = None;
-    for body in [&base, &deltas].into_iter().flatten() {
-        ctx.charge_entities(1, "admit Solid Edge Parasolid streams")?;
-        let id = UnknownId::compose(
-            &cadmpeg_ir::identity_namespace!("solidedge", "file", "parasolid-stream"),
-            body.directory_id,
-        );
-        if source.is_none() {
-            source = Some(
-                UnknownId::mint(
-                    ctx.copy_retained_text(id.as_str(), "retain Solid Edge source identity")?,
-                )
-                .map_err(CodecError::malformed)?,
+    let mut sources = Vec::new();
+    for group in &groups {
+        let mut source = None;
+        for body in group.streams() {
+            ctx.charge_entities(1, "admit Solid Edge Parasolid streams")?;
+            let id = UnknownId::compose(
+                &cadmpeg_ir::identity_namespace!("solidedge", "file", "parasolid-stream"),
+                body.directory_id,
             );
+            if source.is_none() {
+                source = Some(
+                    UnknownId::mint(
+                        ctx.copy_retained_text(id.as_str(), "retain Solid Edge source identity")?,
+                    )
+                    .map_err(CodecError::malformed)?,
+                );
+            }
+            let bytes =
+                ctx.copy_retained(body.view.window(), "retain Solid Edge Parasolid stream")?;
+            ctx.push_vec(
+                &mut unknowns,
+                UnknownRecord::retained(id, u64_from_index(body.view.start()), bytes, Vec::new()),
+                "collect Solid Edge retained streams",
+            )?;
         }
-        let bytes = ctx.copy_retained(body.view.window(), "retain Solid Edge Parasolid stream")?;
-        ctx.push_vec(
-            &mut unknowns,
-            UnknownRecord::retained(id, u64_from_index(body.view.start()), bytes, Vec::new()),
-            "collect Solid Edge retained streams",
-        )?;
+        ctx.push_vec(&mut sources, source, "collect Solid Edge group sources")?;
     }
 
-    let decodable = base.as_ref().filter(|body| body.decodable()).zip(source);
     let mut annotations = cadmpeg_ir::Annotations::default();
-    let mut geometry_transferred = false;
-    if let (false, Some((base, source))) = (ctx.container_only(), decodable) {
-        let mut streams: Vec<&[u8]> = ctx.collection_vec(2, "pair Solid Edge streams")?;
-        streams.push(base.binary());
-        if let Some(deltas) = deltas.as_ref().filter(|body| body.decodable()) {
-            streams.push(deltas.binary());
+    let mut decoded_groups = 0_usize;
+    let mut admitted = 0_u64;
+    let mut face_colors = 0_usize;
+    if !ctx.container_only() {
+        for (group, source) in groups.iter().zip(&sources) {
+            let (true, Some(source)) = (group.base.decodable(), source.as_ref()) else {
+                continue;
+            };
+            let mut streams: Vec<&[u8]> = ctx.collection_vec(2, "pair Solid Edge streams")?;
+            streams.push(group.base.binary());
+            if let Some(deltas) = group.deltas.as_ref().filter(|body| body.decodable()) {
+                streams.push(deltas.binary());
+            }
+            let first = decoded_groups == 0;
+            let origin = if first {
+                cadmpeg_ir::stream_name!("solidedge:parasolid")
+            } else {
+                cadmpeg_ir::StreamName::try_from(ctx.format_retained(
+                    format_args!("solidedge:parasolid:{}", group.key.to_ascii_lowercase()),
+                    "retain Solid Edge group stream name",
+                )?)
+                .map_err(CodecError::malformed)?
+            };
+            let mut scratch = cadmpeg_ir::document::Model::default();
+            let target = if first { &mut ir.model } else { &mut scratch };
+            let mut hosted = decode_hosted_brep(ctx, target, &streams, &origin, source)?;
+            ctx.admit_entities(hosted.entities, &mut admitted, "admit Solid Edge entities")?;
+            face_colors += hosted.face_color_records;
+            if first {
+                annotations = hosted.annotations;
+            } else {
+                let (scope, _reservation) = ctx.format_scoped(
+                    format_args!("group-{}", group.key.to_ascii_lowercase()),
+                    "retain Solid Edge group scope",
+                )?;
+                let mut rewriter = GroupScope { scope: &scope, ctx };
+                ir.model
+                    .extend_rewritten(ctx, scratch, &mut rewriter, "merge Solid Edge body group")
+                    .map_err(CodecError::from)?;
+                if let Err(collision) = hosted.annotations.map_ids(
+                    ctx,
+                    |id| rescope(ctx, id, &scope),
+                    "rescope Solid Edge annotations",
+                )? {
+                    return Err(collision.into());
+                }
+                if let Err(collision) =
+                    annotations.append(ctx, hosted.annotations, "merge Solid Edge annotations")?
+                {
+                    return Err(collision.into());
+                }
+                for record in &mut hosted.unknowns {
+                    let id = rescope(ctx, record.id().as_str(), &scope)?;
+                    record.set_id(UnknownId::mint(id).map_err(CodecError::malformed)?);
+                    for link in record.links_mut() {
+                        *link = rescope(ctx, link, &scope)?;
+                    }
+                }
+            }
+            ctx.extend_vec(&mut losses, hosted.losses, "collect Solid Edge losses")?;
+            ctx.extend_vec(
+                &mut unknowns,
+                hosted.unknowns,
+                "collect Solid Edge unknowns",
+            )?;
+            let note = ctx.format_retained(
+                format_args!(
+                    "body group {}: {} entities decoded{}",
+                    group.key,
+                    hosted.entities,
+                    if first {
+                        ""
+                    } else {
+                        "; identities carry the group scope"
+                    }
+                ),
+                "retain Solid Edge group note",
+            )?;
+            ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
+            decoded_groups += 1;
         }
-        let hosted = decode_hosted_brep(
-            ctx,
-            &mut ir,
-            &streams,
-            &cadmpeg_ir::stream_name!("solidedge:parasolid"),
-            &source,
-        )?;
-        let mut admitted = 0_u64;
-        ctx.admit_entities(hosted.entities, &mut admitted, "admit Solid Edge entities")?;
-        ctx.extend_vec(&mut losses, hosted.losses, "collect Solid Edge losses")?;
-        ctx.extend_vec(
-            &mut unknowns,
-            hosted.unknowns,
-            "collect Solid Edge unknowns",
-        )?;
-        if hosted.face_color_records > 0 {
+        if face_colors > 0 {
             let message = ctx.format_retained(
                 format_args!(
-                    "{} face color record(s) in the Parasolid streams are not transferred",
-                    hosted.face_color_records
+                    "{face_colors} face color record(s) in the Parasolid streams are not \
+                     transferred"
                 ),
                 "retain Solid Edge face color loss",
             )?;
-            ctx.push_vec(
+            push_loss(
+                ctx,
                 &mut losses,
-                SolidEdgeLossCode::AppearanceFaceColorUntransferred.note(message),
-                "collect Solid Edge losses",
+                SolidEdgeLossCode::AppearanceFaceColorUntransferred,
+                message,
             )?;
         }
-        annotations = hosted.annotations;
-        geometry_transferred = !(ir.model.surfaces.is_empty()
-            && ir.model.points.is_empty()
-            && ir.model.faces.is_empty());
     }
+    let geometry_transferred =
+        !(ir.model.surfaces.is_empty() && ir.model.points.is_empty() && ir.model.faces.is_empty());
 
     let transfer = if ctx.container_only() {
         cadmpeg_ir::report::decode::DecodeTransfer::ContainerOnly {}
     } else {
         if !geometry_transferred {
-            ctx.push_vec(
+            push_loss(
+                ctx,
                 &mut losses,
-                SolidEdgeLossCode::GeometryNotTransferred.note(
-                    "no B-rep geometry was transferred; the other losses of this report state why",
-                ),
-                "collect Solid Edge losses",
+                SolidEdgeLossCode::GeometryNotTransferred,
+                "no B-rep geometry was transferred; the other losses of this report state why",
             )?;
         }
         cadmpeg_ir::report::decode::DecodeTransfer::full(geometry_transferred)

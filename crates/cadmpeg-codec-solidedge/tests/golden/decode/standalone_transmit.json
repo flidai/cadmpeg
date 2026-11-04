@@ -330,6 +330,7 @@
     },
     "source": {
       "attributes": {
+        "parasolid_body_groups": "BODY",
         "parasolid_description": "TRANSMIT FILE created by test",
         "parasolid_schema": "SCH_3201255_32001",
         "parasolid_stream_count": "1",
@@ -403,7 +404,8 @@
       }
     ],
     "notes": [
-      "PARASOLID/Body.X_B: transmit stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE created by test\", binary schema SCH_3201255_32001"
+      "PARASOLID/Body.X_B: transmit stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE created by test\", binary schema SCH_3201255_32001",
+      "body group BODY: 24 entities decoded"
     ],
     "transfer": {
       "geometry_transferred": true,

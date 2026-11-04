@@ -18,13 +18,13 @@ This document uses ASD-STE100 Simplified Technical English. Record names, field 
 
 ## 1. Container
 
-### SE-01. Additional body groups
+### SE-01. Roles of the body groups
 
-**Question.** Does a document hold more than one body group, and what does each group hold?
+**Question.** What does each body group of a document hold, and is any group a flat pattern, a construction body, or a configuration?
 
-**Known.** `solidedge.md` §2.3 "The decoder reads one body group" gives the selection. The decoder reads the first group that has a base state. It reports every other group as not transferred. Observation: about 40 parts name their pair `STREAM<n>` with `<n>` other than 0, and about 8 use the spelling `Stream<n>`. The number of documents with two body groups is not known.
+**Known.** `solidedge.md` §2.3 "The decoder reads every body group that has a base state." gives the selection. The decoder transfers each group as its own body set and does not rank them. Observation: 124 documents have more than one body group, namely 68 of 208 `.psm` files, 52 `.par` files, and 4 `.asm` files. Sheet-metal parts can store a flat pattern apart from the folded body. The decoder does not detect that case. About 40 parts name their group `STREAM<n>` with `<n>` other than 0, and about 8 use the spelling `Stream<n>`.
 
-**Need.** We must know whether a second group is a second body, a configuration, or a construction body. We must know this to transfer the right bodies. The entity identities that the shared decoder makes come from record numbers of one stream. Two groups in one model need a rescoping of those identities first.
+**Need.** We must know which group is the design body and which is a flat pattern. We must know this to export one correct solid and to label the other groups.
 
 ### SE-02. Role of the deltas stream
 
@@ -62,17 +62,17 @@ This document uses ASD-STE100 Simplified Technical English. Record names, field 
 
 **Question.** What do `ASSEMBLYMODEL.P_B` and `ASSEMBLYMODEL.D_B` hold, and do they follow the grammar of a part body?
 
-**Known.** `solidedge.md` §2.3 "The decoder reads one body group" applies to them as to any named group. Observation: a few `.asm` files hold these streams. The rule has no verification on a real document.
+**Known.** `solidedge.md` §2.3 "The decoder reads every body group that has a base state." applies to them as to any named group. Observation: a few `.asm` files hold these streams. The rule has no verification on a real document.
 
 **Need.** We must know if the body is an assembly-level body or a merged copy of the components. We must know this to avoid a duplicate model in a scene.
 
 ### SE-07. Directory names that the reader refuses
 
-**Question.** Which Compound Files with the CFB signature fail the directory read after the change that accepts `:`, `!`, and `\`?
+**Question.** Which Compound Files with the CFB signature fail the directory read after the change that accepts `:`, `!`, and `\`, and which check fails?
 
-**Known.** `solidedge.md` §2.1 "The reader accepts" gives the rule. The reader refuses `/` only. Observation: 31 files (27 `.par`, 2 `.psm`, 2 `.asm`) failed the directory read before the change. Their directories hold storages such as `S:Master`, `S:FamilyOfParts`, and `S:JSite`. The change is not tested on those files.
+**Known.** `solidedge.md` §2.1 "The reader accepts" gives the rule. The reader refuses `/` only. Observation: 31 files (27 `.par`, 2 `.psm`, 2 `.asm`) failed the directory read before the change. Their directories hold storages such as `S:Master`, `S:FamilyOfParts`, and `S:JSite`. `solidedge.md` §4 "A Compound File whose directory cannot be listed" gives the typed result for a file that still fails. The loss names the check, for example a chain loop or an out-of-range sector.
 
-**Need.** We must know if the change reads all 31 files. A name with `/`, or another defect, would still fail.
+**Need.** We must know which structural defect each remaining file has. The loss text of a rerun gives it.
 
 ## 2. Versions
 
@@ -143,3 +143,40 @@ This document uses ASD-STE100 Simplified Technical English. Record names, field 
 **Known.** `solidedge.md` §3.3 "The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves" gives the transfer. The decoder transfers no color. It reports each face-color record that the shared Parasolid decoder finds.
 
 **Need.** We must know where the attributes are stored. We must know this to transfer appearance.
+
+## 5. Decoder behavior on real documents
+
+### SE-16. Face-count deficit against customer STEP exports
+
+**Question.** Why does the decoder emit fewer faces than the customer STEP export for some documents?
+
+**Known.** `solidedge.md` §3.3 "The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves" gives the transfer. Observation: of 152 comparable pairs, faces are equal in 88 and lower in 59. Edges are close, with a median edge ratio of 1.016. The loss `sldprt/geometry.face-support-surface-untyped` occurs in 287 converted files, but that loss does not drop a face: the face is emitted with an unknown-geometry surface. The decoder drops a face when none of its loops is kept, and it keeps a loop only when every edge of its ring is emitted. It dropped an edge silently when an endpoint vertex did not resolve and the carrier was not a circle. A ring edge on a closed ellipse or a closed B-spline now takes a seam vertex, as a circle did. The loss `sldprt/topology.boundary-unresolved` counts the edges, loops, and faces that are still dropped. Only Solid Edge documents report it.
+
+**Need.** We must know which edges stay unresolved on real documents. The counts of the new loss give the answer, and they decide whether another carrier type needs a ring rule.
+
+### SE-17. Check failures on converted output
+
+**Question.** Why do 50 converted documents fail the model check?
+
+**Known.** `solidedge.md` §3.3 "The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves" gives the transfer. Observation: 27 failures are `geometric_consistency` and 23 are `parameter_domain`. They co-occur with the loss `sldprt/topology.pcurve-carrier-off-surface`, which states that a NURBS edge carrier has vertex ranges off its bound surface.
+
+**Need.** We must know if the defect is in the source geometry or in the decoder. We must know this before we trust those documents.
+
+**Note.** The cause is not investigated. The two failure classes and the loss co-occur, so one defect is likely.
+
+### SE-18. Work budget of the surface solvers
+
+**Question.** How much solver work do the global NURBS inversion and the chord certification need on real surfaces?
+
+**Known.** `solidedge.md` §3.3 "The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves" gives the transfer. Observation: 181 documents ended with a resource refusal: 110 in the geometry evaluation work slice and 71 in the certification of a NURBS chord. The local slice was a fixed 1,000,000 units, and the certification charged an up-front estimate to the session. The local slice now grows with the number of spans of the surface, from 1,000,000 up to 8,000,000 units. A call never asks for more than the session has left. A call that the session cannot pay for, or that runs out of its slice, is withheld with the loss `sldprt/geometry.solver-work-withheld`, where it fused the decode before. After four calls that run out of work, the decode withholds the rest. The factor of 1,024 units per span is an assumption.
+
+**Need.** We must know if the new slice and the limit of four calls suit real surfaces. A rerun shows how many documents still report the loss and what that costs in time.
+
+### SE-19. Decode timeout
+
+**Question.** Which input makes a decode or a check exceed 60 seconds?
+
+**Known.** `solidedge.md` §3.3 "The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves" gives the transfer. Observation: one `.par` file of 1 MB to 16 MB timed out. A synthetic body of 1.3 MB with 1,500 triangles decodes in about 0.1 s in a release build, so the record scan is not quadratic in the record count. The surface solvers are the only work that the session budget bounds loosely, and they now stop after four exhausted calls.
+
+**Need.** We must know the input structure that causes the timeout. Without the file, the change is a bound and not a fix.
+

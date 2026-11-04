@@ -96,7 +96,7 @@ pub(crate) fn classify_layers(
         } else if layer.dialect() == &SOLIDEDGE_UNKNOWN {
             let message = ctx.format_retained(
                 format_args!(
-                    "the Compound File has no PARASOLID storage, so no declared identity was \
+                    "the Compound File has no readable PARASOLID storage, so no declared identity was \
                      verified. The directory is reported on the `{}` residual row and no \
                      geometry is read.",
                     layer.dialect()

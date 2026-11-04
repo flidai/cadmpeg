@@ -249,11 +249,11 @@ fn a_partition_without_a_transmit_header_reports_no_model() {
 }
 
 #[test]
-fn other_groups_and_other_entries_are_listed_and_not_decoded() {
+fn a_group_without_a_base_state_and_other_entries_are_listed_and_not_decoded() {
     let mut streams = vec![
         stream("STREAM0.P_B", &partition_stream(&triangle_body())),
         stream("STREAM0.D_B", &deltas_stream(&deltas_body())),
-        stream("STREAM1.P_B", &partition_stream(&triangle_body())),
+        stream("STREAM1.D_B", &deltas_stream(&deltas_body())),
         stream("Extra", b"payload"),
     ];
     streams.reverse();
@@ -401,25 +401,76 @@ fn any_stream_index_and_case_names_the_pair() {
 }
 
 #[test]
-fn the_lowest_numbered_group_is_the_one_decoded() {
+fn every_body_group_decodes_with_its_own_identity_scope() {
     let result = decode(&pair_without(vec![
         stream("STREAM9.P_B", &partition_stream(&triangle_body())),
         stream("STREAM2.P_B", &partition_stream(&triangle_body())),
         stream("STREAM2.D_B", &deltas_stream(&deltas_body())),
     ]));
-    assert_one_face(&result);
+    assert!(result.report().geometry_transferred());
+    let model = &result.ir().model;
+    assert_eq!((model.bodies.len(), model.faces.len()), (2, 2));
     let source = result.ir().source.as_ref().unwrap();
-    assert_eq!(
-        source
-            .attributes
-            .get("parasolid_stream_group")
-            .map(String::as_str),
-        Some("STREAM2")
-    );
-    assert!(has_loss(
+    let attribute = |name: &str| source.attributes.get(name).map(String::as_str);
+    assert_eq!(attribute("parasolid_stream_group"), Some("STREAM2"));
+    assert_eq!(attribute("parasolid_body_groups"), Some("STREAM2,STREAM9"));
+    assert!(!has_loss(
         &result,
         SolidEdgeLossCode::ContainerBodyGroupUntransferred
     ));
+    let ids: Vec<_> = model.faces.iter().map(|face| face.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["sldprt:brep:face#10", "sldprt:brep:group-stream9/face#10"]
+    );
+    let report = cadmpeg_ir::validate_neutral(result.ir(), Vec::new()).unwrap();
+    assert!(report.is_ok(), "{report:?}");
+    assert!(result
+        .report()
+        .notes
+        .iter()
+        .any(|note| note.contains("STREAM9") && note.contains("group scope")));
+}
+
+#[test]
+fn a_second_group_keeps_its_annotations_and_retained_streams() {
+    let result = decode(&pair_without(vec![
+        stream("STREAM0.P_B", &partition_stream(&triangle_body())),
+        stream("STREAM1.P_B", &partition_stream(&triangle_body())),
+    ]));
+    let editable = cadmpeg_test_support::EditableDecodeResult::from(result);
+    let records = editable.source_fidelity().retained_records();
+    assert_eq!(records.len(), 2);
+    let provenance = &editable.source_fidelity().annotations.provenance;
+    assert!(provenance.contains_key("sldprt:brep:face#10"));
+    assert!(provenance.contains_key("sldprt:brep:group-stream1/face#10"));
+}
+
+#[test]
+fn a_directory_the_reader_cannot_list_is_a_typed_result_that_names_the_check() {
+    let bytes = document(vec![
+        stream("A/B", b"data"),
+        storage(
+            "PARASOLID",
+            vec![stream("STREAM0.P_B", &partition_stream(&triangle_body()))],
+        ),
+    ]);
+    let result = decode(&bytes);
+    assert!(!result.report().geometry_transferred());
+    assert!(has_loss(&result, SolidEdgeLossCode::ContainerUnreadable));
+    let loss = result
+        .report()
+        .losses
+        .iter()
+        .find(|loss| loss.code == SolidEdgeLossCode::ContainerUnreadable.kind())
+        .unwrap();
+    assert!(loss.message.contains("`/`"), "{}", loss.message);
+    let found = with_decode_context(&bytes, |ctx| {
+        SolidEdgeCodec
+            .detect(ctx, cadmpeg_core::decode::View::over_retained(&bytes))
+            .unwrap()
+    });
+    assert_eq!(found, Confidence::Low);
 }
 
 #[test]

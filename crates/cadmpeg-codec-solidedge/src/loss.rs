@@ -32,6 +32,8 @@ const NAMESPACE: LossNamespace<'static> = match LossNamespace::new("solidedge") 
 pub(crate) enum SolidEdgeLossCode {
     /// The Compound File has no `PARASOLID` storage.
     ContainerNoParasolidStorage,
+    /// The Compound File directory cannot be read.
+    ContainerUnreadable,
     /// The Compound File is a family-of-parts master, which holds no model.
     ContainerNotModelDocument,
     /// The `PARASOLID` storage holds no stream that carries a body.
@@ -65,6 +67,7 @@ impl SolidEdgeLossCode {
     #[cfg(test)]
     const ALL: &'static [SolidEdgeLossCode] = &[
         Self::ContainerNoParasolidStorage,
+        Self::ContainerUnreadable,
         Self::ContainerNotModelDocument,
         Self::ContainerNoBodyStream,
         Self::ContainerNoPartitionStream,
@@ -85,6 +88,7 @@ impl SolidEdgeLossCode {
     const fn code(self) -> &'static str {
         match self {
             Self::ContainerNoParasolidStorage => "container.no-parasolid-storage",
+            Self::ContainerUnreadable => "container.unreadable",
             Self::ContainerNotModelDocument => "container.not-a-model-document",
             Self::ContainerNoBodyStream => "container.no-body-stream",
             Self::ContainerNoPartitionStream => "container.no-partition-stream",
@@ -107,6 +111,7 @@ impl SolidEdgeLossCode {
         match self {
             Self::GeometryNotTransferred => Severity::Blocking,
             Self::ContainerNoParasolidStorage
+            | Self::ContainerUnreadable
             | Self::ContainerNotModelDocument
             | Self::ContainerNoBodyStream
             | Self::ContainerNoPartitionStream
@@ -125,6 +130,7 @@ impl SolidEdgeLossCode {
     const fn shared_taxonomy(self) -> LossTaxonomy {
         match self {
             Self::ContainerNoParasolidStorage
+            | Self::ContainerUnreadable
             | Self::ContainerNotModelDocument
             | Self::ContainerNoBodyStream
             | Self::ContainerNoPartitionStream => LossTaxonomy::MissingGeometryStream,
@@ -173,6 +179,7 @@ mod tests {
             codes,
             [
                 "container.no-parasolid-storage",
+                "container.unreadable",
                 "container.not-a-model-document",
                 "container.no-body-stream",
                 "container.no-partition-stream",

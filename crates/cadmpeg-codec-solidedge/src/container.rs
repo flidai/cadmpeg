@@ -362,18 +362,33 @@ fn kind_of<'p>(paths: impl Iterator<Item = &'p str>) -> DocumentKind {
     }
 }
 
-/// Whether a detection prefix is a Compound File with a Solid Edge marker.
+/// What a detection prefix shows of a Solid Edge document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Evidence {
+    /// A Compound File with a Solid Edge root marker.
+    Marker,
+    /// A Compound File whose directory is structurally invalid. It can be a
+    /// damaged Solid Edge document, so the decode reports why it cannot read it.
+    Unreadable,
+    /// No Solid Edge evidence.
+    None,
+}
+
+/// Classify a detection prefix.
 pub(crate) fn looks_like_solidedge(
     ctx: &DecodeContext<'_>,
     prefix: &[u8],
-) -> Result<bool, CodecError> {
+) -> Result<Evidence, CodecError> {
     if !prefix.starts_with(&COMPOUND_FILE_MAGIC) {
-        return Ok(false);
+        return Ok(Evidence::None);
     }
     let (probe, _storage) =
         CompoundPrefixProbe::inspect_with_context(ctx, View::over_retained(prefix))?;
+    if matches!(probe, CompoundPrefixProbe::Malformed(_)) {
+        return Ok(Evidence::Unreadable);
+    }
     let Some(paths) = probe.paths() else {
-        return Ok(false);
+        return Ok(Evidence::None);
     };
     for path in paths {
         ctx.charge_work(
@@ -381,10 +396,10 @@ pub(crate) fn looks_like_solidedge(
             "compare Solid Edge directory evidence",
         )?;
         if is_marker_path(path) {
-            return Ok(true);
+            return Ok(Evidence::Marker);
         }
     }
-    Ok(false)
+    Ok(Evidence::None)
 }
 
 /// Read the directory of a Compound File and classify the `PARASOLID` entries.

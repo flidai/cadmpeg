@@ -107,6 +107,24 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
             )]),
         ),
         (
+            "unreadable_directory".to_string(),
+            document(vec![
+                stream("A/B", b"data"),
+                storage("PARASOLID", vec![stream("STREAM0.P_B", &partition)]),
+            ]),
+        ),
+        (
+            "two_body_groups".to_string(),
+            document(vec![storage(
+                "PARASOLID",
+                vec![
+                    stream("STREAM0.P_B", &partition),
+                    stream("STREAM1.P_B", &partition),
+                    stream("STREAM1.D_B", &deltas_stream(&deltas_body())),
+                ],
+            )]),
+        ),
+        (
             "family_master".to_string(),
             document(vec![
                 stream("FamilyInfo", b"info"),

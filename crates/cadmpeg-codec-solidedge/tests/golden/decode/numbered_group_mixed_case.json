@@ -333,6 +333,7 @@
     },
     "source": {
       "attributes": {
+        "parasolid_body_groups": "STREAM7",
         "parasolid_description": "TRANSMIT FILE (partition) created by test",
         "parasolid_schema": "SCH_3201255_32001",
         "parasolid_stream_count": "2",
@@ -438,7 +439,8 @@
     ],
     "notes": [
       "PARASOLID/Stream7.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
-      "PARASOLID/Stream7.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001"
+      "PARASOLID/Stream7.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001",
+      "body group STREAM7: 24 entities decoded"
     ],
     "transfer": {
       "geometry_transferred": true,

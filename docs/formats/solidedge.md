@@ -48,7 +48,9 @@ The streams that share one stem form a body group. In a group, a partition strea
 
 A standalone transmit stream is a base state with no overlay. A group with a partition stream and a standalone stream takes the partition stream as the base state.
 
-The decoder reads one body group: the first group that has a base state. Numbered groups come before named groups. Numbered groups compare by index and named groups compare by stem. Every other body group is listed in the container summary and is not transferred. A group with a deltas stream and no base state yields no body.
+The decoder reads every body group that has a base state. Numbered groups come before named groups. Numbered groups compare by index and named groups compare by stem. A group with a deltas stream and no base state yields no body.
+
+Each group yields its own bodies. No group merges into another, and the decoder does not decide which group is the design body. The first group keeps the identities of the shared Parasolid decoder, `sldprt:brep:<kind>#<key>`. Every later group carries its scope in the third namespace component: `sldprt:brep:group-<stem>/<kind>#<key>`, with the stem in lower case. The note of the decode names each group.
 
 ---
 
@@ -104,9 +106,12 @@ A document without a body is a typed refusal and not an error:
 | No `PARASOLID` storage, other markers                                     | `container.no-parasolid-storage`       |
 | `PARASOLID` storage with no body stream, for example sketch streams only  | `container.no-body-stream`             |
 | `PARASOLID` storage with a deltas stream and no base state                | `container.no-partition-stream`        |
+| Directory that the reader cannot list                                     | `container.unreadable`                 |
+
+A Compound File whose directory cannot be listed is a typed result. The loss `container.unreadable` names the failing structural check. Detection reports low confidence for such a file, because the root members are not readable.
 
 A family-of-parts master is a document with the root member `FamilyInfo` and without a `PARASOLID` storage. It takes the loss `container.not-a-model-document`.
 
 A `PARASOLID` storage with only sketch streams, or with no stream, takes the loss `container.no-body-stream`.
 
-Each sketch stream, each body group that is not decoded, and each other entry of the storage adds a warning-level loss. Each stream with a readable schema token adds one `parasolid:` layer, tagged by the stream path. The decoder takes the token from the text header first and from the binary header second. No Solid Edge schema grammar is verified separately, so every such layer is the residual `parasolid:unknown` row. The decode runs with the residual layer and adds the loss `source.kernel-dialect-unverified`.
+Each sketch stream, each group without a base state, and each other entry of the storage adds a warning-level loss. Each stream with a readable schema token adds one `parasolid:` layer, tagged by the stream path. The decoder takes the token from the text header first and from the binary header second. No Solid Edge schema grammar is verified separately, so every such layer is the residual `parasolid:unknown` row. The decode runs with the residual layer and adds the loss `source.kernel-dialect-unverified`.

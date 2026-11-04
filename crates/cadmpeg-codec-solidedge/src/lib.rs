@@ -6,7 +6,7 @@
 //! Parasolid partition stream and a deltas stream in the `PARASOLID` storage,
 //! for example `STREAM0.P_B` and `STREAM0.D_B`, or a standalone transmit stream
 //! `<name>.X_B`. Each stream starts with the text transmit header of a
-//! Parasolid transmit file. [`SolidEdgeCodec`] locates the first body group by
+//! Parasolid transmit file. [`SolidEdgeCodec`] locates every body group by
 //! directory path, removes the text header, hands the binary part to the
 //! Parasolid B-rep decoder shared with the `SolidWorks` codec, and writes the
 //! bodies, faces, edges, vertices, and carriers into
@@ -40,7 +40,8 @@
 //!
 //! Only the B-rep transfers. Feature history, document properties, materials,
 //! and assembly structure are not read; the report does not itemize them. A
-//! sketch stream and a second body group each get a typed loss. A document
+//! sketch stream gets a typed loss. A Compound File whose directory cannot be
+//! read is a typed result that names the failing check. A document
 //! without a `PARASOLID` storage, a family-of-parts master, a document whose
 //! storage holds only sketch streams, or one whose body decodes no geometry
 //! yields a container-only result with a machine-readable loss and no model. Parasolid lengths are metres; decoded
@@ -78,11 +79,11 @@ impl CodecBackend for SolidEdgeCodec {
             cadmpeg_core::decode::u64_from_index(prefix.len()),
             "detect input",
         )?;
-        if container::looks_like_solidedge(ctx, prefix)? {
-            Ok(Confidence::High)
-        } else {
-            Ok(Confidence::No)
-        }
+        Ok(match container::looks_like_solidedge(ctx, prefix)? {
+            container::Evidence::Marker => Confidence::High,
+            container::Evidence::Unreadable => Confidence::Low,
+            container::Evidence::None => Confidence::No,
+        })
     }
 
     fn inspect_impl(

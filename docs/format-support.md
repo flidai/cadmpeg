@@ -423,7 +423,7 @@ See the [format specification](formats/siemens_nx.md), [coverage contract](forma
 
 <!-- /generated: dialects solidedge -->
 
-The scored envelope is the first Parasolid body group of the `PARASOLID` storage of a Compound File: a `<stem>.P_B` and `<stem>.D_B` pair or a standalone `<stem>.X_B` stream. Sketch streams, other body groups, feature history, properties, and assembly structure are outside it.
+The scored envelope is every Parasolid body group of the `PARASOLID` storage of a Compound File: a `<stem>.P_B` and `<stem>.D_B` pair or a standalone `<stem>.X_B` stream. Sketch streams, feature history, properties, and assembly structure are outside it.
 
 ### Read profile
 

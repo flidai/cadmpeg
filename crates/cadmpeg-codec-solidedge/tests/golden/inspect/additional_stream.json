@@ -76,6 +76,15 @@
           },
           "dialect": "parasolid:unknown",
           "instance": "PARASOLID/STREAM0.D_B"
+        },
+        {
+          "admission": "residual",
+          "declared": {
+            "carrier": "PARASOLID/STREAM1.P_B",
+            "schema": "SCH_3201255_32001"
+          },
+          "dialect": "parasolid:unknown",
+          "instance": "PARASOLID/STREAM1.P_B"
         }
       ],
       "primary": {
@@ -90,12 +99,12 @@
   "losses": [
     {
       "code": {
-        "code": "container.body-group-untransferred",
-        "kind": "object_records_untransferred",
+        "code": "container.deltas-missing",
+        "kind": "decode_diagnostic",
         "namespace": "solidedge",
         "scope": "namespaced"
       },
-      "message": "the body group STREAM1 is not the group that decode reads; its streams are listed in the container summary and not transferred",
+      "message": "the body group STREAM1 has a partition stream and no deltas stream; the partition stream is decoded alone",
       "severity": "warning"
     },
     {
@@ -119,10 +128,22 @@
       },
       "message": "The Parasolid stream at PARASOLID/STREAM0.D_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
       "severity": "warning"
+    },
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at PARASOLID/STREAM1.P_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
     }
   ],
   "notes": [
     "PARASOLID/STREAM0.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
-    "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001"
+    "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001",
+    "PARASOLID/STREAM1.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001"
   ]
 }
