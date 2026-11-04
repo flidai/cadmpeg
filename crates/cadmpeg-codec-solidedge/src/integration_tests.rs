@@ -401,75 +401,49 @@ fn any_stream_index_and_case_names_the_pair() {
 }
 
 #[test]
-fn every_body_group_decodes_with_its_own_identity_scope() {
+fn the_first_body_group_is_the_design_body_and_later_groups_stay_native() {
     let result = decode(&pair_without(vec![
         stream("STREAM9.P_B", &partition_stream(&triangle_body())),
         stream("STREAM2.P_B", &partition_stream(&triangle_body())),
         stream("STREAM2.D_B", &deltas_stream(&deltas_body())),
+        stream("STREAM0FLAT0.P_B", &partition_stream(&triangle_body())),
     ]));
     assert!(result.report().geometry_transferred());
     let model = &result.ir().model;
-    assert_eq!((model.bodies.len(), model.faces.len()), (2, 2));
+    assert_eq!((model.bodies.len(), model.faces.len()), (1, 1));
+    assert!(model.bodies.iter().all(|body| body.visible.is_none()));
     let source = result.ir().source.as_ref().unwrap();
     let attribute = |name: &str| source.attributes.get(name).map(String::as_str);
     assert_eq!(attribute("parasolid_stream_group"), Some("STREAM2"));
-    assert_eq!(attribute("parasolid_body_groups"), Some("STREAM2,STREAM9"));
-    assert!(!has_loss(
-        &result,
-        SolidEdgeLossCode::ContainerBodyGroupUntransferred
-    ));
-    // The lowest numbered group is the design body. The other group stays in
-    // the model and is hidden, so an export shows one body.
-    assert!(has_loss(
-        &result,
-        SolidEdgeLossCode::ContainerBodyGroupHidden
-    ));
-    let visible: Vec<_> = model.bodies.iter().map(|body| body.visible).collect();
-    assert_eq!(visible, [None, Some(false)]);
-    let ids: Vec<_> = model.faces.iter().map(|face| face.id.as_str()).collect();
     assert_eq!(
-        ids,
-        ["sldprt:brep:face#10", "sldprt:brep:group-stream9/face#10"]
+        attribute("parasolid_body_groups"),
+        Some("STREAM2,STREAM9,STREAM0FLAT0")
     );
+    let secondary = result
+        .report()
+        .losses
+        .iter()
+        .filter(|loss| loss.code == SolidEdgeLossCode::ContainerBodyGroupUntransferred.kind())
+        .count();
+    assert_eq!(secondary, 2);
+    assert_eq!(model.faces[0].id.as_str(), "sldprt:brep:face#10");
     let report = cadmpeg_ir::validate_neutral(result.ir(), Vec::new()).unwrap();
     assert!(report.is_ok(), "{report:?}");
-    assert!(result
-        .report()
-        .notes
-        .iter()
-        .any(|note| note.contains("STREAM9") && note.contains("group scope")));
-}
-
-#[test]
-fn a_second_group_keeps_its_annotations_and_retained_streams() {
-    let result = decode(&pair_without(vec![
-        stream("STREAM0.P_B", &partition_stream(&triangle_body())),
-        stream("STREAM1.P_B", &partition_stream(&triangle_body())),
-    ]));
+    // Every stream of every group stays retained byte-exact.
     let editable = cadmpeg_test_support::EditableDecodeResult::from(result);
-    let records = editable.source_fidelity().retained_records();
-    assert_eq!(records.len(), 2);
-    let provenance = &editable.source_fidelity().annotations.provenance;
-    assert!(provenance.contains_key("sldprt:brep:face#10"));
-    assert!(provenance.contains_key("sldprt:brep:group-stream1/face#10"));
+    assert!(editable.source_fidelity().retained_records().len() >= 4);
 }
 
 #[test]
-fn a_single_group_has_no_hidden_body() {
+fn a_single_group_has_no_secondary_group_loss() {
     let result = decode(&pair_without(vec![stream(
         "STREAM0.P_B",
         &partition_stream(&triangle_body()),
     )]));
     assert!(!has_loss(
         &result,
-        SolidEdgeLossCode::ContainerBodyGroupHidden
+        SolidEdgeLossCode::ContainerBodyGroupUntransferred
     ));
-    assert!(result
-        .ir()
-        .model
-        .bodies
-        .iter()
-        .all(|body| body.visible.is_none()));
 }
 
 #[test]

@@ -13,7 +13,7 @@ use cadmpeg_core::decode::{u64_from_index, DecodeContext, View};
 use cadmpeg_core::dialect::DialectLayers;
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::codec::{DecodeBody, Decoded};
-use cadmpeg_ir::document::{CadIr, EntityRewrite, SourceMeta};
+use cadmpeg_ir::document::{CadIr, SourceMeta};
 use cadmpeg_ir::ids::UnknownId;
 use cadmpeg_ir::report::loss::LossNote;
 use cadmpeg_ir::unknown::UnknownRecord;
@@ -414,44 +414,6 @@ pub(crate) fn inspect(
     ))
 }
 
-/// Rescope an identity of the shared B-rep decoder to one body group. The group
-/// scope leads the third namespace component, so that two groups never state
-/// one identity.
-fn rescope(ctx: &DecodeContext<'_>, id: &str, scope: &str) -> Result<String, CodecError> {
-    if !id.starts_with("sldprt:") {
-        return ctx.copy_retained_text(id, "rescope Solid Edge identity");
-    }
-    let mut colons = id.match_indices(':').map(|(index, _)| index);
-    match (colons.next(), colons.next()) {
-        (Some(_), Some(second)) => ctx.format_retained(
-            format_args!("{}{scope}/{}", &id[..=second], &id[second + 1..]),
-            "rescope Solid Edge identity",
-        ),
-        _ => ctx.copy_retained_text(id, "rescope Solid Edge identity"),
-    }
-}
-
-struct GroupScope<'a, 'b> {
-    scope: &'a str,
-    ctx: &'a DecodeContext<'b>,
-}
-
-impl EntityRewrite for GroupScope<'_, '_> {
-    type Error = CodecError;
-
-    fn rewrite<T: cadmpeg_ir::schema::rewrite::typed::RewriteIdentities>(
-        &mut self,
-        entity: T,
-    ) -> Result<T, Self::Error> {
-        cadmpeg_ir::schema::rewrite::identities(
-            self.ctx,
-            "solidedge_group_rescope",
-            entity,
-            |id: &str| rescope(self.ctx, id, self.scope),
-        )
-    }
-}
-
 /// Decode the Parasolid body groups into the neutral B-rep.
 pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded, CodecError> {
     let scan = match scan_or_unreadable(ctx, root)? {
@@ -562,63 +524,38 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             let (true, Some(source)) = (group.base.decodable(), source.as_ref()) else {
                 continue;
             };
+            if decoded_groups > 0 {
+                // The first group is the design body. A later group holds a
+                // flat pattern, reference geometry, or a design region (SE-01),
+                // and an export of it would add bodies that the design does
+                // not have. Its streams stay retained as native records.
+                let message = ctx.format_retained(
+                    format_args!(
+                        "the body group {} is a secondary group; its streams are retained as \
+                         native records and not decoded, because the first group is the design \
+                         body",
+                        group.key
+                    ),
+                    "retain Solid Edge secondary group loss",
+                )?;
+                push_loss(
+                    ctx,
+                    &mut losses,
+                    SolidEdgeLossCode::ContainerBodyGroupUntransferred,
+                    message,
+                )?;
+                continue;
+            }
             let mut streams: Vec<&[u8]> = ctx.collection_vec(2, "pair Solid Edge streams")?;
             streams.push(group.base.binary());
             if let Some(deltas) = group.deltas.as_ref().filter(|body| body.decodable()) {
                 streams.push(deltas.binary());
             }
-            let first = decoded_groups == 0;
-            let origin = if first {
-                cadmpeg_ir::stream_name!("solidedge:parasolid")
-            } else {
-                cadmpeg_ir::StreamName::try_from(ctx.format_retained(
-                    format_args!("solidedge:parasolid:{}", group.key.to_ascii_lowercase()),
-                    "retain Solid Edge group stream name",
-                )?)
-                .map_err(CodecError::malformed)?
-            };
-            let mut scratch = cadmpeg_ir::document::Model::default();
-            let target = if first { &mut ir.model } else { &mut scratch };
-            let mut hosted = decode_hosted_brep(ctx, target, &streams, &origin, source)?;
+            let origin = cadmpeg_ir::stream_name!("solidedge:parasolid");
+            let hosted = decode_hosted_brep(ctx, &mut ir.model, &streams, &origin, source)?;
             ctx.admit_entities(hosted.entities, &mut admitted, "admit Solid Edge entities")?;
             face_colors += hosted.face_color_records;
-            if first {
-                annotations = hosted.annotations;
-            } else {
-                // The first group holds the design body. Later groups can hold
-                // a flat pattern or a configuration (SE-01), so their bodies
-                // stay in the model and a consumer shows only the design body.
-                for body in &mut scratch.bodies {
-                    body.visible = Some(false);
-                }
-                let (scope, _reservation) = ctx.format_scoped(
-                    format_args!("group-{}", group.key.to_ascii_lowercase()),
-                    "retain Solid Edge group scope",
-                )?;
-                let mut rewriter = GroupScope { scope: &scope, ctx };
-                ir.model
-                    .extend_rewritten(ctx, scratch, &mut rewriter, "merge Solid Edge body group")
-                    .map_err(CodecError::from)?;
-                if let Err(collision) = hosted.annotations.map_ids(
-                    ctx,
-                    |id| rescope(ctx, id, &scope),
-                    "rescope Solid Edge annotations",
-                )? {
-                    return Err(collision.into());
-                }
-                if let Err(collision) =
-                    annotations.append(ctx, hosted.annotations, "merge Solid Edge annotations")?
-                {
-                    return Err(collision.into());
-                }
-                for record in &mut hosted.unknowns {
-                    let id = rescope(ctx, record.id().as_str(), &scope)?;
-                    record.set_id(UnknownId::mint(id).map_err(CodecError::malformed)?);
-                    for link in record.links_mut() {
-                        *link = rescope(ctx, link, &scope)?;
-                    }
-                }
-            }
+            annotations = hosted.annotations;
             ctx.extend_vec(&mut losses, hosted.losses, "collect Solid Edge losses")?;
             ctx.extend_vec(
                 &mut unknowns,
@@ -627,33 +564,12 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             )?;
             let note = ctx.format_retained(
                 format_args!(
-                    "body group {}: {} entities decoded{}",
-                    group.key,
-                    hosted.entities,
-                    if first {
-                        ""
-                    } else {
-                        "; identities carry the group scope"
-                    }
+                    "body group {}: {} entities decoded",
+                    group.key, hosted.entities
                 ),
                 "retain Solid Edge group note",
             )?;
             ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
-            if !first {
-                let message = ctx.format_retained(
-                    format_args!(
-                        "the body group {} is a secondary group; its bodies are kept and marked hidden, and the first group is the design body",
-                        group.key
-                    ),
-                    "retain Solid Edge hidden group loss",
-                )?;
-                push_loss(
-                    ctx,
-                    &mut losses,
-                    SolidEdgeLossCode::ContainerBodyGroupHidden,
-                    message,
-                )?;
-            }
             decoded_groups += 1;
         }
         if face_colors > 0 {

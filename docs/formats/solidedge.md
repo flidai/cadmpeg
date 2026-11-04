@@ -52,7 +52,7 @@ A standalone transmit stream is a base state with no overlay. A group with a par
 
 The decoder reads every body group that has a base state. Numbered groups come before named groups. Numbered groups compare by index and named groups compare by stem. A group with a deltas stream and no base state yields no body.
 
-Each group yields its own bodies. No group merges into another. The first group in the order above is the design body. The decoder marks every body of each later group as hidden and adds the warning `container.body-group-hidden` for it. The hidden bodies stay in the model, so a consumer can show them. An export that skips hidden bodies writes the design body only. The choice of the first group is a fallback and not a rule from the file (SE-01). The first group keeps the identities of the shared Parasolid decoder, `sldprt:brep:<kind>#<key>`. Every later group carries its scope in the third namespace component: `sldprt:brep:group-<stem>/<kind>#<key>`, with the stem in lower case. The note of the decode names each group.
+The first group in the order above that has a base state is the design body. The decoder transfers its bodies. It does not transfer the bodies of a later group, and it adds the warning `container.body-group-untransferred` for each later group. The streams of every group stay retained as native records, so no data of a later group is lost. A later group is, for example, a flat pattern (`STREAM<n>FLAT<m>`), reference geometry (`REFERENCE`), or a design region (`DESIGNREGIONS`). An export of such a group would add bodies that the design does not have. The choice of the first group is a fallback and not a rule from the file (SE-01). The identities of the transferred group are the identities of the shared Parasolid decoder, `sldprt:brep:<kind>#<key>`.
 
 ---
 
@@ -110,7 +110,7 @@ A document without a body is a typed refusal and not an error:
 | `PARASOLID` storage with a deltas stream and no base state                | `container.no-partition-stream`        |
 | Directory that the reader cannot list                                     | `container.unreadable`                 |
 | Directory with a tolerated deviation from MS-CFB                          | `container.cfb-tolerated` (warning)    |
-| Secondary body group, bodies kept and hidden                              | `container.body-group-hidden` (warning)|
+| Secondary body group, retained and not decoded                            | `container.body-group-untransferred`   |
 
 A Compound File whose directory cannot be listed is a typed result. The loss `container.unreadable` names the failing structural check. Detection reports low confidence for such a file, because the root members are not readable.
 

@@ -50,8 +50,6 @@ pub(crate) enum SolidEdgeLossCode {
     ContainerSketchUntransferred,
     /// The `PARASOLID` storage holds a second body group that decode does not read.
     ContainerBodyGroupUntransferred,
-    /// The decode keeps the bodies of a secondary body group and marks them hidden.
-    ContainerBodyGroupHidden,
     /// A Parasolid stream has no readable transmit header.
     ParasolidHeaderUnreadable,
     /// The Parasolid streams decoded no surfaces, points, or faces.
@@ -80,7 +78,6 @@ impl SolidEdgeLossCode {
         Self::ContainerStreamUntransferred,
         Self::ContainerSketchUntransferred,
         Self::ContainerBodyGroupUntransferred,
-        Self::ContainerBodyGroupHidden,
         Self::ParasolidHeaderUnreadable,
         Self::GeometryNotTransferred,
         Self::AppearanceFaceColorUntransferred,
@@ -103,7 +100,6 @@ impl SolidEdgeLossCode {
             Self::ContainerStreamUntransferred => "container.stream-untransferred",
             Self::ContainerSketchUntransferred => "container.sketch-untransferred",
             Self::ContainerBodyGroupUntransferred => "container.body-group-untransferred",
-            Self::ContainerBodyGroupHidden => "container.body-group-hidden",
             Self::ParasolidHeaderUnreadable => "parasolid.header-unreadable",
             Self::GeometryNotTransferred => "geometry.not-transferred",
             Self::AppearanceFaceColorUntransferred => "appearance.face-color-untransferred",
@@ -129,7 +125,6 @@ impl SolidEdgeLossCode {
             | Self::ContainerStreamUntransferred
             | Self::ContainerSketchUntransferred
             | Self::ContainerBodyGroupUntransferred
-            | Self::ContainerBodyGroupHidden
             | Self::AppearanceFaceColorUntransferred
             | Self::SourceDialectUnverified
             | Self::KernelDialectUnverified
@@ -146,7 +141,6 @@ impl SolidEdgeLossCode {
             | Self::ContainerNoPartitionStream => LossTaxonomy::MissingGeometryStream,
             Self::ContainerCfbTolerated
             | Self::ContainerDeltasMissing
-            | Self::ContainerBodyGroupHidden
             | Self::DialectLayerCollision => LossTaxonomy::DecodeDiagnostic,
             Self::ContainerStreamUntransferred
             | Self::ContainerSketchUntransferred
@@ -199,7 +193,6 @@ mod tests {
                 "container.stream-untransferred",
                 "container.sketch-untransferred",
                 "container.body-group-untransferred",
-                "container.body-group-hidden",
                 "parasolid.header-unreadable",
                 "geometry.not-transferred",
                 "appearance.face-color-untransferred",
