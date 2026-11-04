@@ -43,7 +43,8 @@ a release. The rounds below it are fork-only.
 
 - `crates/cadmpeg-codec-inventor`, `docs/formats/inventor.md`: color a graphics face that has no
   style of its own from the style collection of its parent group node, and read the 89-byte
-  material-color style such a collection lists (`c/r7-graphics-parent-colour`, to be proposed
+  material-color style such a collection lists. Unresolved face overrides now say "color style"
+  and "face color" rather than "primary color" (`c/r7-graphics-parent-colour`, to be proposed
   upstream).
 
 - `crates/cadmpeg-codec-step` writer: write an apostrophe in text that also holds a comma as the

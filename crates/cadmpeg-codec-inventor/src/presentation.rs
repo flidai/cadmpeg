@@ -411,12 +411,13 @@ fn project_face_bindings(
             material_colors.extend(records_at(&material_styles, token, ordinal).iter().copied());
             lists_unparsed_record |= unparsed_records.contains(&(token, ordinal));
         }
-        // A primary-color style keeps its precedence. A material-color style
-        // colors a collection that lists no primary-color style and no record
-        // that failed to parse, which could be a primary-color style.
+        // A primary-color style keeps its precedence. A record that failed to
+        // parse could be another color style, so only a face's own collection
+        // keeps r7's primary-color binding beside one; any other binding fails
+        // closed.
         let (style_identity, diffuse, schema) =
             match (color_styles.as_slice(), material_colors.as_slice()) {
-                ([style], _) => (
+                ([style], _) if own_style || !lists_unparsed_record => (
                     &style.identity,
                     style.colors[1],
                     "InventorPrimaryColorStyle",
@@ -602,7 +603,10 @@ pub(crate) fn inventory<'a>(
                         );
                     })
                 }
-                GRAPHICS_NODE_TYPE if segment.kind == SegmentKind::PmGraphics && version > 14 => {
+                GRAPHICS_NODE_TYPE
+                    if segment.kind == SegmentKind::PmGraphics
+                        && legacy_block_len(version) == 0 =>
+                {
                     parse_graphics_node(record.payload).map(|value| {
                         push_presentation_record(
                             &mut graphics_nodes,
@@ -614,7 +618,8 @@ pub(crate) fn inventory<'a>(
                     })
                 }
                 GRAPHICS_MATERIAL_COLOR_STYLE_TYPE
-                    if segment.kind == SegmentKind::PmGraphics && version > 14 =>
+                    if segment.kind == SegmentKind::PmGraphics
+                        && legacy_block_len(version) == 0 =>
                 {
                     parse_graphics_material_color_style(record.payload).map(|value| {
                         push_presentation_record(
@@ -2035,8 +2040,8 @@ mod tests {
         bytes
     }
 
-    /// An 89-byte material-color style: state, ambient, emissive, diffuse,
-    /// specular and a fifth vector, shininess and a terminal state.
+    /// An 89-byte material-color style: state, five color vectors of which
+    /// the third is diffuse, shininess and a terminal state.
     fn material_color_fixture(diffuse: [f32; 4]) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend(51_u32.to_le_bytes());
@@ -2468,6 +2473,36 @@ mod tests {
             UnresolvedCause::ColorStyle,
             "unparsed record",
         );
+    }
+
+    #[test]
+    fn a_primary_color_beside_an_unparsed_record_binds_only_an_own_style() {
+        let mut inventory = inherited_color_inventory();
+        inventory.graphics_style_collections = vec![style_collection(12, &[7, 16])];
+        inventory.graphics_material_color_styles.clear();
+        inventory.graphics_primary_color_styles =
+            face_override_inventory(42, true).graphics_primary_color_styles;
+        inventory.issues = vec![RecordIssue {
+            family: RecordIssueFamily::Presentation,
+            segment_token: cadmpeg_ir::identity_key!("graphics").clone(),
+            record_ordinal: 15,
+            detail: "unparsed color style".into(),
+        }];
+
+        let inherited = project_faces(&inventory, &[42]);
+        assert!(inherited.bindings.is_empty());
+        assert!(inherited.unresolved_face_overrides.is_empty());
+
+        inventory.graphics_faces = vec![graphics_face(42, 13, 2)];
+        let own = project_faces(&inventory, &[42]);
+        let [appearance] = own.appearances.as_slice() else {
+            panic!("a face's own primary-color style must still bind");
+        };
+        assert_eq!(
+            appearance.schema.as_deref(),
+            Some("InventorPrimaryColorStyle")
+        );
+        assert!(own.unresolved_face_overrides.is_empty());
     }
 
     #[test]

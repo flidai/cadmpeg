@@ -227,7 +227,7 @@ terminal_state u8
 
 The five colors are RGBA vectors. The third vector is the diffuse color, at payload offset 36 like the primary-color diffuse vector. The other vectors are not read.
 
-A style collection supplies a face color when it contains exactly one reference to a primary-color style, or no primary-color reference, exactly one reference to a material-color style, and no reference to a record that failed to parse. The direct-color appearance binds the joined neutral face. A face binding has precedence over the document-default body binding for that face. A missing or ambiguous face, group node, style collection, or color-style reference does not produce a face binding. Only a face's own style reports an unresolved face override; a face whose inherited style does not resolve keeps its body's default.
+A style collection supplies a face color when it contains exactly one reference to a primary-color style, or no primary-color reference and exactly one reference to a material-color style. When the collection also lists a record that failed to parse, only a face's own collection with exactly one primary-color reference supplies a color. The direct-color appearance binds the joined neutral face. A face binding has precedence over the document-default body binding for that face. A missing or ambiguous face, group node, style collection, or color-style reference does not produce a face binding. Only a face's own style reports an unresolved face override; a face whose inherited style does not resolve keeps its body's default.
 
 ## 11. Part parameters
 
