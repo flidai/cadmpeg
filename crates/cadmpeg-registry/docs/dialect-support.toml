@@ -67,9 +67,9 @@
 # it. It also proves each exported id is a subset of that format's identity
 # rows and is not `write = "none"`.
 #
-# `parasolid:` is owned by `cadmpeg-parasolid`. The sldprt and nx hosts classify
-# its schema tokens as extra layers from the same parsed stream headers used by
-# decode.
+# `parasolid:` is owned by `cadmpeg-parasolid`. The sldprt, nx, and solidedge
+# hosts classify its schema tokens as extra layers from the same parsed stream
+# headers used by decode.
 # Two of them are written even so: the sldprt writer stamps a Parasolid schema
 # token on every stream it generates, which is synthesis at the kernel layer,
 # and an embedded-kernel dialect is never its host's `targets()` row.
@@ -150,6 +150,10 @@ scored = ["nx:splmsstr", "nx:legacy-cfb"]
 [format.sat]
 level = 1
 scored = ["sat:text"]
+
+[format.solidedge]
+level = 1
+scored = ["solidedge:cfb-parasolid"]
 
 
 # --------------------------------------------------------------------------
@@ -1015,6 +1019,28 @@ Inventor retain an embedded carrier under this layer and charge
 source.kernel-carrier-unparseable"""
 
 # --------------------------------------------------------------------------
+# solidedge
+# --------------------------------------------------------------------------
+
+[[support]]
+dialect = "solidedge:cfb-parasolid"
+read = "detected"
+write = "none"
+reason = """
+decoded through the shared Parasolid partition and deltas path, and every
+golden pins this row, but the goldens are code-built: no Solid Edge file on
+disk backs the profile"""
+
+[[support]]
+dialect = "solidedge:unknown"
+read = "unclassified-recovered"
+write = "none"
+reason = """
+a Compound File without a PARASOLID storage, read by a forced decode: the
+directory is reported and no geometry is transferred. The residual admission
+charges source.dialect-unverified"""
+
+# --------------------------------------------------------------------------
 # parasolid
 # --------------------------------------------------------------------------
 
@@ -1023,7 +1049,7 @@ dialect = "parasolid:sch-sw-33103"
 read = "detected"
 write = "emitted"
 reason = """
-the sldprt and nx readers classify this id from a framed Parasolid stream's
+the sldprt, nx, and solidedge readers classify this id from a framed Parasolid stream's
 `SCH_SW_33103_11000` token. The sldprt writer also stamps
 `SCH_SW_33103_11000` on every Parasolid stream it generates whose bodies are
 all solid (writer.rs:126-130), which is the default branch"""
@@ -1033,7 +1059,7 @@ dialect = "parasolid:sch-sw-32001"
 read = "detected"
 write = "emitted"
 reason = """
-the sldprt and nx readers classify this id from a framed Parasolid stream's
+the sldprt, nx, and solidedge readers classify this id from a framed Parasolid stream's
 `SCH_SW_32001_11000` token. The sldprt writer also stamps
 `SCH_SW_32001_11000` on a generated Parasolid stream when any body is a
 sheet (writer.rs:120-130)"""
@@ -1043,7 +1069,7 @@ dialect = "parasolid:format-13006"
 read = "detected"
 write = "none"
 reason = """
-the sldprt and nx readers emit this layer when a framed Parasolid stream's
+the sldprt, nx, and solidedge readers emit this layer when a framed Parasolid stream's
 schema token ends in `_13006`; the same suffix selects the mesh stream
 grammar"""
 
@@ -1052,7 +1078,7 @@ dialect = "parasolid:unknown"
 read = "unclassified-recovered"
 write = "none"
 reason = """
-the sldprt and nx readers emit this residual layer for every other schema token
+the sldprt, nx, and solidedge readers emit this residual layer for every other schema token
 extracted from a framed Parasolid stream. The source token names no classified
-row, so recovery is admitted without claiming a verified dialect. Both hosts
+row, so recovery is admitted without claiming a verified dialect. The hosts
 charge source.kernel-dialect-unverified from this layer"""

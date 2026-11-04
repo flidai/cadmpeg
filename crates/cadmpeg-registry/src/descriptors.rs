@@ -46,7 +46,8 @@ pub(crate) enum FormatKind {
         feature = "rhino",
         feature = "step",
         feature = "iges",
-        feature = "sat"
+        feature = "sat",
+        feature = "solidedge"
     ))]
     Native(NativeDescriptor),
 }
@@ -131,7 +132,8 @@ impl FormatDescriptor {
                 feature = "rhino",
                 feature = "step",
                 feature = "iges",
-                feature = "sat"
+                feature = "sat",
+                feature = "solidedge"
             ))]
             FormatKind::Native(native) => native.id,
         }
@@ -154,7 +156,8 @@ impl FormatDescriptor {
                 feature = "rhino",
                 feature = "step",
                 feature = "iges",
-                feature = "sat"
+                feature = "sat",
+                feature = "solidedge"
             ))]
             FormatKind::Native(native) => native.input_extensions,
         }
@@ -174,7 +177,8 @@ impl FormatDescriptor {
                 feature = "rhino",
                 feature = "step",
                 feature = "iges",
-                feature = "sat"
+                feature = "sat",
+                feature = "solidedge"
             ))]
             FormatKind::Native(native) => ForcedInput::Codec(native),
         }
@@ -186,7 +190,8 @@ impl FormatDescriptor {
     feature = "catia",
     feature = "creo",
     feature = "nx",
-    feature = "sat"
+    feature = "sat",
+    feature = "solidedge"
 ))]
 macro_rules! reader {
     ($name:ident, $id:expr, $input_exts:expr, $decoder:expr) => {
@@ -314,6 +319,13 @@ reader!(
     &["sat", "sab", "smt", "smb"],
     || Box::new(cadmpeg_codec_sat::SatCodec)
 );
+#[cfg(feature = "solidedge")]
+reader!(
+    SOLIDEDGE,
+    FormatId::new("solidedge"),
+    &["par", "psm", "asm"],
+    || Box::new(cadmpeg_codec_solidedge::SolidEdgeCodec)
+);
 static CADIR_OUTPUT: OutputDescriptor = OutputDescriptor {
     extensions: &["cadir", "json"],
     physics: OutputPhysics::NeutralText,
@@ -348,6 +360,8 @@ pub(crate) static FORMAT_DESCRIPTORS: &[&FormatDescriptor] = &[
     &IGES,
     #[cfg(feature = "sat")]
     &SAT,
+    #[cfg(feature = "solidedge")]
+    &SOLIDEDGE,
     &CADIR,
 ];
 

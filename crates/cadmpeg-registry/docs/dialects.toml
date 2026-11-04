@@ -1299,9 +1299,50 @@ discriminants = { magic = "none", header_line_1 = "not four integer fields" }
 witness = "code:crates/cadmpeg-asm/src/dialect.rs"
 
 # --------------------------------------------------------------------------
+# Solid Edge
+# --------------------------------------------------------------------------
+# A Solid Edge part (`.par`), sheet-metal part (`.psm`), or assembly (`.asm`)
+# is a Compound File Binary document. The B-rep of a part is a Parasolid
+# partition stream and a deltas stream in the `PARASOLID` storage:
+# `PARASOLID/STREAM0.P_B` and `PARASOLID/STREAM0.D_B`. Specification:
+# docs/formats/solidedge.md. The file extension is not a discriminant, so an
+# assembly that carries a `PARASOLID` storage classifies the same way.
+#
+# One identity row exists because the format states no version discriminant
+# in the structure the codec reads. The Solid Edge release that wrote a
+# document is not read, and no row branches on it.
+#
+# Both rows are exercised by repository-built Compound File images only. No
+# Solid Edge file is checked in.
+[format.solidedge]
+complete = false
+aliases = ["par", "psm"]
+
+[[dialect]]
+# `container::scan` finds a `PARASOLID` storage in the directory of a
+# Compound File. `SolidEdgeCodec::detect` accepts the same structure from the
+# prefix: the CFB signature plus a directory path whose first component is
+# `PARASOLID`, compared without regard to ASCII case.
+id = "solidedge:cfb-parasolid"
+title = "Solid Edge Compound File with a PARASOLID storage"
+discriminants = { cfb_magic = "present", storage = "PARASOLID" }
+seam = "the Parasolid partition and deltas pair sits in named streams of one storage; the same pair in SolidWorks and NX sits in other carriers"
+witness = "spec:docs/formats/solidedge.md section 2"
+
+[[dialect]]
+# Mandatory `unknown` row (B4). A Compound File without a `PARASOLID` storage
+# is not detected as Solid Edge. A forced decode of such a file reads its
+# directory and reports a container-only document on this residual row.
+id = "solidedge:unknown"
+unknown_kind = "recovered-residual"
+title = "Compound File without a PARASOLID storage read as Solid Edge"
+discriminants = { cfb_magic = "present", storage = "no PARASOLID storage" }
+witness = "spec:docs/formats/solidedge.md section 2"
+
+# --------------------------------------------------------------------------
 # Parasolid kernel namespace (embedded layer)
 # --------------------------------------------------------------------------
-# `cadmpeg-parasolid` owns these rows. SLDPRT and NX emit them from their
+# `cadmpeg-parasolid` owns these rows. SLDPRT, NX, and Solid Edge emit them from their
 # host-local Parasolid carrier readers. Each layer records the complete schema
 # token and its source carrier. A host with several Parasolid streams uses the
 # carrier as the layer instance.

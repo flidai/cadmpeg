@@ -55,6 +55,7 @@ edit without a re-render fails the gate.
 | SolidWorks `.sldprt`                              | L1    |
 | Fusion 360 `.f3d`                                 | L4    |
 | Siemens NX `.prt`                                 | L1    |
+| Siemens Solid Edge `.par`, `.psm`, and `.asm`     | L1    |
 | CATIA V5 `.CATPart`                               | L1    |
 | Creo Parametric `.prt`                            | L1    |
 | STEP Part 21                                      | L9    |
@@ -406,6 +407,31 @@ can inspect them through the same bounded entry interface as SPLMSSTR streams.
 Remaining geometry work includes unresolved procedural-intersection branches, freeform NURBS-offset blend spines, and other unsupported record families. Remaining structural work includes unmatched tombstones, multi-partition feature composition, assembly records, and NX object-model field serialization.
 
 See the [format specification](formats/siemens_nx.md), [coverage contract](formats/siemens_nx-coverage.md), and [open items](formats/siemens_nx-open-items.md).
+
+## Siemens Solid Edge `.par`, `.psm`, and `.asm`
+
+**Kernel:** Parasolid in a Compound File `PARASOLID` storage
+
+<!-- generated: dialects solidedge -->
+
+**Ladder: L1.**
+
+| Dialect                   | Read                   | Write |
+| ------------------------- | ---------------------- | ----- |
+| `solidedge:cfb-parasolid` | detected               | none  |
+| `solidedge:unknown`       | unclassified-recovered | none  |
+
+<!-- /generated: dialects solidedge -->
+
+The scored envelope is the `PARASOLID/STREAM0.P_B` and `PARASOLID/STREAM0.D_B` pair of a Compound File. Other streams of the storage, feature history, properties, and assembly structure are outside it.
+
+### Read profile
+
+- **Container and versions: Partial.** The codec reads the Compound File directory, locates the `PARASOLID` storage, classifies its streams by name, and reports each Parasolid transmit header. The writing application version is not read.
+- **Geometry and topology: Partial.** The partition and deltas pair decodes through the Parasolid B-rep decoder shared with the SolidWorks codec. Bodies, regions, shells, faces, loops, coedges, edges, vertices, points, analytic and NURBS carriers transfer. Geometry that the shared decoder does not type is reported as a loss.
+- **Design intent, product structure, presentation, and metadata: Not transferred.** A document without a partition stream reports no model and a typed loss.
+
+See [`formats/solidedge.md`](formats/solidedge.md) and [`formats/solidedge-open-items.md`](formats/solidedge-open-items.md).
 
 ## CATIA V5 `.CATPart`
 
