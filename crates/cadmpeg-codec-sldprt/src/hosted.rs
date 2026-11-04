@@ -32,6 +32,8 @@ pub struct HostedHeader {
     pub description: String,
     /// `SCH_<modeller>_<schema>_<format>` schema token.
     pub schema: cadmpeg_parasolid::OwnedSchemaToken,
+    /// Whether the description names a partition or a deltas stream.
+    pub is_body_stream: bool,
 }
 
 /// Read the transmit header of one hosted stream, or `None` when the bytes do
@@ -42,6 +44,7 @@ pub fn read_hosted_header(
     stream: &[u8],
 ) -> Result<Option<HostedHeader>, CodecError> {
     Ok(stream_header(ctx, stream)?.map(|header| HostedHeader {
+        is_body_stream: is_body_stream(&header),
         description: header.description,
         schema: header.schema,
     }))
@@ -68,13 +71,16 @@ pub struct HostedBrep {
 
 /// Decode hosted Parasolid streams into the neutral B-rep arenas of `ir`.
 ///
-/// `streams` holds complete transmit streams that start with `PS\0\0`. A
+/// `streams` holds binary transmit streams that start with `PS\0\0`; a host
+/// that wraps them in the text transmit header removes that header first. A
 /// partition stream comes before its deltas stream; the decoder orders them
 /// itself. `origin` names the provenance source for annotations. `source` is
 /// the unknown-record identity that opaque carriers link to.
 ///
-/// A stream without a Parasolid header, or one that is neither a partition nor
-/// a deltas stream, returns [`CodecError::WrongFormat`].
+/// The host decides which streams are bodies. A stream the host passes is
+/// decoded whatever its description says, so a standalone transmit stream is
+/// admitted as a base state. A stream without a Parasolid header returns
+/// [`CodecError::WrongFormat`].
 #[doc(hidden)]
 pub fn decode_hosted_brep(
     ctx: &DecodeContext<'_>,
@@ -89,11 +95,6 @@ pub fn decode_hosted_brep(
         let header = stream_header(ctx, stream)?.ok_or_else(|| {
             CodecError::WrongFormat("hosted stream has no Parasolid transmit header".into())
         })?;
-        if !is_body_stream(&header) {
-            return Err(CodecError::WrongFormat(
-                "hosted Parasolid stream is neither a partition nor a deltas stream".into(),
-            ));
-        }
         headers.push(header);
     }
     let first = headers
