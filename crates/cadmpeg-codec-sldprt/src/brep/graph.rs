@@ -38,7 +38,7 @@ use super::attrib;
 use super::blend::BlendSupportRef;
 use super::entity;
 use super::evaluation::{
-    nurbs_surface_parameter_segment_chord_bound, nurbs_surface_parameter_within_tolerance,
+    nurbs_surface_parameter_segment_chord_bound, nurbs_surface_parameter_within_tolerance, Solved,
 };
 use super::index::{scan_carriers, CarrierIndex, IndexedCurve};
 use super::offset::OffsetCarrier;
@@ -541,6 +541,13 @@ pub(crate) struct Stats {
     pub(crate) unknown_procedural_supports: usize,
     /// Edges whose support curve is an untyped carrier (emitted with no curve).
     pub(crate) unknown_curve_edges: usize,
+    /// Edges dropped because an endpoint vertex did not resolve and the edge is
+    /// not a closed ring edge with a typed carrier.
+    pub(crate) unresolved_edges: usize,
+    /// Loops dropped because a coedge of the ring has no emitted edge.
+    pub(crate) dropped_loops: usize,
+    /// Faces dropped because none of their loops was kept.
+    pub(crate) faces_without_loops: usize,
     /// Pcurves withheld because geometric inverse selection was ambiguous.
     pub(crate) ambiguous_pcurve_parameters: usize,
     /// NURBS edge carriers whose vertex range is off their bound surface.
@@ -1166,6 +1173,66 @@ fn walk_face(
         sense: bridge.sense,
         loops,
     })
+}
+
+/// Largest gap between the two ends of a ring edge, in millimetres.
+const RING_CLOSURE_TOLERANCE_MM: f64 = 1.0e-4;
+
+/// The point a ring edge starts and ends at, when its carrier is a typed closed
+/// curve.
+///
+/// A ring edge has no vertices: its start and end coincide on a closed curve.
+/// A circle starts at its reference direction. An ellipse or a B-spline starts
+/// at the start of its parameter range, or at the start of its natural domain
+/// when the carrier states no range, and must close within
+/// [`RING_CLOSURE_TOLERANCE_MM`].
+fn closed_seam_point(
+    ctx: &DecodeContext<'_>,
+    carrier: &CurveCarrier,
+) -> Result<Option<cadmpeg_ir::math::Point3>, cadmpeg_core::CodecError> {
+    let natural_range = match &carrier.geometry {
+        CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle_curve)) => {
+            let center = circle_curve.center().get();
+            let ref_direction = circle_curve.frame().reference().as_raw();
+            let radius = circle_curve.radius().get();
+            return Ok(Some(cadmpeg_ir::math::Point3::new(
+                center.x + ref_direction.x * radius,
+                center.y + ref_direction.y * radius,
+                center.z + ref_direction.z * radius,
+            )));
+        }
+        CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(_)) => [0.0, std::f64::consts::TAU],
+        CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(nurbs)) => {
+            let knots = nurbs.knots();
+            let Ok(degree) = usize::try_from(nurbs.degree()) else {
+                return Ok(None);
+            };
+            let (Some(first), Some(last)) = (
+                knots.get(degree),
+                knots
+                    .len()
+                    .checked_sub(degree + 1)
+                    .and_then(|index| knots.get(index)),
+            ) else {
+                return Ok(None);
+            };
+            [*first, *last]
+        }
+        _ => return Ok(None),
+    };
+    let range = carrier
+        .parameter_range
+        .map_or(natural_range, cadmpeg_ir::units::FiniteVector::get);
+    let first = super::evaluation::curve_point(ctx, &carrier.geometry, range[0])?;
+    let last = super::evaluation::curve_point(ctx, &carrier.geometry, range[1])?;
+    let (Some(first), Some(last)) = (first, last) else {
+        return Ok(None);
+    };
+    let (first, last) = (first.get(), last.get());
+    let gap = (first.x - last.x)
+        .hypot(first.y - last.y)
+        .hypot(first.z - last.z);
+    Ok((gap <= RING_CLOSURE_TOLERANCE_MM).then_some(first))
 }
 
 fn edge_parameter_range(
@@ -2016,23 +2083,16 @@ fn decode_graph(
     for e in edge_attrs {
         let (start_v, end_v, curve_attr) = edge_ends[&e];
         let resolved_endpoints = kept_vertices.contains(&start_v) && kept_vertices.contains(&end_v);
-        let closed_circle_point = (!resolved_endpoints && start_v <= 1 && end_v <= 1)
-            .then(|| carriers.curve(curve_attr))
-            .flatten()
-            .and_then(|carrier| match &carrier.carrier().geometry {
-                CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle_curve)) => {
-                    let center = circle_curve.center().get();
-                    let ref_direction = circle_curve.frame().reference().as_raw();
-                    let radius = circle_curve.radius().get();
-                    Some(cadmpeg_ir::math::Point3::new(
-                        center.x + ref_direction.x * radius,
-                        center.y + ref_direction.y * radius,
-                        center.z + ref_direction.z * radius,
-                    ))
-                }
-                _ => None,
-            });
+        let closed_circle_point = if !resolved_endpoints && start_v <= 1 && end_v <= 1 {
+            match carriers.curve(curve_attr) {
+                Some(indexed) => closed_seam_point(ctx, indexed.carrier())?,
+                None => None,
+            }
+        } else {
+            None
+        };
         if !resolved_endpoints && closed_circle_point.is_none() {
+            out.stats.unresolved_edges += 1;
             continue;
         }
         let (mut start_id, mut end_id) = if let Some(position) = closed_circle_point {
@@ -2230,6 +2290,8 @@ fn decode_graph(
                 });
             if ok {
                 ctx.insert_hash_set(&mut kept_loops, *loop_attr, "track kept Parasolid loops")?;
+            } else {
+                out.stats.dropped_loops += 1;
             }
         }
     }
@@ -2249,6 +2311,9 @@ fn decode_graph(
         }
     }
 
+    // One sink for the whole pass: it carries the solver gate, which counts the
+    // solver calls that ran out of work across every coedge.
+    let mut pcurve_refusal_sink = crate::lane_refusal::LaneRefusals::new();
     // Coedges of kept loops: `next`/`prev` from the ring order, partner from a
     // mutual twin that is itself emitted.
     for f in &faces {
@@ -2273,8 +2338,7 @@ fn decode_graph(
                     u64_from_index(ce.offset),
                     Some("00_11"),
                 )?;
-                let mut pcurve_refusal = crate::lane_refusal::LaneRefusals::new();
-                let pcurve_refusal = &mut pcurve_refusal;
+                let pcurve_refusal = &mut pcurve_refusal_sink;
                 let pcurves = if let Some((_, _, curve_attr)) = edge_ends.get(&edge_attr) {
                     (|| -> Result<_, cadmpeg_core::CodecError> {
                         let Some(IndexedCurve::Derived(intersection)) = carriers.curve(*curve_attr)
@@ -2376,6 +2440,14 @@ fn decode_graph(
                     let note = crate::loss::spline_lane_refusal(
                         ctx,
                         format_args!("intersection pcurve for coedge {ce_attr}: {record}"),
+                    )?;
+                    ctx.reserve_vec(&mut out.losses, 1, "collect intersection pcurve losses")?;
+                    out.losses.push(note);
+                }
+                for record in pcurve_refusal.take_withheld() {
+                    let note = crate::loss::solver_work_withheld(
+                        ctx,
+                        format_args!("coedge {ce_attr}, {record}"),
                     )?;
                     ctx.reserve_vec(&mut out.losses, 1, "collect intersection pcurve losses")?;
                     out.losses.push(note);
@@ -2540,6 +2612,7 @@ fn decode_graph(
             }
         }
         if loops.is_empty() {
+            out.stats.faces_without_loops += 1;
             continue;
         }
         // Support surface: a decoded surface carrier, else an opaque carrier.
@@ -5241,14 +5314,23 @@ fn intersection_support_pcurve(
                     for point in chart_points {
                         let parameters = match nurbs_surface_parameter_within_tolerance(
                             ctx,
+                            refusal.gate(),
                             surface,
                             point.get(),
                             control_points.last().copied(),
                             support_data.fit_tolerance_mm,
-                        ) {
-                            Ok(Some(parameters)) => parameters,
-                            Ok(None) => return Ok(None),
-                            Err(limit) => return Err(limit),
+                        )? {
+                            Solved::Done(Some(parameters)) => parameters,
+                            Solved::Done(None) => return Ok(None),
+                            Solved::Withheld => {
+                                refusal.withhold(
+                                    ctx,
+                                    format_args!(
+                                        "intersection support pcurve for surface attr {surface_attr}"
+                                    ),
+                                )?;
+                                return Ok(None);
+                            }
                         };
                         control_points.push(parameters.get());
                     }
@@ -5313,15 +5395,24 @@ fn intersection_support_pcurve(
             let last = control_points.len() - 1;
             for (index, target) in [(0, targets[0]), (last, targets[1])] {
                 control_points[index] = match nurbs_surface_parameter_within_tolerance(
-                            ctx,
+                    ctx,
+                    refusal.gate(),
                     surface,
                     target,
                     Some(control_points[index]),
                     tolerance,
-                ) {
-                    Ok(Some(parameters)) => parameters.get(),
-                    Ok(None) => return Ok(None),
-                    Err(limit) => return Err(limit),
+                )? {
+                    Solved::Done(Some(parameters)) => parameters.get(),
+                    Solved::Done(None) => return Ok(None),
+                    Solved::Withheld => {
+                        refusal.withhold(
+                            ctx,
+                            format_args!(
+                                "intersection support pcurve for surface attr {surface_attr}"
+                            ),
+                        )?;
+                        return Ok(None);
+                    }
                 };
             }
         } else {
@@ -5396,13 +5487,26 @@ fn intersection_support_pcurve(
         {
             let exceeds = match surface {
                 SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(surface)) => {
-                    let error = nurbs_surface_parameter_segment_chord_bound(
+                    match nurbs_surface_parameter_segment_chord_bound(
                         ctx,
+                        refusal.gate(),
                         surface,
                         [parameters[0], parameters[1]],
                         [chord[0].get(), chord[1].get()],
-                    )?;
-                    error.is_none_or(|error| error > support_data.fit_tolerance_mm)
+                    )? {
+                        Solved::Done(error) => {
+                            error.is_none_or(|error| error > support_data.fit_tolerance_mm)
+                        }
+                        Solved::Withheld => {
+                            refusal.withhold(
+                                ctx,
+                                format_args!(
+                                    "intersection support pcurve for surface attr {surface_attr}"
+                                ),
+                            )?;
+                            return Ok(None);
+                        }
+                    }
                 }
                 _ => analytic_pcurve_chord_bound(surface, parameters[0], parameters[1]).is_none_or(
                     |curvature_error| {
@@ -7749,6 +7853,38 @@ fn emit_curve(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_ring_edge_on_a_closed_ellipse_has_a_seam_point() {
+        use crate::brep::CurveCarrier;
+        use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+        use cadmpeg_ir::math::{Point3, Vector3};
+        let geometry = CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(
+            cadmpeg_ir::geometry::analytic::EllipseCurve::try_new(
+                Point3::new(3.0, -2.0, 7.0),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                5.0,
+                2.0,
+            )
+            .unwrap(),
+        ));
+        let carrier = CurveCarrier {
+            attr: 1,
+            offset: 0,
+            end: 0,
+            geometry,
+            parameter_range: None,
+        };
+        let ctx = cadmpeg_test_support::service_decode_context();
+        let seam = super::closed_seam_point(&ctx, &carrier).unwrap().unwrap();
+        assert!((seam.x - 8.0).abs() < 1e-9 && (seam.y + 2.0).abs() < 1e-9);
+        let open = CurveCarrier {
+            parameter_range: cadmpeg_ir::units::FiniteVector::new([0.0, 1.0]),
+            ..carrier
+        };
+        assert!(super::closed_seam_point(&ctx, &open).unwrap().is_none());
+    }
+
     #[test]
     fn incomplete_brep_marker_does_not_consume_collection_slots() {
         let arena = cadmpeg_core::decode::DecodeArena::new();

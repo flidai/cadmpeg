@@ -86,6 +86,8 @@ pub(crate) enum SldprtLossCode {
     GeometryPcurveAmbiguous,
     /// A spline carrier's pole and weight lanes do not pair.
     GeometrySplineLanesUnpaired,
+    /// Optional surface solver work did not run because the session could not pay for it.
+    GeometrySolverWorkWithheld,
     /// Current face records carry conflicting or incoherent color bindings.
     AppearanceFaceColorUnresolved,
     /// Appearance assignments have no unambiguous `DisplayLists` target.
@@ -98,6 +100,8 @@ pub(crate) enum SldprtLossCode {
     TopologyFaceOwnerAmbiguous,
     /// A canonical face has no explicit body relation.
     TopologyFaceUnclaimed,
+    /// Edges, loops, or faces were dropped because their boundary did not resolve.
+    TopologyBoundaryUnresolved,
     /// A NURBS edge's vertex range is off its bound surface; no pcurve is derived.
     TopologyPcurveCarrierOffSurface,
     /// Parasolid B-rep geometry was not transferred (no resolved stream).
@@ -181,12 +185,14 @@ impl SldprtLossCode {
         Self::GeometryEdgeSupportCurveUntyped,
         Self::GeometryPcurveAmbiguous,
         Self::GeometrySplineLanesUnpaired,
+        Self::GeometrySolverWorkWithheld,
         Self::AppearanceFaceColorUnresolved,
         Self::AppearanceAssignmentUnresolved,
         Self::TessellationFaceOwnershipUnresolved,
         Self::TopologyBodyHierarchyDerived,
         Self::TopologyFaceOwnerAmbiguous,
         Self::TopologyFaceUnclaimed,
+        Self::TopologyBoundaryUnresolved,
         Self::TopologyPcurveCarrierOffSurface,
         Self::GeometryParasolidNotTransferred,
         Self::TopologyGraphNotTransferred,
@@ -242,12 +248,14 @@ impl SldprtLossCode {
             Self::GeometryEdgeSupportCurveUntyped => "geometry.edge-support-curve-untyped",
             Self::GeometryPcurveAmbiguous => "geometry.pcurve-ambiguous",
             Self::GeometrySplineLanesUnpaired => "geometry.spline-lanes-unpaired",
+            Self::GeometrySolverWorkWithheld => "geometry.solver-work-withheld",
             Self::AppearanceFaceColorUnresolved => "appearance.face-color-unresolved",
             Self::AppearanceAssignmentUnresolved => "appearance.assignment-unresolved",
             Self::TessellationFaceOwnershipUnresolved => "tessellation.face-ownership-unresolved",
             Self::TopologyBodyHierarchyDerived => "topology.body-hierarchy-derived",
             Self::TopologyFaceOwnerAmbiguous => "topology.face-owner-ambiguous",
             Self::TopologyFaceUnclaimed => "topology.face-unclaimed",
+            Self::TopologyBoundaryUnresolved => "topology.boundary-unresolved",
             Self::TopologyPcurveCarrierOffSurface => "topology.pcurve-carrier-off-surface",
             Self::GeometryParasolidNotTransferred => "geometry.parasolid-not-transferred",
             Self::TopologyGraphNotTransferred => "topology.graph-not-transferred",
@@ -315,12 +323,14 @@ impl SldprtLossCode {
             | Self::GeometryEdgeSupportCurveUntyped
             | Self::GeometryPcurveAmbiguous
             | Self::GeometrySplineLanesUnpaired
+            | Self::GeometrySolverWorkWithheld
             | Self::AppearanceFaceColorUnresolved
             | Self::AppearanceAssignmentUnresolved
             | Self::TessellationFaceOwnershipUnresolved
             | Self::TopologyBodyHierarchyDerived
             | Self::TopologyFaceOwnerAmbiguous
             | Self::TopologyFaceUnclaimed
+            | Self::TopologyBoundaryUnresolved
             | Self::TopologyPcurveCarrierOffSurface
             | Self::MaterialMetadataNotTransferred
             | Self::SourceDialectUnverified
@@ -351,12 +361,15 @@ impl SldprtLossCode {
             Self::TopologyBodyHierarchyDerived | Self::TopologyFaceOwnerAmbiguous => {
                 LossTaxonomy::TopologyGaugeSubstituted
             }
-            Self::TopologyFaceUnclaimed => LossTaxonomy::TopologyNotTransferred,
+            Self::TopologyFaceUnclaimed | Self::TopologyBoundaryUnresolved => {
+                LossTaxonomy::TopologyNotTransferred
+            }
             Self::TopologyPcurveCarrierOffSurface => LossTaxonomy::PcurveOmitted,
             Self::TopologyGraphNotTransferred => LossTaxonomy::TopologyNotTransferred,
             Self::GeometryFaceSupportSurfaceUntyped
             | Self::GeometryEdgeSupportCurveUntyped
             | Self::GeometrySplineLanesUnpaired
+            | Self::GeometrySolverWorkWithheld
             | Self::GeometryParasolidNotTransferred => LossTaxonomy::GeometryNotTransferred,
             Self::GeometryPcurveAmbiguous => LossTaxonomy::PcurveOmitted,
             Self::AppearanceFaceColorUnresolved | Self::AppearanceAssignmentUnresolved => {
@@ -437,6 +450,21 @@ pub(crate) fn spline_lane_refusal(
         "record SLDPRT spline lane loss",
     )?;
     Ok(SldprtLossCode::GeometrySplineLanesUnpaired.note(message))
+}
+
+/// The loss for optional solver work that the session could not pay for.
+pub(crate) fn solver_work_withheld(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    record: impl std::fmt::Display,
+) -> Result<LossNote, cadmpeg_core::CodecError> {
+    let message = ctx.format_retained(
+        format_args!(
+            "{record}: the surface solver did not run because the decode work budget could not \
+             pay for it; the derived pcurve is not emitted."
+        ),
+        "record SLDPRT withheld solver loss",
+    )?;
+    Ok(SldprtLossCode::GeometrySolverWorkWithheld.note(message))
 }
 
 #[cfg(test)]
@@ -522,12 +550,14 @@ mod tests {
                 "geometry.edge-support-curve-untyped",
                 "geometry.pcurve-ambiguous",
                 "geometry.spline-lanes-unpaired",
+                "geometry.solver-work-withheld",
                 "appearance.face-color-unresolved",
                 "appearance.assignment-unresolved",
                 "tessellation.face-ownership-unresolved",
                 "topology.body-hierarchy-derived",
                 "topology.face-owner-ambiguous",
                 "topology.face-unclaimed",
+                "topology.boundary-unresolved",
                 "topology.pcurve-carrier-off-surface",
                 "geometry.parasolid-not-transferred",
                 "topology.graph-not-transferred",

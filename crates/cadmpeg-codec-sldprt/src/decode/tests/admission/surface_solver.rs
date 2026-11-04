@@ -90,19 +90,25 @@ fn assert_surface_solver_route_limit(dimension: ResourceDimension) {
         ResourceDimension::WorkUnits => options.policy.limits.max_work_units = limit,
         _ => panic!("unexpected surface-solver route dimension"),
     };
-    let run = |options: &DecodeOptions| match crate::SldprtCodec
-        .decode(&mut Cursor::new(&source), options)
-    {
-        Ok(decoded) => {
-            assert_eq!(decoded.ir(), &expected);
-            true
-        }
-        Err(cadmpeg_ir::DecodeFailure::Codec(CodecError::ResourceLimit(limit))) => {
-            assert_eq!(limit.dimension, dimension);
-            false
-        }
-        Err(error) => panic!("unexpected surface-solver route failure: {error}"),
-    };
+    let run =
+        |options: &DecodeOptions| match crate::SldprtCodec
+            .decode(&mut Cursor::new(&source), options)
+        {
+            Ok(decoded) if decoded.ir() == &expected => true,
+            Ok(decoded) => {
+                // A session that cannot pay for the solver withholds it and
+                // reports the loss; it never fuses.
+                assert_eq!(dimension, ResourceDimension::WorkUnits);
+                assert!(decoded.report().losses.iter().any(|loss| loss.code
+                    == crate::loss::SldprtLossCode::GeometrySolverWorkWithheld.kind()));
+                false
+            }
+            Err(cadmpeg_ir::DecodeFailure::Codec(CodecError::ResourceLimit(limit))) => {
+                assert_eq!(limit.dimension, dimension);
+                false
+            }
+            Err(error) => panic!("unexpected surface-solver route failure: {error}"),
+        };
     let mut lower = 0;
     let mut upper = 1_u64;
     loop {

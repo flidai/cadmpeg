@@ -14,7 +14,7 @@
 use cadmpeg_core::decode::{u64_from_index, DecodeContext};
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::annotations::Annotations;
-use cadmpeg_ir::document::CadIr;
+use cadmpeg_ir::document::Model;
 use cadmpeg_ir::ids::UnknownId;
 use cadmpeg_ir::report::loss::LossNote;
 use cadmpeg_ir::unknown::UnknownRecord;
@@ -69,7 +69,7 @@ pub struct HostedBrep {
     pub face_color_records: usize,
 }
 
-/// Decode hosted Parasolid streams into the neutral B-rep arenas of `ir`.
+/// Decode hosted Parasolid streams into the neutral B-rep arenas of `model`.
 ///
 /// `streams` holds binary transmit streams that start with `PS\0\0`; a host
 /// that wraps them in the text transmit header removes that header first. A
@@ -84,7 +84,7 @@ pub struct HostedBrep {
 #[doc(hidden)]
 pub fn decode_hosted_brep(
     ctx: &DecodeContext<'_>,
-    ir: &mut CadIr,
+    model: &mut Model,
     streams: &[&[u8]],
     origin: &StreamName,
     source: &UnknownId,
@@ -106,21 +106,21 @@ pub fn decode_hosted_brep(
     bodies.extend(streams.iter().copied().zip(&headers));
     let mut brep = decode_bodies(ctx, &bodies, origin)?;
     bind_opaque_geometry(ctx, &mut brep, source)?;
-    let losses = brep_losses(ctx, &mut brep)?;
+    let losses = brep_losses(ctx, &mut brep, true)?;
     let entities = brep.neutral_entity_count()?;
-    ir.model.bodies = brep.bodies;
-    ir.model.regions = brep.regions;
-    ir.model.shells = brep.shells;
-    ir.model.faces = brep.faces;
-    ir.model.loops = brep.loops;
-    ir.model.coedges = brep.coedges;
-    ir.model.edges = brep.edges;
-    ir.model.vertices = brep.vertices;
-    ir.model.points = brep.points;
-    ir.model.surfaces = brep.surfaces;
-    ir.model.procedural_surfaces = brep.procedural_surfaces;
-    ir.model.curves = brep.curves;
-    ir.model.pcurves = brep.pcurves;
+    model.bodies = brep.bodies;
+    model.regions = brep.regions;
+    model.shells = brep.shells;
+    model.faces = brep.faces;
+    model.loops = brep.loops;
+    model.coedges = brep.coedges;
+    model.edges = brep.edges;
+    model.vertices = brep.vertices;
+    model.points = brep.points;
+    model.surfaces = brep.surfaces;
+    model.procedural_surfaces = brep.procedural_surfaces;
+    model.curves = brep.curves;
+    model.pcurves = brep.pcurves;
     ctx.charge_work(
         u64_from_index(brep.face_colors.len()),
         "count hosted face colors",

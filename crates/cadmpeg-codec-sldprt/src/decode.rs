@@ -3968,7 +3968,7 @@ fn build_geometry_report(
     classification: &crate::dialect::LayerClassification,
     notes: Vec<String>,
 ) -> Result<DecodeBody, CodecError> {
-    let mut losses = brep_losses(ctx, decoded)?;
+    let mut losses = brep_losses(ctx, decoded, false)?;
     append_swift_pmi_losses(ctx, scan, &mut losses)?;
     classification.append_losses(ctx, &mut losses)?;
     Ok(DecodeBody {
@@ -3985,9 +3985,14 @@ fn build_geometry_report(
 ///
 /// A host that carries Parasolid streams without `SolidWorks` framing reports
 /// the same B-rep losses through [`crate::hosted`].
+///
+/// `report_dropped_boundary` adds the count of edges, loops, and faces that the
+/// graph builder dropped for an unresolved boundary. A host that is new to the
+/// shared decoder asks for it; the `SolidWorks` report is unchanged.
 pub(crate) fn brep_losses(
     ctx: &DecodeContext<'_>,
     decoded: &mut Brep,
+    report_dropped_boundary: bool,
 ) -> Result<Vec<cadmpeg_ir::report::loss::LossNote>, CodecError> {
     let s = &decoded.stats;
     let mut losses = Vec::new();
@@ -4062,6 +4067,15 @@ pub(crate) fn brep_losses(
         losses.push(SldprtLossCode::TopologyFaceUnclaimed.note(format!(
             "{} canonical face(s) are not claimed by an explicit body relation; the decoder withholds them rather than inventing body membership.",
             s.unclaimed_faces
+        )));
+    }
+    if report_dropped_boundary
+        && (s.unresolved_edges > 0 || s.dropped_loops > 0 || s.faces_without_loops > 0)
+    {
+        ctx.reserve_vec(&mut losses, 1, "append SLDPRT geometry loss")?;
+        losses.push(SldprtLossCode::TopologyBoundaryUnresolved.note(format!(
+            "{} edge(s) were dropped because an endpoint vertex did not resolve and the edge is not a typed closed ring; {} loop(s) were dropped because a coedge has no emitted edge; {} face(s) were dropped because none of their loops was kept.",
+            s.unresolved_edges, s.dropped_loops, s.faces_without_loops
         )));
     }
     if s.synthetic_body_grouping {

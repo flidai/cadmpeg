@@ -4,6 +4,32 @@
 use cadmpeg_core::decode::DecodeContext;
 use cadmpeg_core::CodecError;
 
+/// Solver calls that may run out of work in one decode before the rest are
+/// withheld without running. Each such call spends its whole slice, so the
+/// limit bounds the wall time that failing solvers can take.
+const SOLVER_EXHAUSTION_LIMIT: u32 = 4;
+
+/// Counts the solver calls of one decode that ran out of work.
+#[derive(Debug, Default)]
+pub(crate) struct SolverGate {
+    exhausted: std::cell::Cell<u32>,
+}
+
+impl SolverGate {
+    /// Whether another solver call may start.
+    pub(crate) fn is_open(&self) -> bool {
+        self.exhausted.get() < SOLVER_EXHAUSTION_LIMIT
+    }
+
+    /// Record a call that ran out of its work slice.
+    pub(crate) fn note_exhausted(&self) {
+        let count = self.exhausted.get();
+        if count < SOLVER_EXHAUSTION_LIMIT {
+            self.exhausted.set(count + 1);
+        }
+    }
+}
+
 /// Every carrier record a reader refused, each named by the record that stated
 /// it.
 ///
@@ -14,6 +40,8 @@ use cadmpeg_core::CodecError;
 #[derive(Debug, Default)]
 pub(crate) struct LaneRefusals {
     records: Vec<String>,
+    withheld: Vec<String>,
+    gate: SolverGate,
 }
 
 impl LaneRefusals {
@@ -21,6 +49,8 @@ impl LaneRefusals {
     pub(crate) fn new() -> Self {
         Self {
             records: Vec::new(),
+            withheld: Vec::new(),
+            gate: SolverGate::default(),
         }
     }
 
@@ -41,6 +71,33 @@ impl LaneRefusals {
         ctx.reserve_vec(&mut self.records, 1, "collect SLDPRT lane refusals")?;
         self.records.push(message);
         Ok(())
+    }
+
+    /// The solver gate of the decode that owns this sink.
+    pub(crate) fn gate(&self) -> &SolverGate {
+        &self.gate
+    }
+
+    /// Record that optional solver work for `record` was withheld because the
+    /// session could not pay for it.
+    pub(crate) fn withhold(
+        &mut self,
+        ctx: &DecodeContext<'_>,
+        record: impl std::fmt::Display,
+    ) -> Result<(), CodecError> {
+        let message = ctx.format_retained(
+            format_args!("{record}"),
+            "record SLDPRT withheld solver work",
+        )?;
+        ctx.reserve_vec(&mut self.withheld, 1, "collect SLDPRT withheld solver work")?;
+        self.withheld.push(message);
+        Ok(())
+    }
+
+    /// Take every withheld-work record, in reader order, and leave the list
+    /// empty.
+    pub(crate) fn take_withheld(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.withheld)
     }
 
     /// Take every refusal recorded so far, in reader order, and leave the sink
