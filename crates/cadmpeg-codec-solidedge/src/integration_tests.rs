@@ -418,6 +418,14 @@ fn every_body_group_decodes_with_its_own_identity_scope() {
         &result,
         SolidEdgeLossCode::ContainerBodyGroupUntransferred
     ));
+    // The lowest numbered group is the design body. The other group stays in
+    // the model and is hidden, so an export shows one body.
+    assert!(has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerBodyGroupHidden
+    ));
+    let visible: Vec<_> = model.bodies.iter().map(|body| body.visible).collect();
+    assert_eq!(visible, [None, Some(false)]);
     let ids: Vec<_> = model.faces.iter().map(|face| face.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -444,6 +452,38 @@ fn a_second_group_keeps_its_annotations_and_retained_streams() {
     let provenance = &editable.source_fidelity().annotations.provenance;
     assert!(provenance.contains_key("sldprt:brep:face#10"));
     assert!(provenance.contains_key("sldprt:brep:group-stream1/face#10"));
+}
+
+#[test]
+fn a_single_group_has_no_hidden_body() {
+    let result = decode(&pair_without(vec![stream(
+        "STREAM0.P_B",
+        &partition_stream(&triangle_body()),
+    )]));
+    assert!(!has_loss(
+        &result,
+        SolidEdgeLossCode::ContainerBodyGroupHidden
+    ));
+    assert!(result
+        .ir()
+        .model
+        .bodies
+        .iter()
+        .all(|body| body.visible.is_none()));
+}
+
+#[test]
+fn a_header_that_counts_more_fat_sectors_than_the_difat_lists_is_read_with_a_loss() {
+    let mut bytes = pair_without(vec![stream(
+        "STREAM0.P_B",
+        &partition_stream(&triangle_body()),
+    )]);
+    let declared = u32::from_le_bytes(bytes[44..48].try_into().unwrap());
+    bytes[44..48].copy_from_slice(&(declared + 1).to_le_bytes());
+    let result = decode(&bytes);
+    assert!(result.report().geometry_transferred());
+    assert!(has_loss(&result, SolidEdgeLossCode::ContainerCfbTolerated));
+    assert!(!has_loss(&result, SolidEdgeLossCode::ContainerUnreadable));
 }
 
 #[test]

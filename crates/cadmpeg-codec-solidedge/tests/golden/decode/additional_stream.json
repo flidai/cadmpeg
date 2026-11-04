@@ -19,7 +19,8 @@
           "kind": "solid",
           "regions": [
             "sldprt:brep:group-stream1/region#902"
-          ]
+          ],
+          "visible": false
         }
       ],
       "coedges": [
@@ -743,6 +744,16 @@
           "strict_floor": "warning"
         },
         "message": "The Parasolid stream at PARASOLID/STREAM1.P_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+        "severity": "warning"
+      },
+      {
+        "code": {
+          "code": "container.body-group-hidden",
+          "kind": "decode_diagnostic",
+          "namespace": "solidedge",
+          "scope": "namespaced"
+        },
+        "message": "the body group STREAM1 is a secondary group; its bodies are kept and marked hidden, and the first group is the design body",
         "severity": "warning"
       }
     ],

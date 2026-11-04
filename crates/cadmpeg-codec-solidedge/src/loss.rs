@@ -34,6 +34,8 @@ pub(crate) enum SolidEdgeLossCode {
     ContainerNoParasolidStorage,
     /// The Compound File directory cannot be read.
     ContainerUnreadable,
+    /// The Compound File breaks MS-CFB in a way that readers in common use accept.
+    ContainerCfbTolerated,
     /// The Compound File is a family-of-parts master, which holds no model.
     ContainerNotModelDocument,
     /// The `PARASOLID` storage holds no stream that carries a body.
@@ -48,6 +50,8 @@ pub(crate) enum SolidEdgeLossCode {
     ContainerSketchUntransferred,
     /// The `PARASOLID` storage holds a second body group that decode does not read.
     ContainerBodyGroupUntransferred,
+    /// The decode keeps the bodies of a secondary body group and marks them hidden.
+    ContainerBodyGroupHidden,
     /// A Parasolid stream has no readable transmit header.
     ParasolidHeaderUnreadable,
     /// The Parasolid streams decoded no surfaces, points, or faces.
@@ -68,6 +72,7 @@ impl SolidEdgeLossCode {
     const ALL: &'static [SolidEdgeLossCode] = &[
         Self::ContainerNoParasolidStorage,
         Self::ContainerUnreadable,
+        Self::ContainerCfbTolerated,
         Self::ContainerNotModelDocument,
         Self::ContainerNoBodyStream,
         Self::ContainerNoPartitionStream,
@@ -75,6 +80,7 @@ impl SolidEdgeLossCode {
         Self::ContainerStreamUntransferred,
         Self::ContainerSketchUntransferred,
         Self::ContainerBodyGroupUntransferred,
+        Self::ContainerBodyGroupHidden,
         Self::ParasolidHeaderUnreadable,
         Self::GeometryNotTransferred,
         Self::AppearanceFaceColorUntransferred,
@@ -89,6 +95,7 @@ impl SolidEdgeLossCode {
         match self {
             Self::ContainerNoParasolidStorage => "container.no-parasolid-storage",
             Self::ContainerUnreadable => "container.unreadable",
+            Self::ContainerCfbTolerated => "container.cfb-tolerated",
             Self::ContainerNotModelDocument => "container.not-a-model-document",
             Self::ContainerNoBodyStream => "container.no-body-stream",
             Self::ContainerNoPartitionStream => "container.no-partition-stream",
@@ -96,6 +103,7 @@ impl SolidEdgeLossCode {
             Self::ContainerStreamUntransferred => "container.stream-untransferred",
             Self::ContainerSketchUntransferred => "container.sketch-untransferred",
             Self::ContainerBodyGroupUntransferred => "container.body-group-untransferred",
+            Self::ContainerBodyGroupHidden => "container.body-group-hidden",
             Self::ParasolidHeaderUnreadable => "parasolid.header-unreadable",
             Self::GeometryNotTransferred => "geometry.not-transferred",
             Self::AppearanceFaceColorUntransferred => "appearance.face-color-untransferred",
@@ -116,10 +124,12 @@ impl SolidEdgeLossCode {
             | Self::ContainerNoBodyStream
             | Self::ContainerNoPartitionStream
             | Self::ParasolidHeaderUnreadable => Severity::Error,
-            Self::ContainerDeltasMissing
+            Self::ContainerCfbTolerated
+            | Self::ContainerDeltasMissing
             | Self::ContainerStreamUntransferred
             | Self::ContainerSketchUntransferred
             | Self::ContainerBodyGroupUntransferred
+            | Self::ContainerBodyGroupHidden
             | Self::AppearanceFaceColorUntransferred
             | Self::SourceDialectUnverified
             | Self::KernelDialectUnverified
@@ -134,9 +144,10 @@ impl SolidEdgeLossCode {
             | Self::ContainerNotModelDocument
             | Self::ContainerNoBodyStream
             | Self::ContainerNoPartitionStream => LossTaxonomy::MissingGeometryStream,
-            Self::ContainerDeltasMissing | Self::DialectLayerCollision => {
-                LossTaxonomy::DecodeDiagnostic
-            }
+            Self::ContainerCfbTolerated
+            | Self::ContainerDeltasMissing
+            | Self::ContainerBodyGroupHidden
+            | Self::DialectLayerCollision => LossTaxonomy::DecodeDiagnostic,
             Self::ContainerStreamUntransferred
             | Self::ContainerSketchUntransferred
             | Self::ContainerBodyGroupUntransferred => LossTaxonomy::ObjectRecordsUntransferred,
@@ -180,6 +191,7 @@ mod tests {
             [
                 "container.no-parasolid-storage",
                 "container.unreadable",
+                "container.cfb-tolerated",
                 "container.not-a-model-document",
                 "container.no-body-stream",
                 "container.no-partition-stream",
@@ -187,6 +199,7 @@ mod tests {
                 "container.stream-untransferred",
                 "container.sketch-untransferred",
                 "container.body-group-untransferred",
+                "container.body-group-hidden",
                 "parasolid.header-unreadable",
                 "geometry.not-transferred",
                 "appearance.face-color-untransferred",

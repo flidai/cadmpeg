@@ -28,6 +28,8 @@ MS-CFB 2.6.1 forbids the characters `/`, `\`, `:`, and `!` in a directory name. 
 
 The reader accepts `:`, `!`, and `\` as ordinary characters in a name. It refuses `/` because `/` separates the components of a path.
 
+The reader tolerates two deviations from MS-CFB that readers in common use accept. The first deviation is a directory sibling tree that breaks the red-black colour rules, for example two red nodes that are linked. The reader ignores the colour of the nodes and keeps the check of the name order, the links, and the cycles. The second deviation is a header that counts more FAT sectors or DIFAT sectors than the DIFAT chain lists. The reader uses the FAT sectors that the DIFAT lists. A FAT sector id that is out of range, a chain loop, and every other structural fault stay refused. Each tolerated deviation adds the warning `container.cfb-tolerated`, which names the deviation.
+
 ### 2.2 The `PARASOLID` storage
 
 The root storage has a child storage named `PARASOLID`. A document without this storage has no Parasolid body.
@@ -50,7 +52,7 @@ A standalone transmit stream is a base state with no overlay. A group with a par
 
 The decoder reads every body group that has a base state. Numbered groups come before named groups. Numbered groups compare by index and named groups compare by stem. A group with a deltas stream and no base state yields no body.
 
-Each group yields its own bodies. No group merges into another, and the decoder does not decide which group is the design body. The first group keeps the identities of the shared Parasolid decoder, `sldprt:brep:<kind>#<key>`. Every later group carries its scope in the third namespace component: `sldprt:brep:group-<stem>/<kind>#<key>`, with the stem in lower case. The note of the decode names each group.
+Each group yields its own bodies. No group merges into another. The first group in the order above is the design body. The decoder marks every body of each later group as hidden and adds the warning `container.body-group-hidden` for it. The hidden bodies stay in the model, so a consumer can show them. An export that skips hidden bodies writes the design body only. The choice of the first group is a fallback and not a rule from the file (SE-01). The first group keeps the identities of the shared Parasolid decoder, `sldprt:brep:<kind>#<key>`. Every later group carries its scope in the third namespace component: `sldprt:brep:group-<stem>/<kind>#<key>`, with the stem in lower case. The note of the decode names each group.
 
 ---
 
@@ -107,6 +109,8 @@ A document without a body is a typed refusal and not an error:
 | `PARASOLID` storage with no body stream, for example sketch streams only  | `container.no-body-stream`             |
 | `PARASOLID` storage with a deltas stream and no base state                | `container.no-partition-stream`        |
 | Directory that the reader cannot list                                     | `container.unreadable`                 |
+| Directory with a tolerated deviation from MS-CFB                          | `container.cfb-tolerated` (warning)    |
+| Secondary body group, bodies kept and hidden                              | `container.body-group-hidden` (warning)|
 
 A Compound File whose directory cannot be listed is a typed result. The loss `container.unreadable` names the failing structural check. Detection reports low confidence for such a file, because the root members are not readable.
 

@@ -11,7 +11,7 @@
 //! stream only when [`Scan::open`] asks.
 
 use cadmpeg_container::compound::{
-    CompoundEntry, CompoundPrefixProbe, CompoundSnapshot, CompoundStreamEntry,
+    CompoundDeviation, CompoundEntry, CompoundPrefixProbe, CompoundSnapshot, CompoundStreamEntry,
 };
 use cadmpeg_core::container::ContainerRole;
 use cadmpeg_core::decode::{u64_from_index, DecodeContext, View};
@@ -161,6 +161,11 @@ impl<'a> Scan<'a> {
     /// The `PARASOLID` storage path as the directory spells it.
     pub(crate) fn storage(&self) -> Option<&str> {
         self.storage.as_deref()
+    }
+
+    /// The MS-CFB deviations that the directory read accepted.
+    pub(crate) fn deviations(&self) -> Vec<CompoundDeviation> {
+        self.snapshot.deviations()
     }
 
     /// What the root-level members say the document is.
@@ -409,7 +414,7 @@ pub(crate) fn scan<'a>(ctx: &DecodeContext<'a>, root: View<'a>) -> Result<Scan<'
             "not a Solid Edge document: no Compound File signature".into(),
         ));
     }
-    let snapshot = CompoundSnapshot::new(ctx, root)?;
+    let snapshot = CompoundSnapshot::new_tolerant(ctx, root)?;
     ctx.charge_work(
         u64_from_index(snapshot.entries().len()),
         "scan Solid Edge directory",

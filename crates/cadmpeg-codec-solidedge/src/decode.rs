@@ -125,6 +125,22 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
     let mut losses = Vec::new();
     let mut notes = Vec::new();
 
+    for deviation in scan.deviations() {
+        let message = ctx.format_retained(
+            format_args!(
+                "the Compound File was read although {}; readers in common use accept this",
+                deviation.description()
+            ),
+            "retain Solid Edge tolerated container loss",
+        )?;
+        push_loss(
+            ctx,
+            &mut losses,
+            SolidEdgeLossCode::ContainerCfbTolerated,
+            message,
+        )?;
+    }
+
     let mut groups = Vec::new();
     let mut deltas_only = 0_usize;
     for group in &found {
@@ -569,6 +585,12 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             if first {
                 annotations = hosted.annotations;
             } else {
+                // The first group holds the design body. Later groups can hold
+                // a flat pattern or a configuration (SE-01), so their bodies
+                // stay in the model and a consumer shows only the design body.
+                for body in &mut scratch.bodies {
+                    body.visible = Some(false);
+                }
                 let (scope, _reservation) = ctx.format_scoped(
                     format_args!("group-{}", group.key.to_ascii_lowercase()),
                     "retain Solid Edge group scope",
@@ -617,6 +639,21 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
                 "retain Solid Edge group note",
             )?;
             ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
+            if !first {
+                let message = ctx.format_retained(
+                    format_args!(
+                        "the body group {} is a secondary group; its bodies are kept and marked hidden, and the first group is the design body",
+                        group.key
+                    ),
+                    "retain Solid Edge hidden group loss",
+                )?;
+                push_loss(
+                    ctx,
+                    &mut losses,
+                    SolidEdgeLossCode::ContainerBodyGroupHidden,
+                    message,
+                )?;
+            }
             decoded_groups += 1;
         }
         if face_colors > 0 {
