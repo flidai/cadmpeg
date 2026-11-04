@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Parasolid B-rep decoding for a foreign host container.
+//!
+//! A host that stores a Parasolid partition stream, with an optional deltas
+//! stream, outside the `SolidWorks` framing locates the streams itself and calls
+//! [`decode_hosted_brep`]. The call runs the same partition and deltas merge and
+//! the same graph builder as an `.sldprt` body site and writes the neutral
+//! B-rep arenas into the caller's document. The host owns the document
+//! metadata, the dialect layers, and the retention of the stream bytes.
+//!
+//! Entity identities keep the `sldprt:brep` namespaces of the shared graph
+//! builder. Neutral consumers treat identities as opaque.
+
+use cadmpeg_core::decode::{u64_from_index, DecodeContext};
+use cadmpeg_core::CodecError;
+use cadmpeg_ir::annotations::Annotations;
+use cadmpeg_ir::document::CadIr;
+use cadmpeg_ir::ids::UnknownId;
+use cadmpeg_ir::report::loss::LossNote;
+use cadmpeg_ir::unknown::UnknownRecord;
+use cadmpeg_ir::StreamName;
+
+use crate::brep::graph::decode_bodies;
+use crate::decode::{bind_opaque_geometry, brep_losses};
+use crate::parasolid::{is_body_stream, stream_header, StreamHeader};
+
+/// The transmit header of one hosted Parasolid stream.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct HostedHeader {
+    /// Human-readable stream description.
+    pub description: String,
+    /// `SCH_<modeller>_<schema>_<format>` schema token.
+    pub schema: cadmpeg_parasolid::OwnedSchemaToken,
+}
+
+/// Read the transmit header of one hosted stream, or `None` when the bytes do
+/// not start with a complete Parasolid header.
+#[doc(hidden)]
+pub fn read_hosted_header(
+    ctx: &DecodeContext<'_>,
+    stream: &[u8],
+) -> Result<Option<HostedHeader>, CodecError> {
+    Ok(stream_header(ctx, stream)?.map(|header| HostedHeader {
+        description: header.description,
+        schema: header.schema,
+    }))
+}
+
+/// What a hosted decode produced besides the neutral arenas it wrote.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct HostedBrep {
+    /// Source locations of the decoded entities.
+    pub annotations: Annotations,
+    /// Carriers kept as opaque records.
+    pub unknowns: Vec<UnknownRecord>,
+    /// Losses of the B-rep decode.
+    pub losses: Vec<LossNote>,
+    /// Schema token of the first stream.
+    pub schema: cadmpeg_parasolid::OwnedSchemaToken,
+    /// Number of neutral entities written.
+    pub entities: u64,
+    /// Number of face color records the neutral model does not take from a
+    /// hosted stream.
+    pub face_color_records: usize,
+}
+
+/// Decode hosted Parasolid streams into the neutral B-rep arenas of `ir`.
+///
+/// `streams` holds complete transmit streams that start with `PS\0\0`. A
+/// partition stream comes before its deltas stream; the decoder orders them
+/// itself. `origin` names the provenance source for annotations. `source` is
+/// the unknown-record identity that opaque carriers link to.
+///
+/// A stream without a Parasolid header, or one that is neither a partition nor
+/// a deltas stream, returns [`CodecError::WrongFormat`].
+#[doc(hidden)]
+pub fn decode_hosted_brep(
+    ctx: &DecodeContext<'_>,
+    ir: &mut CadIr,
+    streams: &[&[u8]],
+    origin: &StreamName,
+    source: &UnknownId,
+) -> Result<HostedBrep, CodecError> {
+    let mut headers: Vec<StreamHeader> =
+        ctx.collection_vec(streams.len(), "collect hosted Parasolid headers")?;
+    for stream in streams {
+        let header = stream_header(ctx, stream)?.ok_or_else(|| {
+            CodecError::WrongFormat("hosted stream has no Parasolid transmit header".into())
+        })?;
+        if !is_body_stream(&header) {
+            return Err(CodecError::WrongFormat(
+                "hosted Parasolid stream is neither a partition nor a deltas stream".into(),
+            ));
+        }
+        headers.push(header);
+    }
+    let first = headers
+        .first()
+        .ok_or_else(|| CodecError::WrongFormat("no hosted Parasolid stream".into()))?;
+    let schema = first.schema.clone();
+    let mut bodies: Vec<(&[u8], &StreamHeader)> =
+        ctx.collection_vec(streams.len(), "pair hosted Parasolid streams")?;
+    bodies.extend(streams.iter().copied().zip(&headers));
+    let mut brep = decode_bodies(ctx, &bodies, origin)?;
+    bind_opaque_geometry(ctx, &mut brep, source)?;
+    let losses = brep_losses(ctx, &mut brep)?;
+    let entities = brep.neutral_entity_count()?;
+    ir.model.bodies = brep.bodies;
+    ir.model.regions = brep.regions;
+    ir.model.shells = brep.shells;
+    ir.model.faces = brep.faces;
+    ir.model.loops = brep.loops;
+    ir.model.coedges = brep.coedges;
+    ir.model.edges = brep.edges;
+    ir.model.vertices = brep.vertices;
+    ir.model.points = brep.points;
+    ir.model.surfaces = brep.surfaces;
+    ir.model.procedural_surfaces = brep.procedural_surfaces;
+    ir.model.curves = brep.curves;
+    ir.model.pcurves = brep.pcurves;
+    ctx.charge_work(
+        u64_from_index(brep.face_colors.len()),
+        "count hosted face colors",
+    )?;
+    Ok(HostedBrep {
+        annotations: brep.annotations,
+        unknowns: brep.unknowns,
+        losses,
+        schema,
+        entities,
+        face_color_records: brep.face_colors.len(),
+    })
+}

@@ -2536,7 +2536,7 @@ fn copy_body_ids(
     Ok(ids)
 }
 
-fn bind_opaque_geometry(
+pub(crate) fn bind_opaque_geometry(
     ctx: &DecodeContext<'_>,
     brep: &mut Brep,
     source: &UnknownId,
@@ -3968,6 +3968,27 @@ fn build_geometry_report(
     classification: &crate::dialect::LayerClassification,
     notes: Vec<String>,
 ) -> Result<DecodeBody, CodecError> {
+    let mut losses = brep_losses(ctx, decoded)?;
+    append_swift_pmi_losses(ctx, scan, &mut losses)?;
+    classification.append_losses(ctx, &mut losses)?;
+    Ok(DecodeBody {
+        transfer: cadmpeg_ir::report::decode::DecodeTransfer::full(true),
+        coverage: cadmpeg_ir::report::decode::Coverage::default(),
+        losses,
+        notes,
+        transfer_ledger: cadmpeg_ir::report::decode::TransferLedger::default(),
+    })
+}
+
+/// Losses that one decoded B-rep reports on its own: refused carriers, untyped
+/// supports, withheld pcurves, and derived topology.
+///
+/// A host that carries Parasolid streams without `SolidWorks` framing reports
+/// the same B-rep losses through [`crate::hosted`].
+pub(crate) fn brep_losses(
+    ctx: &DecodeContext<'_>,
+    decoded: &mut Brep,
+) -> Result<Vec<cadmpeg_ir::report::loss::LossNote>, CodecError> {
     let s = &decoded.stats;
     let mut losses = Vec::new();
 
@@ -4052,15 +4073,7 @@ fn build_geometry_report(
             ),
         );
     }
-    append_swift_pmi_losses(ctx, scan, &mut losses)?;
-    classification.append_losses(ctx, &mut losses)?;
-    Ok(DecodeBody {
-        transfer: cadmpeg_ir::report::decode::DecodeTransfer::full(true),
-        coverage: cadmpeg_ir::report::decode::Coverage::default(),
-        losses,
-        notes,
-        transfer_ledger: cadmpeg_ir::report::decode::TransferLedger::default(),
-    })
+    Ok(losses)
 }
 
 fn build_metadata_ir(
