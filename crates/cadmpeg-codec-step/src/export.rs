@@ -109,7 +109,8 @@ pub(crate) fn write_step_outcome(
             .and_then(out_of_domain_cone_half_angle)
         {
             return Err(cadmpeg_core::CodecError::NotImplemented(format!(
-                "STEP conical_surface cannot represent surface '{}' with semi-angle {half_angle} outside (0, pi/2)",
+                "STEP conical_surface cannot represent surface '{}' with semi-angle {half_angle} \
+                 outside (0, pi/2) unless the semi-angle is zero and the radius is positive",
                 surface.id
             )));
         }
@@ -134,7 +135,11 @@ fn out_of_domain_cone_half_angle(mut geometry: &SolvedSurfaceGeometry) -> Option
         match geometry {
             SolvedSurfaceGeometry::Cone(cone) => {
                 let angle = cone.half_angle().get();
-                return (angle == 0.0 || angle.abs() >= std::f64::consts::FRAC_PI_2)
+                // A zero half-angle is a cylinder of the cone radius, which
+                // `basis_surface` writes as a `CYLINDRICAL_SURFACE`. A zero
+                // radius as well leaves a line, which has no surface carrier.
+                let degenerate_line = angle == 0.0 && cone.radius().get() == 0.0;
+                return (degenerate_line || angle.abs() >= std::f64::consts::FRAC_PI_2)
                     .then_some(angle);
             }
             SolvedSurfaceGeometry::Transformed(placed) => geometry = placed.basis(),

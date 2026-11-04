@@ -1628,13 +1628,22 @@ fn elliptical_cone_reduction_is_reported() {
 
 /// Plans a document whose single surface is a circular cone of `half_angle`.
 fn circular_cone_plan(half_angle: f64) -> Result<ExportPlan, cadmpeg_core::CodecError> {
+    circular_cone_of_radius_plan(2.0, half_angle)
+}
+
+/// Plans a document whose single surface is a circular cone of `radius` at the
+/// placement origin and `half_angle`.
+fn circular_cone_of_radius_plan(
+    radius: f64,
+    half_angle: f64,
+) -> Result<ExportPlan, cadmpeg_core::CodecError> {
     let mut ir = unit_cube().expect("unit cube fixture is admitted");
     ir.model.surfaces[0].geometry = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Cone(
         cadmpeg_ir::geometry::analytic::ConeSurface::try_new(
             Point3::new(0.0, 0.0, 0.0),
             Vector3::new(0.0, 0.0, 1.0),
             Vector3::new(1.0, 0.0, 0.0),
-            2.0,
+            radius,
             1.0,
             half_angle,
         )
@@ -1653,8 +1662,14 @@ fn cone_semi_angle_inside_wr2_is_planned() {
 }
 
 #[test]
-fn zero_cone_semi_angle_is_refused_at_planning() {
-    let error = circular_cone_plan(0.0).expect_err("zero cone angle is outside WR2");
+fn zero_cone_semi_angle_is_planned_as_a_cylinder() {
+    assert!(circular_cone_plan(0.0).is_ok());
+}
+
+#[test]
+fn zero_radius_zero_angle_cone_is_refused_at_planning() {
+    let error = circular_cone_of_radius_plan(0.0, 0.0)
+        .expect_err("a cone of zero radius and zero angle is a line");
     assert!(
         matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0"))
     );
@@ -1736,7 +1751,7 @@ fn transformed_cone_basis(ratio: f64, half_angle: f64) -> SolvedSurfaceGeometry 
 
 #[test]
 fn transformed_cone_basis_outside_wr2_is_refused_at_planning() {
-    let ir = transformed_surface_ir(transformed_cone_basis(1.0, 0.0));
+    let ir = transformed_surface_ir(transformed_cone_basis(1.0, std::f64::consts::FRAC_PI_2));
     let error = StepCodec::default()
         .plan(
             EncodeInput::new(&ir, None),
@@ -1744,7 +1759,7 @@ fn transformed_cone_basis_outside_wr2_is_refused_at_planning() {
         )
         .expect_err("transformed cone basis remains outside WR2");
     assert!(
-        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0"))
+        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("outside (0, pi/2)"))
     );
 }
 
@@ -1859,7 +1874,7 @@ fn a_cone_cache_for_an_unwritable_construction_is_refused_at_planning() {
             Vector3::new(1.0, 0.0, 0.0),
             2.0,
             1.0,
-            0.0,
+            std::f64::consts::FRAC_PI_2,
         )
         .unwrap(),
     ));
@@ -1895,7 +1910,7 @@ fn a_cone_cache_for_an_unwritable_construction_is_refused_at_planning() {
         )
         .expect_err("a cached cone outside WR2 cannot be written");
     assert!(
-        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0"))
+        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("outside (0, pi/2)"))
     );
 }
 
