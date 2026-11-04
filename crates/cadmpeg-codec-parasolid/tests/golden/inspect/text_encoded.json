@@ -1,0 +1,55 @@
+{
+  "container_kind": "stream",
+  "entries": [
+    {
+      "attributes": {},
+      "compression": "stored",
+      "name": "transmit",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 525
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [],
+      "primary": {
+        "admission": "residual",
+        "declared": {
+          "carrier": "transmit",
+          "encoding": "text",
+          "schema": "SCH_1100129_11004"
+        },
+        "dialect": "parasolid:unknown"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "parasolid",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at transmit declares schema \"SCH_1100129_11004\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    },
+    {
+      "code": {
+        "code": "parasolid.text-transmit-unsupported",
+        "kind": "geometry_not_transferred",
+        "namespace": "parasolid",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "parasolid.text-transmit-unsupported: the header declares FORMAT=text; the text encoding of the transmit data is not read",
+      "severity": "error"
+    }
+  ],
+  "notes": []
+}

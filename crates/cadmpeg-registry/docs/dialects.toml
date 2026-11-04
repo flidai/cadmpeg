@@ -1344,7 +1344,8 @@ witness = "spec:docs/formats/solidedge.md section 2"
 # Parasolid kernel namespace (embedded layer)
 # --------------------------------------------------------------------------
 # `cadmpeg-parasolid` owns these rows. SLDPRT, NX, and Solid Edge emit them from their
-# host-local Parasolid carrier readers. Each layer records the complete schema
+# host-local Parasolid carrier readers, and the standalone Parasolid codec emits
+# them for a transmit file. Each layer records the complete schema
 # token and its source carrier. A host with several Parasolid streams uses the
 # carrier as the layer instance.
 #
@@ -1354,8 +1355,12 @@ witness = "spec:docs/formats/solidedge.md section 2"
 # its carrier: SLDPRT uses the 64-byte region after its u16-length description;
 # NX uses the first 512 inflated bytes. No complete token value causes refusal.
 #
-# There is no Parasolid transmit-file (.x_t/.x_b) support anywhere in the
-# workspace: Parasolid is reached only as an embedded stream.
+# `cadmpeg-codec-parasolid` reads a standalone transmit file. The file has no
+# host container, so the one layer that it classifies from the schema token of
+# its text header is the primary layer, with the carrier `transmit` and the
+# declared `encoding`, `binary` or `text`. The codec refuses `encoding = text`
+# with the loss `parasolid.text-transmit-unsupported`. The other hosts reach
+# Parasolid only as an embedded stream.
 #
 # The schema token selects one shared identity row. Admission remains a host
 # fact. SLDPRT verifies the named rows with its embedded-stream grammar. NX

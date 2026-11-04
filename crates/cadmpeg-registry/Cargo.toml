@@ -25,6 +25,7 @@ default = [
   "iges",
   "sat",
   "solidedge",
+  "parasolid",
 ]
 fcstd = ["dep:cadmpeg-codec-freecad"]
 f3d = ["dep:cadmpeg-codec-f3d"]
@@ -38,6 +39,7 @@ step = ["dep:cadmpeg-codec-step"]
 iges = ["dep:cadmpeg-codec-iges"]
 sat = ["dep:cadmpeg-codec-sat"]
 solidedge = ["dep:cadmpeg-codec-solidedge"]
+parasolid = ["dep:cadmpeg-codec-parasolid"]
 
 [dependencies]
 cadmpeg-core.workspace = true
@@ -55,6 +57,7 @@ cadmpeg-codec-iges = { workspace = true, optional = true }
 cadmpeg-codec-step = { workspace = true, optional = true }
 cadmpeg-codec-sat = { workspace = true, optional = true }
 cadmpeg-codec-solidedge = { workspace = true, optional = true }
+cadmpeg-codec-parasolid = { workspace = true, optional = true }
 serde.workspace = true
 thiserror.workspace = true
 # The dialect registries are embedded with `include_str!` and parsed on first
