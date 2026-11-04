@@ -144,6 +144,43 @@ pub(crate) fn sldprt_with_partition_and_deltas(partition: &[u8], deltas: &[u8]) 
     f
 }
 
+/// A `.sldprt` whose partition block carries `partition` and whose
+/// `FeatureBodies/LocalBodies` block carries the whole transmit file `local`.
+pub(crate) fn sldprt_with_partition_and_local_bodies(partition: &[u8], local: &[u8]) -> Vec<u8> {
+    let mut f = outer_header();
+    f.extend(make_block(
+        0x20,
+        "Contents/Config-0-Partition",
+        &parasolid_with_body("partition body", "SCH_SW_33103_11000", partition),
+    ));
+    f.extend(make_block(
+        0x21,
+        "Config-0-FeatureBodies/LocalBodies",
+        &parasolid_with_body(
+            ": TRANSMIT FILE created by modeller version 3301247",
+            "SCH_SW_33103_11000",
+            local,
+        ),
+    ));
+    f
+}
+
+/// A `.sldprt` whose partition block states an empty partition and an empty
+/// deltas stream, and whose `FeatureBodies/LocalBodies` block carries `local`.
+pub(crate) fn sldprt_with_empty_model_and_local_bodies(local: &[u8]) -> Vec<u8> {
+    let mut f = sldprt_with_partition_and_deltas(&[0; 8], &[0; 8]);
+    f.extend(make_block(
+        0x21,
+        "Config-0-FeatureBodies/LocalBodies",
+        &parasolid_with_body(
+            ": TRANSMIT FILE created by modeller version 3301247",
+            "SCH_SW_33103_11000",
+            local,
+        ),
+    ));
+    f
+}
+
 pub(crate) fn sldprt_with_colliding_sites() -> Vec<u8> {
     let mut f = outer_header();
     f.extend(make_block(
