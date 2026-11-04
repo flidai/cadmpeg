@@ -199,7 +199,7 @@ flags u32
 styles_reference u32
 ```
 
-Further references follow and are not read. A graphics face whose `styles_reference` is null displays the style collection that its `parent_reference` node's `styles_reference` selects.
+Further references follow and are not read. For segment major versions above 14, a graphics face whose `styles_reference` is null displays the style collection that its `parent_reference` node's `styles_reference` selects. Only the direct parent is read; a null node `styles_reference` binds nothing.
 
 A `PmGraphics` record with type identifier `0f5648afd411c78d1000d58dc04a0ab5` stores a primary-color style. For segment major versions above 14, its 94-byte payload contains:
 
@@ -227,7 +227,7 @@ terminal_state u8
 
 The five colors are RGBA vectors. The third vector is the diffuse color, at payload offset 36 like the primary-color diffuse vector. The other vectors are not read.
 
-A style collection supplies a face color when it contains exactly one reference to a primary-color style, or no primary-color reference and exactly one reference to a material-color style. The direct-color appearance binds the joined neutral face. A face binding has precedence over the document-default body binding for that face. A missing or ambiguous face, group node, style collection, or color-style reference does not produce a face binding. Only a face's own style reports an unresolved face override; a face whose inherited style does not resolve keeps its body's default.
+A style collection supplies a face color when it contains exactly one reference to a primary-color style, or no primary-color reference, exactly one reference to a material-color style, and no reference to a record that failed to parse. The direct-color appearance binds the joined neutral face. A face binding has precedence over the document-default body binding for that face. A missing or ambiguous face, group node, style collection, or color-style reference does not produce a face binding. Only a face's own style reports an unresolved face override; a face whose inherited style does not resolve keeps its body's default.
 
 ## 11. Part parameters
 
