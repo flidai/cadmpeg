@@ -1366,6 +1366,7 @@ mod sense_tests {
 
 #[cfg(test)]
 mod tests {
+    mod body_kinds;
     mod numerical_ranges;
     use super::Point3;
     const SMALL_CURVED_SPINE_EXTENT: f64 = 1.0e-10;
