@@ -1236,6 +1236,13 @@ onto the plane normal to axis3, and axis2 determines the sense of the projected
 second axis. The 2D operator derives a perpendicular second axis from axis1 and
 uses axis2 only to select its sense. Omitted scale is 1.
 
+In a schema where `cartesian_transformation_operator` is also a
+`functionally_defined_transformation`, the attribute list is the
+`representation_item` `name`, the supertype `name`, its `description`,
+then `axis1`, `axis2`, `local_origin` and `scale`, followed by `axis3` for the
+3D operator. That is eight attributes for the 3D operator and seven for the 2D
+operator. AP203 edition 1 has no such supertype and states six and five.
+
 ISO 10303-42 `build_axes` forms the normalized placement axes from the axis and
 reference direction. The axis defaults to +Z. `first_proj_axis` projects the
 reference direction onto the plane normal to that axis. If the reference

@@ -355,7 +355,7 @@ impl<'a> Builder<'a> {
         Ok(Builder {
             ir,
             schema,
-            emitter: Emitter::new(),
+            emitter: Emitter::for_schema(schema),
             losses: Vec::new(),
             points: ir.model.points.iter().map(|p| (p.id.as_str(), p)).collect(),
             bodies: ir
