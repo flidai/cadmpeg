@@ -606,14 +606,16 @@ fn serialized_extrusion_versions_caps_holes_and_cache_dispatch_atomically() {
             minor == 3,
         );
         let result = decode(&archive(&[object_record(0x10, EXTRUSION_CLASS, &payload)]));
+        // The rectangle profile has four segments, and each owns a lateral face.
         assert_eq!(
             result.ir().model.procedural_surfaces.len(),
-            1,
+            4,
             "minor {minor}: {:?}",
             result.report()
         );
         let expected_caps = if minor < 2 { 2 } else { 1 };
-        assert_eq!(result.ir().model.faces.len(), expected_caps);
+        assert_eq!(result.ir().model.faces.len(), 4 + expected_caps);
+        assert_eq!(result.ir().model.bodies.len(), 1);
         assert_eq!(
             result.ir().model.tessellations.len(),
             usize::from(minor == 3)
@@ -634,10 +636,16 @@ fn serialized_extrusion_versions_caps_holes_and_cache_dispatch_atomically() {
 
     let payload = crate::extrusion::tests::archive_payload(2, [true, true], true, false);
     let result = decode(&archive(&[object_record(0x10, EXTRUSION_CLASS, &payload)]));
-    assert_eq!(result.ir().model.procedural_surfaces.len(), 2);
-    assert_eq!(result.ir().model.faces.len(), 2);
-    assert_eq!(result.ir().model.loops.len(), 4);
-    assert_eq!(result.ir().model.pcurves.len(), 4);
+    // Two four-segment boundaries: eight lateral faces and two caps. The caps
+    // hold an outer and a hole loop each, and every cap segment has a pcurve.
+    assert_eq!(result.ir().model.procedural_surfaces.len(), 8);
+    assert_eq!(result.ir().model.faces.len(), 10);
+    assert_eq!(result.ir().model.loops.len(), 12);
+    assert_eq!(result.ir().model.pcurves.len(), 16);
+    assert_eq!(
+        result.ir().model.bodies[0].kind,
+        cadmpeg_ir::topology::BodyKind::Solid
+    );
     assert!(
         cadmpeg_ir::validate::validate_neutral(result.ir(), result.report().losses.clone())
             .expect("resource allocation did not fail")

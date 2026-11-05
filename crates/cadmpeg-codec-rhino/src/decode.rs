@@ -3898,84 +3898,91 @@ impl<'a> DecodeContext<'a> {
         }
         let association = self.source_association(identity)?;
         let session = self.expand.ctx();
-        let mut source_boundaries = std::mem::take(&mut extrusion.boundaries);
+        let capped = extrusion.caps[0] || extrusion.caps[1];
+        // A capped extrusion stages from its pieces; the others stage the
+        // lateral surfaces of whole boundaries.
+        let mut source_boundaries = if capped {
+            Vec::new()
+        } else {
+            std::mem::take(&mut extrusion.boundaries)
+        };
         let result = self.validate_candidate_fallible(|candidate, candidate_annotations| {
             let mut links = Vec::new();
-            let mut boundaries = session.collection_vec(source_boundaries.len(), "Rhino committed extrusion boundaries")?;
-            for (index, boundary) in source_boundaries.iter_mut().enumerate() {
-                let id = commit_curve_tree(
-                    session,
-                    candidate,
-                    candidate_annotations,
-                    std::mem::replace(&mut boundary.start_curve, crate::curves::DecodedCurve::leaf(
-                        CurveGeometry::Solved(SolvedCurveGeometry::Unknown { record: None }),
-                        Diagnostics::new(),
-                    )),
-                    CurveCommitSource {
-                        key: key.as_str(),
-                        association: &association,
-                        record: Some(unknown.try_clone_for_decode(ctx, "Rhino typed identity copy")?),
-                        path: &format!("profile-{index}.start"),
-                    },
-                )?;
-                boundaries.push(CommittedExtrusionBoundary {
-                    boundary,
-                    directrix: id,
-                });
-            }
-            for (index, boundary) in boundaries.iter().enumerate() {
-                let surface_id = { let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?; copied_storage.with_storage(|| Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::SurfaceId::compose(
-                    &cadmpeg_ir::identity_namespace!("rhino", "object", "surface"),
-                    key.try_clone_for_decode(ctx, "Rhino temporary identity key")?
-                        .then(cadmpeg_ir::identity_key!(".lateral-"))
-                        .then(index),
-                ))) }?;
-                let procedure_id = { let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?; copied_storage.with_storage(|| Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::ProceduralSurfaceId::compose(
-                    &cadmpeg_ir::identity_namespace!("rhino", "object", "procedural-surface"),
-                    key.try_clone_for_decode(ctx, "Rhino temporary identity key")?
-                        .then(cadmpeg_ir::identity_key!(".lateral-"))
-                        .then(index),
-                ))) }?;
-                candidate.model.surfaces.push(Surface {
-                    id: surface_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                    geometry: SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(
-                        boundary.boundary.lateral.try_clone_for_decode(ctx, "Rhino extrusion lateral surface copy")?,
-                    )),
-                    source_object: Some(association.try_clone_for_decode(ctx, "Rhino source association copy")?),
-                });
-                candidate
-                    .model
-                    .add_procedural_surface(ctx, &surface_id, cadmpeg_ir::geometry::surface_payloads::ExtrusionSurfaceConstruction::try_new(
-                            boundary.directrix.try_clone_for_decode(ctx, "Rhino extrusion directrix identity copy")?,
-                            None,
-                            extrusion.direction,
-                            None,
-                            cadmpeg_ir::geometry::CacheContract::from_form(None),
-                        )
-                        .map_err(|error| CandidateError::Admission(error.to_string()))
-                        .and_then(|admitted_payload| {
-                            Ok::<_, CandidateError>(ProceduralSurface::new(
-                                procedure_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                                ProceduralSurfaceDefinition::Extrusion(admitted_payload),
-                                None,
-                            ))
-                        })
-                        ?)?
-                    .map_err(|error| error.to_string())?;
-                annotate_derived(ctx, candidate_annotations, &surface_id.to_string())?;
-                annotate_derived(ctx, candidate_annotations, &procedure_id.to_string())?;
-                links.push(surface_id.to_string());
-            }
-            if extrusion.caps[0] || extrusion.caps[1] {
-                links.push(stage_extrusion_caps(
+            if capped {
+                links.push(extrusion_body::stage_extrusion_body(
                     session,
                     candidate,
                     candidate_annotations,
                     key.as_str(),
                     &association,
                     &extrusion,
-                    &boundaries,
                 )?);
+            } else {
+                let mut boundaries = session.collection_vec(source_boundaries.len(), "Rhino committed extrusion boundaries")?;
+                for (index, boundary) in source_boundaries.iter_mut().enumerate() {
+                    let id = commit_curve_tree(
+                        session,
+                        candidate,
+                        candidate_annotations,
+                        std::mem::replace(&mut boundary.start_curve, crate::curves::DecodedCurve::leaf(
+                            CurveGeometry::Solved(SolvedCurveGeometry::Unknown { record: None }),
+                            Diagnostics::new(),
+                        )),
+                        CurveCommitSource {
+                            key: key.as_str(),
+                            association: &association,
+                            record: Some(unknown.try_clone_for_decode(ctx, "Rhino typed identity copy")?),
+                            path: &format!("profile-{index}.start"),
+                        },
+                    )?;
+                    boundaries.push(CommittedExtrusionBoundary {
+                        boundary,
+                        directrix: id,
+                    });
+                }
+                for (index, boundary) in boundaries.iter().enumerate() {
+                    let surface_id = { let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?; copied_storage.with_storage(|| Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::SurfaceId::compose(
+                        &cadmpeg_ir::identity_namespace!("rhino", "object", "surface"),
+                        key.try_clone_for_decode(ctx, "Rhino temporary identity key")?
+                            .then(cadmpeg_ir::identity_key!(".lateral-"))
+                            .then(index),
+                    ))) }?;
+                    let procedure_id = { let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?; copied_storage.with_storage(|| Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::ProceduralSurfaceId::compose(
+                        &cadmpeg_ir::identity_namespace!("rhino", "object", "procedural-surface"),
+                        key.try_clone_for_decode(ctx, "Rhino temporary identity key")?
+                            .then(cadmpeg_ir::identity_key!(".lateral-"))
+                            .then(index),
+                    ))) }?;
+                    candidate.model.surfaces.push(Surface {
+                        id: surface_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
+                        geometry: SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(
+                            boundary.boundary.lateral.try_clone_for_decode(ctx, "Rhino extrusion lateral surface copy")?,
+                        )),
+                        source_object: Some(association.try_clone_for_decode(ctx, "Rhino source association copy")?),
+                    });
+                    candidate
+                        .model
+                        .add_procedural_surface(ctx, &surface_id, cadmpeg_ir::geometry::surface_payloads::ExtrusionSurfaceConstruction::try_new(
+                                boundary.directrix.try_clone_for_decode(ctx, "Rhino extrusion directrix identity copy")?,
+                                None,
+                                extrusion.direction,
+                                None,
+                                cadmpeg_ir::geometry::CacheContract::from_form(None),
+                            )
+                            .map_err(|error| CandidateError::Admission(error.to_string()))
+                            .and_then(|admitted_payload| {
+                                Ok::<_, CandidateError>(ProceduralSurface::new(
+                                    procedure_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
+                                    ProceduralSurfaceDefinition::Extrusion(admitted_payload),
+                                    None,
+                                ))
+                            })
+                            ?)?
+                        .map_err(|error| error.to_string())?;
+                    annotate_derived(ctx, candidate_annotations, &surface_id.to_string())?;
+                    annotate_derived(ctx, candidate_annotations, &procedure_id.to_string())?;
+                    links.push(surface_id.to_string());
+                }
             }
             for (index, mut mesh) in extrusion.meshes.into_iter().enumerate() {
                 mesh.tessellation.id = cadmpeg_ir::tessellation::TessellationId::mint(format!(
@@ -4633,362 +4640,6 @@ fn set_exactness(
 struct CommittedExtrusionBoundary<'a> {
     boundary: &'a crate::extrusion::ExtrusionBoundary,
     directrix: cadmpeg_ir::ids::CurveId,
-}
-
-fn stage_extrusion_caps(
-    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
-    ir: &mut CadIr,
-    annotations: &mut impl ExactnessTarget,
-    key: &str,
-    association: &SourceObjectAssociation,
-    extrusion: &crate::extrusion::DecodedExtrusion,
-    boundaries: &[CommittedExtrusionBoundary<'_>],
-) -> Result<String, CandidateError> {
-    let key = IdentityKey::try_new(key.to_owned()).map_err(|error| error.to_string())?;
-    let body_id = {
-        let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-        copied_storage.with_storage(|| {
-            Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::BodyId::compose(
-                &cadmpeg_ir::identity_namespace!("rhino", "object", "body"),
-                key.try_clone_for_decode(ctx, "Rhino temporary identity key")?
-                    .then(cadmpeg_ir::identity_key!(".caps")),
-            ))
-        })
-    }?;
-    let mut region_ids = Vec::new();
-    for cap in 0..2 {
-        if !extrusion.caps[cap] {
-            continue;
-        }
-        let mut cap_key_copy_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-        let cap_key = cap_key_copy_storage
-            .with_storage(|| key.try_clone_for_decode(ctx, "Rhino temporary identity key"))?
-            .then(cadmpeg_ir::identity_key!(".cap-"))
-            .then(cap);
-        let region_id = {
-            let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-            copied_storage.with_storage(|| {
-                Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::RegionId::compose(
-                    &cadmpeg_ir::identity_namespace!("rhino", "object", "region"),
-                    cap_key.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                ))
-            })
-        }?;
-        let shell_id = {
-            let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-            copied_storage.with_storage(|| {
-                Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::ShellId::compose(
-                    &cadmpeg_ir::identity_namespace!("rhino", "object", "shell"),
-                    cap_key.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                ))
-            })
-        }?;
-        let surface_id = {
-            let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-            copied_storage.with_storage(|| {
-                Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::SurfaceId::compose(
-                    &cadmpeg_ir::identity_namespace!("rhino", "object", "surface"),
-                    cap_key.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                ))
-            })
-        }?;
-        let face_id = {
-            let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-            copied_storage.with_storage(|| {
-                Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::FaceId::compose(
-                    &cadmpeg_ir::identity_namespace!("rhino", "object", "face"),
-                    cap_key.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                ))
-            })
-        }?;
-        let frame = cadmpeg_ir::units::OrthonormalFrame3::from_units(
-            extrusion.cap_normals[cap],
-            extrusion.cap_u_axes[cap],
-        )
-        .ok_or_else(|| {
-            "extrusion cap staging: PlaneSurface.normal/u_axis must form an orthonormal frame"
-                .to_string()
-        })?;
-        let origin = cadmpeg_ir::features::FinitePoint3::new(extrusion.cap_origins[cap])
-            .ok_or_else(|| {
-                "extrusion cap staging: PlaneSurface.origin must be finite".to_string()
-            })?;
-        ir.model.surfaces.push(Surface {
-            id: surface_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            geometry: SurfaceGeometry::Solved(SolvedSurfaceGeometry::Plane(
-                cadmpeg_ir::geometry::analytic::PlaneSurface::new(origin, frame),
-            )),
-            source_object: Some(
-                association.try_clone_for_decode(ctx, "Rhino source association copy")?,
-            ),
-        });
-        let mut loop_ids = ctx.collection_vec(boundaries.len(), "Rhino extrusion cap loop IDs")?;
-        for (profile, committed) in boundaries.iter().enumerate() {
-            let boundary = committed.boundary;
-            let mut suffix_copy_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-            let suffix = suffix_copy_storage
-                .with_storage(|| key.try_clone_for_decode(ctx, "Rhino temporary identity key"))?
-                .then(cadmpeg_ir::identity_key!(".cap-"))
-                .then(cap)
-                .then(cadmpeg_ir::identity_key!(".profile-"))
-                .then(profile);
-            let curve_id = if cap == 0 {
-                committed
-                    .directrix
-                    .try_clone_for_decode(ctx, "Rhino extrusion cap directrix identity copy")?
-            } else {
-                let id = {
-                    let mut copied_storage =
-                        ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                    copied_storage.with_storage(|| {
-                        Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::CurveId::compose(
-                            &cadmpeg_ir::identity_namespace!("rhino", "object", "curve"),
-                            suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                        ))
-                    })
-                }?;
-                ir.model.curves.push(Curve {
-                    parameter_range: None,
-                    id: id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                    geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(
-                        boundary
-                            .end_nurbs
-                            .try_clone_for_decode(ctx, "Rhino extrusion end curve copy")?,
-                    )),
-                    source_object: Some(
-                        association.try_clone_for_decode(ctx, "Rhino source association copy")?,
-                    ),
-                });
-                annotate_derived(ctx, annotations, &id.to_string())?;
-                id
-            };
-            let endpoint = if cap == 0 {
-                boundary.start_nurbs.control_points().first().copied()
-            } else {
-                boundary.end_nurbs.control_points().first().copied()
-            };
-            let Some(endpoint) = endpoint else {
-                return Err(format!(
-                    "extrusion cap staging: cap {cap} profile {profile} has no endpoint"
-                )
-                .into());
-            };
-            let point_id = {
-                let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                copied_storage.with_storage(|| {
-                    Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::PointId::compose(
-                        &cadmpeg_ir::identity_namespace!("rhino", "object", "point"),
-                        suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                    ))
-                })
-            }?;
-            let vertex_id = {
-                let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                copied_storage.with_storage(|| {
-                    Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::VertexId::compose(
-                        &cadmpeg_ir::identity_namespace!("rhino", "object", "vertex"),
-                        suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                    ))
-                })
-            }?;
-            let edge_id = {
-                let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                copied_storage.with_storage(|| {
-                    Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::EdgeId::compose(
-                        &cadmpeg_ir::identity_namespace!("rhino", "object", "edge"),
-                        suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                    ))
-                })
-            }?;
-            let loop_id = {
-                let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                copied_storage.with_storage(|| {
-                    Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::LoopId::compose(
-                        &cadmpeg_ir::identity_namespace!("rhino", "object", "loop"),
-                        suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                    ))
-                })
-            }?;
-            let coedge_id = {
-                let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                copied_storage.with_storage(|| {
-                    Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::CoedgeId::compose(
-                        &cadmpeg_ir::identity_namespace!("rhino", "object", "coedge"),
-                        suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                    ))
-                })
-            }?;
-            let pcurve_id = {
-                let mut copied_storage = ctx.reserve_scoped(0, "Rhino temporary identity key")?;
-                copied_storage.with_storage(|| {
-                    Ok::<_, cadmpeg_core::CodecError>(cadmpeg_ir::ids::PcurveId::compose(
-                        &cadmpeg_ir::identity_namespace!("rhino", "object", "pcurve"),
-                        suffix.try_clone_for_decode(ctx, "Rhino temporary identity key")?,
-                    ))
-                })
-            }?;
-            let pcurve = if cap == 0 {
-                &boundary.start_pcurve
-            } else {
-                &boundary.end_pcurve
-            };
-            let degree = usize::try_from(pcurve.degree).map_err(|error| {
-                format!(
-                    "extrusion cap staging: pcurve degree {}: {error}",
-                    pcurve.degree
-                )
-            })?;
-            let end_index = degree.checked_add(1)
-                .and_then(|order| pcurve.knots.len().checked_sub(order))
-                .ok_or_else(|| format!(
-                    "extrusion cap staging: pcurve knot count {} cannot supply degree {degree} support",
-                    pcurve.knots.len()
-                ))?;
-            let parameter_range = pcurve
-                .knots
-                .get(degree)
-                .copied()
-                .zip(pcurve.knots.get(end_index).copied())
-                .map(|(start, end)| [start, end])
-                .ok_or_else(|| format!(
-                    "extrusion cap staging: pcurve parameter range indexes {degree} and {end_index} exceed knot count {}",
-                    pcurve.knots.len()
-                ))?;
-            let nurbs = PcurveNurbs::from_lanes(
-                ctx,
-                pcurve.degree,
-                ctx.copy_slice(&pcurve.knots, "Rhino extrusion cap pcurve knots")?,
-                ctx.copy_slice(&pcurve.control_points, "Rhino extrusion cap pcurve poles")?,
-                pcurve
-                    .weights
-                    .as_ref()
-                    .map(|weights| ctx.copy_slice(weights, "Rhino extrusion cap pcurve weights"))
-                    .transpose()?,
-                pcurve.periodic,
-            )?
-            .map_err(|error| format!("extrusion cap staging: {error}"))?;
-            let carrier =
-                cadmpeg_ir::topology::EdgeCarrier::new(Some(curve_id), Some(parameter_range))
-                    .map_err(|error| format!("extrusion cap staging: {error}"))?;
-            ir.model.points.push(Point::new(
-                point_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                endpoint,
-                Some(association.try_clone_for_decode(ctx, "Rhino source association copy")?),
-            ));
-            ir.model.vertices.push(Vertex {
-                id: vertex_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                point: point_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                tolerance: None,
-            });
-            ir.model.edges.push(Edge {
-                id: edge_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                carrier,
-                start: vertex_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                end: vertex_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                tolerance: None,
-            });
-            ir.model.pcurves.push(Pcurve {
-                id: pcurve_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                geometry: PcurveGeometry::Nurbs { nurbs },
-                metadata: cadmpeg_ir::geometry::pcurve::PcurveMetadata::general(
-                    None,
-                    Some(
-                        cadmpeg_ir::units::FiniteVector::new(parameter_range).ok_or_else(|| {
-                            format!(
-                                "extrusion cap staging: {}",
-                                cadmpeg_ir::geometry::pcurve::PcurveMetadata::NON_FINITE_PARAMETER_RANGE
-                            )
-                        })?,
-                    ),
-                    None,
-                ),
-            });
-            ir.model.coedges.push(Coedge {
-                id: coedge_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                owner_loop: loop_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                edge: edge_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                radial_next: coedge_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                sense: Sense::Forward,
-                pcurves: vec![cadmpeg_ir::topology::PcurveUse {
-                    pcurve: pcurve_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                    isoparametric: None,
-                    parameter_range: None,
-                }],
-                use_curve: None,
-            });
-            ir.model.loops.push(Loop {
-                id: loop_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                face: face_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-                boundary: cadmpeg_ir::topology::LoopBoundary::Ring(
-                    cadmpeg_ir::topology::LoopRing::new(
-                        ctx,
-                        vec![coedge_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?],
-                        Vec::new(),
-                    )
-                    .map_err(cadmpeg_core::CodecError::from)?
-                    .map_err(|error| format!("extrusion cap staging: {error}"))?,
-                ),
-            });
-            loop_ids.push(loop_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?);
-            for id in [
-                point_id.to_string(),
-                vertex_id.to_string(),
-                edge_id.to_string(),
-                pcurve_id.to_string(),
-                coedge_id.to_string(),
-                loop_id.to_string(),
-            ] {
-                annotate_derived(ctx, annotations, &id)?;
-            }
-        }
-        ir.model.faces.push(Face {
-            id: face_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            shell: shell_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            surface: surface_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            sense: if cap == 0 {
-                Sense::Reversed
-            } else {
-                Sense::Forward
-            },
-            loops: cadmpeg_ir::topology::FaceLoops::unspecified(loop_ids),
-            name: None,
-            color: association.color,
-            tolerance: None,
-        });
-        annotate_derived(ctx, annotations, &surface_id.to_string())?;
-        annotate_derived(ctx, annotations, &face_id.to_string())?;
-        ir.model.shells.push(Shell::with_face(
-            shell_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            region_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            face_id,
-        ));
-        ir.model.regions.push(Region {
-            id: region_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            body: body_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-            shells: vec![shell_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?],
-        });
-        annotate_derived(ctx, annotations, &shell_id.to_string())?;
-        annotate_derived(ctx, annotations, &region_id.to_string())?;
-        region_ids.push(region_id);
-    }
-    if region_ids.is_empty() {
-        return Err("extrusion cap staging: no enabled caps".to_string().into());
-    }
-    ir.model.bodies.push(Body {
-        id: body_id.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
-        kind: BodyKind::Sheet,
-        regions: region_ids,
-        transform: None,
-        name: association
-            .name
-            .as_deref()
-            .map(|name| ctx.copy_retained_text(name, "Rhino extrusion cap body name"))
-            .transpose()?,
-        color: association.color,
-        visible: association.visible,
-    });
-    annotate_derived(ctx, annotations, &body_id.to_string())?;
-    Ok(body_id.to_string())
 }
 
 #[derive(Debug)]
@@ -6433,6 +6084,7 @@ fn stage_curve_tree_indexed(
                 ctx.collection_vec(parameter_count, "Rhino Brep curve tree parameters")?;
             let mut components =
                 ctx.collection_vec(children.len(), "Rhino Brep curve tree components")?;
+            let solved_cache = crate::curves::compound_solved_cache(ctx, &children, end_parameter)?;
             for (index, (parameter, child)) in children.into_iter().enumerate() {
                 let parameter = parameter.get();
                 parameters.push(parameter);
@@ -6449,8 +6101,13 @@ fn stage_curve_tree_indexed(
             }
             parameters.push(end_parameter.get());
             (
-                CurveGeometry::Solved(SolvedCurveGeometry::Unknown {
-                    record: Some(unknown.try_clone_for_decode(ctx, "Rhino typed identity copy")?),
+                CurveGeometry::Solved(match solved_cache {
+                    Some(nurbs) => SolvedCurveGeometry::Nurbs(nurbs),
+                    None => SolvedCurveGeometry::Unknown {
+                        record: Some(
+                            unknown.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
+                        ),
+                    },
                 }),
                 Some(ProceduralCurveDefinition::Compound(
                     cadmpeg_ir::geometry::CompoundCurveConstruction::try_new(
@@ -7085,6 +6742,7 @@ fn commit_curve_tree_indexed(
                 ctx.collection_vec(parameter_count, "Rhino committed curve tree parameters")?;
             let mut components =
                 ctx.collection_vec(children.len(), "Rhino committed curve tree components")?;
+            let solved_cache = crate::curves::compound_solved_cache(ctx, &children, end_parameter)?;
             for (index, (parameter, child)) in children.into_iter().enumerate() {
                 let parameter = parameter.get();
                 parameters.push(parameter);
@@ -7108,8 +6766,11 @@ fn commit_curve_tree_indexed(
             }
             parameters.push(end_parameter.get());
             (
-                CurveGeometry::Solved(SolvedCurveGeometry::Unknown {
-                    record: source.record,
+                CurveGeometry::Solved(match solved_cache {
+                    Some(nurbs) => SolvedCurveGeometry::Nurbs(nurbs),
+                    None => SolvedCurveGeometry::Unknown {
+                        record: source.record,
+                    },
                 }),
                 Some(ProceduralCurveDefinition::Compound(
                     cadmpeg_ir::geometry::CompoundCurveConstruction::try_new(
@@ -7926,5 +7587,6 @@ fn full_source_attributes(
     Ok(attributes)
 }
 
+mod extrusion_body;
 #[cfg(test)]
 mod tests;

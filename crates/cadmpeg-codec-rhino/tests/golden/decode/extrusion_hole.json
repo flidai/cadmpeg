@@ -8,63 +8,430 @@
       "attributes": [],
       "bodies": [
         {
-          "id": "rhino:object:body#record-000000-offset-177.caps",
-          "kind": "sheet",
+          "id": "rhino:object:body#record-000000-offset-177.body",
+          "kind": "solid",
           "regions": [
-            "rhino:object:region#record-000000-offset-177.cap-0",
-            "rhino:object:region#record-000000-offset-177.cap-1"
+            "rhino:object:region#record-000000-offset-177.body"
           ],
           "visible": true
         }
       ],
       "coedges": [
         {
-          "edge": "rhino:object:edge#record-000000-offset-177.cap-0.profile-0",
-          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0",
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-0",
           "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-0",
           "pcurves": [
             {
-              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0"
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-0"
             }
           ],
-          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0",
-          "sense": "forward"
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-0",
+          "sense": "reversed"
         },
         {
-          "edge": "rhino:object:edge#record-000000-offset-177.cap-0.profile-1",
-          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1",
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-0",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-1"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-0",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-2"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-0",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-3"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-0",
           "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-1",
           "pcurves": [
             {
-              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1"
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-0"
             }
           ],
-          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1",
-          "sense": "forward"
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-0",
+          "sense": "reversed"
         },
         {
-          "edge": "rhino:object:edge#record-000000-offset-177.cap-1.profile-0",
-          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0",
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-1",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-1"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-1",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-2"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-0.profile-1",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-3"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-0",
           "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-0",
           "pcurves": [
             {
-              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0"
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-0"
             }
           ],
-          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-2",
           "sense": "forward"
         },
         {
-          "edge": "rhino:object:edge#record-000000-offset-177.cap-1.profile-1",
-          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1",
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-0",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-1"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-0",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-2"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-0",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-3"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-0",
           "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-1",
           "pcurves": [
             {
-              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1"
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-0"
             }
           ],
-          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-2",
           "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-1",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-1"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-1",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-2"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.cap-1.profile-1",
+          "pcurves": [
+            {
+              "pcurve": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-3"
+            }
+          ],
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-0",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-1",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-2",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-3",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-0.seam-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-0",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-0",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-1",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-1",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-2",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-2",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-2",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-1",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-0",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-0",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-1",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-3",
+          "sense": "forward"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-2",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-3",
+          "sense": "reversed"
+        },
+        {
+          "edge": "rhino:object:edge#record-000000-offset-177.profile-1.seam-3",
+          "id": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-3",
+          "owner_loop": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3",
+          "radial_next": "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-1",
+          "sense": "reversed"
         }
       ],
       "configurations": [],
@@ -77,7 +444,106 @@
               0.0,
               0.0,
               1.0,
+              1.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 10.0,
+                  "y": 20.0,
+                  "z": 32.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 20.0,
+                  "z": 32.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
               2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 12.0,
+                  "y": 20.0,
+                  "z": 32.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 32.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 32.5
+                },
+                {
+                  "x": 10.0,
+                  "y": 21.0,
+                  "z": 32.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
               3.0,
               4.0,
               4.0
@@ -88,33 +554,18 @@
               "points": [
                 {
                   "x": 10.0,
-                  "y": 20.0,
-                  "z": 37.5
-                },
-                {
-                  "x": 12.0,
-                  "y": 20.0,
-                  "z": 37.5
-                },
-                {
-                  "x": 12.0,
                   "y": 21.0,
-                  "z": 37.5
-                },
-                {
-                  "x": 10.0,
-                  "y": 21.0,
-                  "z": 37.5
+                  "z": 32.5
                 },
                 {
                   "x": 10.0,
                   "y": 20.0,
-                  "z": 37.5
+                  "z": 32.5
                 }
               ]
             }
           },
-          "id": "rhino:object:curve#record-000000-offset-177.cap-1.profile-0",
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-3",
           "source_object": {
             "format": "rhino",
             "object_id": "00000000-0000-0000-0000-000000000000",
@@ -129,10 +580,7 @@
               0.0,
               0.0,
               1.0,
-              2.0,
-              3.0,
-              4.0,
-              4.0
+              1.0
             ],
             "periodic": false,
             "poles": {
@@ -144,18 +592,105 @@
                   "z": 37.5
                 },
                 {
-                  "x": 10.0,
-                  "y": 21.0,
-                  "z": 37.5
-                },
-                {
                   "x": 12.0,
-                  "y": 21.0,
+                  "y": 20.0,
                   "z": 37.5
-                },
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
                 {
                   "x": 12.0,
                   "y": 20.0,
+                  "z": 37.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 37.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 37.5
+                },
+                {
+                  "x": 10.0,
+                  "y": 21.0,
+                  "z": 37.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
+              3.0,
+              4.0,
+              4.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 10.0,
+                  "y": 21.0,
                   "z": 37.5
                 },
                 {
@@ -166,7 +701,91 @@
               ]
             }
           },
-          "id": "rhino:object:curve#record-000000-offset-177.cap-1.profile-1",
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 10.0,
+              "y": 20.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.seam-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 12.0,
+              "y": 20.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.seam-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 12.0,
+              "y": 21.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.seam-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 10.0,
+              "y": 21.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-0.seam-3",
           "source_object": {
             "format": "rhino",
             "object_id": "00000000-0000-0000-0000-000000000000",
@@ -181,10 +800,7 @@
               0.0,
               0.0,
               1.0,
-              2.0,
-              3.0,
-              4.0,
-              4.0
+              1.0
             ],
             "periodic": false,
             "poles": {
@@ -196,18 +812,105 @@
                   "z": 32.5
                 },
                 {
-                  "x": 12.0,
-                  "y": 20.0,
-                  "z": 32.5
-                },
-                {
-                  "x": 12.0,
+                  "x": 10.0,
                   "y": 21.0,
                   "z": 32.5
-                },
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
                 {
                   "x": 10.0,
                   "y": 21.0,
+                  "z": 32.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 32.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 32.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 20.0,
+                  "z": 32.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
+              3.0,
+              4.0,
+              4.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 12.0,
+                  "y": 20.0,
                   "z": 32.5
                 },
                 {
@@ -218,7 +921,7 @@
               ]
             }
           },
-          "id": "rhino:object:curve#record-000000-offset-177.profile-0.start",
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-3",
           "source_object": {
             "format": "rhino",
             "object_id": "00000000-0000-0000-0000-000000000000",
@@ -233,7 +936,106 @@
               0.0,
               0.0,
               1.0,
+              1.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 10.0,
+                  "y": 20.0,
+                  "z": 37.5
+                },
+                {
+                  "x": 10.0,
+                  "y": 21.0,
+                  "z": 37.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
               2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 10.0,
+                  "y": 21.0,
+                  "z": 37.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 37.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 12.0,
+                  "y": 21.0,
+                  "z": 37.5
+                },
+                {
+                  "x": 12.0,
+                  "y": 20.0,
+                  "z": 37.5
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
               3.0,
               4.0,
               4.0
@@ -243,34 +1045,103 @@
               "form": "polynomial",
               "points": [
                 {
-                  "x": 10.0,
-                  "y": 20.0,
-                  "z": 32.5
-                },
-                {
-                  "x": 10.0,
-                  "y": 21.0,
-                  "z": 32.5
-                },
-                {
-                  "x": 12.0,
-                  "y": 21.0,
-                  "z": 32.5
-                },
-                {
                   "x": 12.0,
                   "y": 20.0,
-                  "z": 32.5
+                  "z": 37.5
                 },
                 {
                   "x": 10.0,
                   "y": 20.0,
-                  "z": 32.5
+                  "z": 37.5
                 }
               ]
             }
           },
-          "id": "rhino:object:curve#record-000000-offset-177.profile-1.start",
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 10.0,
+              "y": 20.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.seam-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 10.0,
+              "y": 21.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.seam-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 12.0,
+              "y": 21.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.seam-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1.0
+            },
+            "kind": "line",
+            "origin": {
+              "x": 12.0,
+              "y": 20.0,
+              "z": 32.5
+            }
+          },
+          "id": "rhino:object:curve#record-000000-offset-177.profile-1.seam-3",
           "source_object": {
             "format": "rhino",
             "object_id": "00000000-0000-0000-0000-000000000000",
@@ -282,79 +1153,407 @@
       "edges": [
         {
           "carrier": {
-            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.start",
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-0",
             "param_range": [
               0.0,
-              4.0
+              1.0
             ]
           },
-          "end": "rhino:object:vertex#record-000000-offset-177.cap-0.profile-0",
-          "id": "rhino:object:edge#record-000000-offset-177.cap-0.profile-0",
-          "start": "rhino:object:vertex#record-000000-offset-177.cap-0.profile-0"
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-1",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-0",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-0"
         },
         {
           "carrier": {
-            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.start",
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-1",
             "param_range": [
-              0.0,
-              4.0
+              1.0,
+              2.0
             ]
           },
-          "end": "rhino:object:vertex#record-000000-offset-177.cap-0.profile-1",
-          "id": "rhino:object:edge#record-000000-offset-177.cap-0.profile-1",
-          "start": "rhino:object:vertex#record-000000-offset-177.cap-0.profile-1"
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-1",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-1"
         },
         {
           "carrier": {
-            "curve": "rhino:object:curve#record-000000-offset-177.cap-1.profile-0",
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-2",
             "param_range": [
-              0.0,
-              4.0
+              2.0,
+              3.0
             ]
           },
-          "end": "rhino:object:vertex#record-000000-offset-177.cap-1.profile-0",
-          "id": "rhino:object:edge#record-000000-offset-177.cap-1.profile-0",
-          "start": "rhino:object:vertex#record-000000-offset-177.cap-1.profile-0"
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-3",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-2"
         },
         {
           "carrier": {
-            "curve": "rhino:object:curve#record-000000-offset-177.cap-1.profile-1",
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-3",
             "param_range": [
-              0.0,
+              3.0,
               4.0
             ]
           },
-          "end": "rhino:object:vertex#record-000000-offset-177.cap-1.profile-1",
-          "id": "rhino:object:edge#record-000000-offset-177.cap-1.profile-1",
-          "start": "rhino:object:vertex#record-000000-offset-177.cap-1.profile-1"
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-0",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-3",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-3"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-0",
+            "param_range": [
+              0.0,
+              1.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-0"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-1",
+            "param_range": [
+              1.0,
+              2.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-1"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-2",
+            "param_range": [
+              2.0,
+              3.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-2"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-3",
+            "param_range": [
+              3.0,
+              4.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-3"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.seam-0",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.seam-0",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-0"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.seam-1",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.seam-1",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-1"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.seam-2",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.seam-2",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-2"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-0.seam-3",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-0.seam-3",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-3"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-0",
+            "param_range": [
+              0.0,
+              1.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-0"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-1",
+            "param_range": [
+              1.0,
+              2.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-1"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-2",
+            "param_range": [
+              2.0,
+              3.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-3",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-2"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-3",
+            "param_range": [
+              3.0,
+              4.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-3",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-3"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-0",
+            "param_range": [
+              0.0,
+              1.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-0"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-1",
+            "param_range": [
+              1.0,
+              2.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-1"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-2",
+            "param_range": [
+              2.0,
+              3.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-2"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-3",
+            "param_range": [
+              3.0,
+              4.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-3"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.seam-0",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.seam-0",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-0"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.seam-1",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.seam-1",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-1"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.seam-2",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.seam-2",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-2"
+        },
+        {
+          "carrier": {
+            "curve": "rhino:object:curve#record-000000-offset-177.profile-1.seam-3",
+            "param_range": [
+              0.0,
+              5.0
+            ]
+          },
+          "end": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "id": "rhino:object:edge#record-000000-offset-177.profile-1.seam-3",
+          "start": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-3"
         }
       ],
       "faces": [
         {
           "id": "rhino:object:face#record-000000-offset-177.cap-0",
           "loops": {
-            "classification": "unspecified",
-            "loops": [
-              "rhino:object:loop#record-000000-offset-177.cap-0.profile-0",
+            "classification": "classified",
+            "inner": [
               "rhino:object:loop#record-000000-offset-177.cap-0.profile-1"
-            ]
+            ],
+            "outer": "rhino:object:loop#record-000000-offset-177.cap-0.profile-0"
           },
           "sense": "reversed",
-          "shell": "rhino:object:shell#record-000000-offset-177.cap-0",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
           "surface": "rhino:object:surface#record-000000-offset-177.cap-0"
         },
         {
           "id": "rhino:object:face#record-000000-offset-177.cap-1",
           "loops": {
-            "classification": "unspecified",
-            "loops": [
-              "rhino:object:loop#record-000000-offset-177.cap-1.profile-0",
+            "classification": "classified",
+            "inner": [
               "rhino:object:loop#record-000000-offset-177.cap-1.profile-1"
-            ]
+            ],
+            "outer": "rhino:object:loop#record-000000-offset-177.cap-1.profile-0"
           },
           "sense": "forward",
-          "shell": "rhino:object:shell#record-000000-offset-177.cap-1",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
           "surface": "rhino:object:surface#record-000000-offset-177.cap-1"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-0",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-0"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-1",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-1"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-2",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-2"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-3",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-3"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-0",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-0"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-1",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-1"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-2",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-2"
+        },
+        {
+          "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-3",
+          "loops": {
+            "classification": "classified",
+            "inner": [],
+            "outer": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3"
+          },
+          "sense": "forward",
+          "shell": "rhino:object:shell#record-000000-offset-177.body",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-3"
         }
       ],
       "features": [],
@@ -362,7 +1561,10 @@
         {
           "boundary": {
             "coedges": [
-              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0"
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-3",
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-2",
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-1",
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-0"
             ],
             "kind": "ring"
           },
@@ -372,7 +1574,10 @@
         {
           "boundary": {
             "coedges": [
-              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1"
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-3",
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-2",
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-1",
+              "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-0"
             ],
             "kind": "ring"
           },
@@ -382,7 +1587,10 @@
         {
           "boundary": {
             "coedges": [
-              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0"
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-0",
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-1",
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-2",
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-3"
             ],
             "kind": "ring"
           },
@@ -392,12 +1600,119 @@
         {
           "boundary": {
             "coedges": [
-              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1"
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-0",
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-1",
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-2",
+              "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-3"
             ],
             "kind": "ring"
           },
           "face": "rhino:object:face#record-000000-offset-177.cap-1",
           "id": "rhino:object:loop#record-000000-offset-177.cap-1.profile-1"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-0.lateral-0",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-0.lateral-1",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-0.lateral-2",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-0.lateral-3",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-1.lateral-0",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-1.lateral-1",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-1.lateral-2",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2"
+        },
+        {
+          "boundary": {
+            "coedges": [
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-0",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-1",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-2",
+              "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-3"
+            ],
+            "kind": "ring"
+          },
+          "face": "rhino:object:face#record-000000-offset-177.profile-1.lateral-3",
+          "id": "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3"
         }
       ],
       "occurrences": [],
@@ -411,10 +1726,7 @@
               0.0,
               0.0,
               1.0,
-              2.0,
-              3.0,
-              4.0,
-              4.0
+              1.0
             ],
             "periodic": false,
             "poles": {
@@ -427,11 +1739,107 @@
                 {
                   "u": 2.0,
                   "v": 0.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-0",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                0.0,
+                1.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 2.0,
+                  "v": 0.0
                 },
                 {
                   "u": 2.0,
                   "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-1",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                1.0,
+                2.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 2.0,
+                  "v": 1.0
                 },
+                {
+                  "u": 0.0,
+                  "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-2",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                2.0,
+                3.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
+              3.0,
+              4.0,
+              4.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
                 {
                   "u": 0.0,
                   "v": 1.0
@@ -443,11 +1851,11 @@
               ]
             }
           },
-          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0",
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-3",
           "metadata": {
             "form": {
               "parameter_range": [
-                0.0,
+                3.0,
                 4.0
               ]
             },
@@ -462,10 +1870,7 @@
               0.0,
               0.0,
               1.0,
-              2.0,
-              3.0,
-              4.0,
-              4.0
+              1.0
             ],
             "periodic": false,
             "poles": {
@@ -478,11 +1883,107 @@
                 {
                   "u": 0.0,
                   "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-0",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                0.0,
+                1.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 0.0,
+                  "v": 1.0
                 },
                 {
                   "u": 2.0,
                   "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-1",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                1.0,
+                2.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 2.0,
+                  "v": 1.0
                 },
+                {
+                  "u": 2.0,
+                  "v": 0.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-2",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                2.0,
+                3.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
+              3.0,
+              4.0,
+              4.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
                 {
                   "u": 2.0,
                   "v": 0.0
@@ -494,11 +1995,11 @@
               ]
             }
           },
-          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1",
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-3",
           "metadata": {
             "form": {
               "parameter_range": [
-                0.0,
+                3.0,
                 4.0
               ]
             },
@@ -513,10 +2014,7 @@
               0.0,
               0.0,
               1.0,
-              2.0,
-              3.0,
-              4.0,
-              4.0
+              1.0
             ],
             "periodic": false,
             "poles": {
@@ -529,11 +2027,107 @@
                 {
                   "u": 2.0,
                   "v": 0.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-0",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                0.0,
+                1.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 2.0,
+                  "v": 0.0
                 },
                 {
                   "u": 2.0,
                   "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-1",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                1.0,
+                2.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 2.0,
+                  "v": 1.0
                 },
+                {
+                  "u": 0.0,
+                  "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-2",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                2.0,
+                3.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
+              3.0,
+              4.0,
+              4.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
                 {
                   "u": 0.0,
                   "v": 1.0
@@ -545,11 +2139,11 @@
               ]
             }
           },
-          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0",
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-3",
           "metadata": {
             "form": {
               "parameter_range": [
-                0.0,
+                3.0,
                 4.0
               ]
             },
@@ -564,10 +2158,7 @@
               0.0,
               0.0,
               1.0,
-              2.0,
-              3.0,
-              4.0,
-              4.0
+              1.0
             ],
             "periodic": false,
             "poles": {
@@ -580,11 +2171,107 @@
                 {
                   "u": 0.0,
                   "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-0",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                0.0,
+                1.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 0.0,
+                  "v": 1.0
                 },
                 {
                   "u": 2.0,
                   "v": 1.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-1",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                1.0,
+                2.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "u": 2.0,
+                  "v": 1.0
                 },
+                {
+                  "u": 2.0,
+                  "v": 0.0
+                }
+              ]
+            }
+          },
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-2",
+          "metadata": {
+            "form": {
+              "parameter_range": [
+                2.0,
+                3.0
+              ]
+            },
+            "source": "general"
+          }
+        },
+        {
+          "geometry": {
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              3.0,
+              3.0,
+              4.0,
+              4.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
                 {
                   "u": 2.0,
                   "v": 0.0
@@ -596,11 +2283,11 @@
               ]
             }
           },
-          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1",
+          "id": "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-3",
           "metadata": {
             "form": {
               "parameter_range": [
-                0.0,
+                3.0,
                 4.0
               ]
             },
@@ -611,7 +2298,7 @@
       "pmi": [],
       "points": [
         {
-          "id": "rhino:object:point#record-000000-offset-177.cap-0.profile-0",
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-0",
           "position": {
             "x": 10.0,
             "y": 20.0,
@@ -624,9 +2311,9 @@
           }
         },
         {
-          "id": "rhino:object:point#record-000000-offset-177.cap-0.profile-1",
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-1",
           "position": {
-            "x": 10.0,
+            "x": 12.0,
             "y": 20.0,
             "z": 32.5
           },
@@ -637,7 +2324,33 @@
           }
         },
         {
-          "id": "rhino:object:point#record-000000-offset-177.cap-1.profile-0",
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "position": {
+            "x": 12.0,
+            "y": 21.0,
+            "z": 32.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-3",
+          "position": {
+            "x": 10.0,
+            "y": 21.0,
+            "z": 32.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-0",
           "position": {
             "x": 10.0,
             "y": 20.0,
@@ -650,9 +2363,139 @@
           }
         },
         {
-          "id": "rhino:object:point#record-000000-offset-177.cap-1.profile-1",
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "position": {
+            "x": 12.0,
+            "y": 20.0,
+            "z": 37.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "position": {
+            "x": 12.0,
+            "y": 21.0,
+            "z": 37.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-3",
           "position": {
             "x": 10.0,
+            "y": 21.0,
+            "z": 37.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "position": {
+            "x": 10.0,
+            "y": 20.0,
+            "z": 32.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "position": {
+            "x": 10.0,
+            "y": 21.0,
+            "z": 32.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "position": {
+            "x": 12.0,
+            "y": 21.0,
+            "z": 32.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-3",
+          "position": {
+            "x": 12.0,
+            "y": 20.0,
+            "z": 32.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "position": {
+            "x": 10.0,
+            "y": 20.0,
+            "z": 37.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "position": {
+            "x": 10.0,
+            "y": 21.0,
+            "z": 37.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "position": {
+            "x": 12.0,
+            "y": 21.0,
+            "z": 37.5
+          },
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "id": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "position": {
+            "x": 12.0,
             "y": 20.0,
             "z": 37.5
           },
@@ -674,11 +2517,11 @@
               "y": 0.0,
               "z": 5.0
             },
-            "directrix": "rhino:object:curve#record-000000-offset-177.profile-0.start",
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-0",
             "kind": "extrusion"
           },
-          "id": "rhino:object:procedural-surface#record-000000-offset-177.lateral-0",
-          "surface": "rhino:object:surface#record-000000-offset-177.lateral-0"
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-0",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-0"
         },
         {
           "definition": {
@@ -687,51 +2530,148 @@
               "y": 0.0,
               "z": 5.0
             },
-            "directrix": "rhino:object:curve#record-000000-offset-177.profile-1.start",
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-1",
             "kind": "extrusion"
           },
-          "id": "rhino:object:procedural-surface#record-000000-offset-177.lateral-1",
-          "surface": "rhino:object:surface#record-000000-offset-177.lateral-1"
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-1",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-1"
+        },
+        {
+          "definition": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 5.0
+            },
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-2",
+            "kind": "extrusion"
+          },
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-2",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-2"
+        },
+        {
+          "definition": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 5.0
+            },
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-3",
+            "kind": "extrusion"
+          },
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-3",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-3"
+        },
+        {
+          "definition": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 5.0
+            },
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-0",
+            "kind": "extrusion"
+          },
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-0",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-0"
+        },
+        {
+          "definition": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 5.0
+            },
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-1",
+            "kind": "extrusion"
+          },
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-1",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-1"
+        },
+        {
+          "definition": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 5.0
+            },
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-2",
+            "kind": "extrusion"
+          },
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-2",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-2"
+        },
+        {
+          "definition": {
+            "direction": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 5.0
+            },
+            "directrix": "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-3",
+            "kind": "extrusion"
+          },
+          "id": "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-3",
+          "surface": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-3"
         }
       ],
       "product_definitions": [],
       "regions": [
         {
-          "body": "rhino:object:body#record-000000-offset-177.caps",
-          "id": "rhino:object:region#record-000000-offset-177.cap-0",
+          "body": "rhino:object:body#record-000000-offset-177.body",
+          "id": "rhino:object:region#record-000000-offset-177.body",
           "shells": [
-            "rhino:object:shell#record-000000-offset-177.cap-0"
-          ]
-        },
-        {
-          "body": "rhino:object:body#record-000000-offset-177.caps",
-          "id": "rhino:object:region#record-000000-offset-177.cap-1",
-          "shells": [
-            "rhino:object:shell#record-000000-offset-177.cap-1"
+            "rhino:object:shell#record-000000-offset-177.body"
           ]
         }
       ],
       "semantic_annotations": [],
       "shells": [
         {
-          "id": "rhino:object:shell#record-000000-offset-177.cap-0",
+          "id": "rhino:object:shell#record-000000-offset-177.body",
           "members": [
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-0",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-1",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-2",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-0.lateral-3",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-0",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-1",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-2",
+              "kind": "face"
+            },
+            {
+              "id": "rhino:object:face#record-000000-offset-177.profile-1.lateral-3",
+              "kind": "face"
+            },
             {
               "id": "rhino:object:face#record-000000-offset-177.cap-0",
               "kind": "face"
-            }
-          ],
-          "region": "rhino:object:region#record-000000-offset-177.cap-0"
-        },
-        {
-          "id": "rhino:object:shell#record-000000-offset-177.cap-1",
-          "members": [
+            },
             {
               "id": "rhino:object:face#record-000000-offset-177.cap-1",
               "kind": "face"
             }
           ],
-          "region": "rhino:object:region#record-000000-offset-177.cap-1"
+          "region": "rhino:object:region#record-000000-offset-177.body"
         }
       ],
       "sketch_constraints": [],
@@ -823,6 +2763,50 @@
                     "y": 20.0,
                     "z": 37.5
                   }
+                ]
+              ]
+            },
+            "u_degree": 1,
+            "u_knots": [
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "u_periodic": false,
+            "v_degree": 1,
+            "v_knots": [
+              4.0,
+              4.0,
+              9.0,
+              9.0
+            ],
+            "v_periodic": false
+          },
+          "id": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "kind": "nurbs",
+            "poles": {
+              "form": "polynomial",
+              "rows": [
+                [
+                  {
+                    "x": 12.0,
+                    "y": 20.0,
+                    "z": 32.5
+                  },
+                  {
+                    "x": 12.0,
+                    "y": 20.0,
+                    "z": 37.5
+                  }
                 ],
                 [
                   {
@@ -835,7 +2819,95 @@
                     "y": 21.0,
                     "z": 37.5
                   }
+                ]
+              ]
+            },
+            "u_degree": 1,
+            "u_knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "u_periodic": false,
+            "v_degree": 1,
+            "v_knots": [
+              4.0,
+              4.0,
+              9.0,
+              9.0
+            ],
+            "v_periodic": false
+          },
+          "id": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "kind": "nurbs",
+            "poles": {
+              "form": "polynomial",
+              "rows": [
+                [
+                  {
+                    "x": 12.0,
+                    "y": 21.0,
+                    "z": 32.5
+                  },
+                  {
+                    "x": 12.0,
+                    "y": 21.0,
+                    "z": 37.5
+                  }
                 ],
+                [
+                  {
+                    "x": 10.0,
+                    "y": 21.0,
+                    "z": 32.5
+                  },
+                  {
+                    "x": 10.0,
+                    "y": 21.0,
+                    "z": 37.5
+                  }
+                ]
+              ]
+            },
+            "u_degree": 1,
+            "u_knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "u_periodic": false,
+            "v_degree": 1,
+            "v_knots": [
+              4.0,
+              4.0,
+              9.0,
+              9.0
+            ],
+            "v_periodic": false
+          },
+          "id": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "kind": "nurbs",
+            "poles": {
+              "form": "polynomial",
+              "rows": [
                 [
                   {
                     "x": 10.0,
@@ -864,10 +2936,7 @@
             },
             "u_degree": 1,
             "u_knots": [
-              0.0,
-              0.0,
-              1.0,
-              2.0,
+              3.0,
               3.0,
               4.0,
               4.0
@@ -882,7 +2951,7 @@
             ],
             "v_periodic": false
           },
-          "id": "rhino:object:surface#record-000000-offset-177.lateral-0",
+          "id": "rhino:object:surface#record-000000-offset-177.profile-0.lateral-3",
           "source_object": {
             "format": "rhino",
             "object_id": "00000000-0000-0000-0000-000000000000",
@@ -918,6 +2987,50 @@
                     "y": 21.0,
                     "z": 37.5
                   }
+                ]
+              ]
+            },
+            "u_degree": 1,
+            "u_knots": [
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "u_periodic": false,
+            "v_degree": 1,
+            "v_knots": [
+              4.0,
+              4.0,
+              9.0,
+              9.0
+            ],
+            "v_periodic": false
+          },
+          "id": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-0",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "kind": "nurbs",
+            "poles": {
+              "form": "polynomial",
+              "rows": [
+                [
+                  {
+                    "x": 10.0,
+                    "y": 21.0,
+                    "z": 32.5
+                  },
+                  {
+                    "x": 10.0,
+                    "y": 21.0,
+                    "z": 37.5
+                  }
                 ],
                 [
                   {
@@ -930,7 +3043,95 @@
                     "y": 21.0,
                     "z": 37.5
                   }
+                ]
+              ]
+            },
+            "u_degree": 1,
+            "u_knots": [
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ],
+            "u_periodic": false,
+            "v_degree": 1,
+            "v_knots": [
+              4.0,
+              4.0,
+              9.0,
+              9.0
+            ],
+            "v_periodic": false
+          },
+          "id": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-1",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "kind": "nurbs",
+            "poles": {
+              "form": "polynomial",
+              "rows": [
+                [
+                  {
+                    "x": 12.0,
+                    "y": 21.0,
+                    "z": 32.5
+                  },
+                  {
+                    "x": 12.0,
+                    "y": 21.0,
+                    "z": 37.5
+                  }
                 ],
+                [
+                  {
+                    "x": 12.0,
+                    "y": 20.0,
+                    "z": 32.5
+                  },
+                  {
+                    "x": 12.0,
+                    "y": 20.0,
+                    "z": 37.5
+                  }
+                ]
+              ]
+            },
+            "u_degree": 1,
+            "u_knots": [
+              2.0,
+              2.0,
+              3.0,
+              3.0
+            ],
+            "u_periodic": false,
+            "v_degree": 1,
+            "v_knots": [
+              4.0,
+              4.0,
+              9.0,
+              9.0
+            ],
+            "v_periodic": false
+          },
+          "id": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-2",
+          "source_object": {
+            "format": "rhino",
+            "object_id": "00000000-0000-0000-0000-000000000000",
+            "visible": true
+          }
+        },
+        {
+          "geometry": {
+            "kind": "nurbs",
+            "poles": {
+              "form": "polynomial",
+              "rows": [
                 [
                   {
                     "x": 12.0,
@@ -959,10 +3160,7 @@
             },
             "u_degree": 1,
             "u_knots": [
-              0.0,
-              0.0,
-              1.0,
-              2.0,
+              3.0,
               3.0,
               4.0,
               4.0
@@ -977,7 +3175,7 @@
             ],
             "v_periodic": false
           },
-          "id": "rhino:object:surface#record-000000-offset-177.lateral-1",
+          "id": "rhino:object:surface#record-000000-offset-177.profile-1.lateral-3",
           "source_object": {
             "format": "rhino",
             "object_id": "00000000-0000-0000-0000-000000000000",
@@ -988,20 +3186,68 @@
       "tessellations": [],
       "vertices": [
         {
-          "id": "rhino:object:vertex#record-000000-offset-177.cap-0.profile-0",
-          "point": "rhino:object:point#record-000000-offset-177.cap-0.profile-0"
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-0",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-0"
         },
         {
-          "id": "rhino:object:vertex#record-000000-offset-177.cap-0.profile-1",
-          "point": "rhino:object:point#record-000000-offset-177.cap-0.profile-1"
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-1",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-1"
         },
         {
-          "id": "rhino:object:vertex#record-000000-offset-177.cap-1.profile-0",
-          "point": "rhino:object:point#record-000000-offset-177.cap-1.profile-0"
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-2",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-2"
         },
         {
-          "id": "rhino:object:vertex#record-000000-offset-177.cap-1.profile-1",
-          "point": "rhino:object:point#record-000000-offset-177.cap-1.profile-1"
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-3",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-0.seg-3"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-0",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-0"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-1",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-1"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-2",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-2"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-3",
+          "point": "rhino:object:point#record-000000-offset-177.profile-0.cap-1.seg-3"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-0",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-0"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-1",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-1"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-2",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-2"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-3",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-0.seg-3"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-0",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-0"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-1",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-1"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-2",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-2"
+        },
+        {
+          "id": "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-3",
+          "point": "rhino:object:point#record-000000-offset-177.profile-1.cap-1.seg-3"
         }
       ],
       "view_presentations": []
@@ -1054,9 +3300,7 @@
           {
             "id": "rhino:object:record#000000",
             "links": [
-              "rhino:object:body#record-000000-offset-177.caps",
-              "rhino:object:surface#record-000000-offset-177.lateral-0",
-              "rhino:object:surface#record-000000-offset-177.lateral-1"
+              "rhino:object:body#record-000000-offset-177.body"
             ]
           }
         ],
@@ -1167,55 +3411,391 @@
   "source_fidelity": {
     "annotations": {
       "exactness": {
-        "rhino:object:body#record-000000-offset-177.caps": {
+        "rhino:object:body#record-000000-offset-177.body": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-0.seg-3": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:curve#record-000000-offset-177.cap-1.profile-0": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:curve#record-000000-offset-177.cap-1.profile-1": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:curve#record-000000-offset-177.profile-0.start": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:curve#record-000000-offset-177.profile-1.start": {
+        "rhino:object:coedge#record-000000-offset-177.cap-0.profile-1.seg-3": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:edge#record-000000-offset-177.cap-0.profile-0": {
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:edge#record-000000-offset-177.cap-0.profile-1": {
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:edge#record-000000-offset-177.cap-1.profile-0": {
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:edge#record-000000-offset-177.cap-1.profile-1": {
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.cap-1.profile-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-0.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-1.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-2.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-0.lateral-3.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-0.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-1.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-2.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:coedge#record-000000-offset-177.profile-1.lateral-3.slot-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.cap-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.seam-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.seam-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.seam-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-0.seam-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.cap-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.seam-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.seam-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.seam-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:curve#record-000000-offset-177.profile-1.seam-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.cap-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.seam-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.seam-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.seam-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-0.seam-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.cap-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.seam-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.seam-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.seam-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:edge#record-000000-offset-177.profile-1.seam-3": {
           "entity": "derived",
           "scope": "entity"
         },
@@ -1224,6 +3804,38 @@
           "scope": "entity"
         },
         "rhino:object:face#record-000000-offset-177.cap-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-0.lateral-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-0.lateral-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-0.lateral-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-0.lateral-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-1.lateral-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-1.lateral-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-1.lateral-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:face#record-000000-offset-177.profile-1.lateral-3": {
           "entity": "derived",
           "scope": "entity"
         },
@@ -1243,59 +3855,139 @@
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0": {
+        "rhino:object:loop#record-000000-offset-177.profile-0.lateral-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1": {
+        "rhino:object:loop#record-000000-offset-177.profile-0.lateral-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0": {
+        "rhino:object:loop#record-000000-offset-177.profile-0.lateral-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1": {
+        "rhino:object:loop#record-000000-offset-177.profile-0.lateral-3": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:point#record-000000-offset-177.cap-0.profile-0": {
+        "rhino:object:loop#record-000000-offset-177.profile-1.lateral-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:point#record-000000-offset-177.cap-0.profile-1": {
+        "rhino:object:loop#record-000000-offset-177.profile-1.lateral-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:point#record-000000-offset-177.cap-1.profile-0": {
+        "rhino:object:loop#record-000000-offset-177.profile-1.lateral-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:point#record-000000-offset-177.cap-1.profile-1": {
+        "rhino:object:loop#record-000000-offset-177.profile-1.lateral-3": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:procedural-surface#record-000000-offset-177.lateral-0": {
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:procedural-surface#record-000000-offset-177.lateral-1": {
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:region#record-000000-offset-177.cap-0": {
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:region#record-000000-offset-177.cap-1": {
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-0.seg-3": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:shell#record-000000-offset-177.cap-0": {
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:shell#record-000000-offset-177.cap-1": {
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-0.profile-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:pcurve#record-000000-offset-177.cap-1.profile-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-0.lateral-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:procedural-surface#record-000000-offset-177.profile-1.lateral-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:region#record-000000-offset-177.body": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:shell#record-000000-offset-177.body": {
           "entity": "derived",
           "scope": "entity"
         },
@@ -1307,27 +3999,99 @@
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:surface#record-000000-offset-177.lateral-0": {
+        "rhino:object:surface#record-000000-offset-177.profile-0.lateral-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:surface#record-000000-offset-177.lateral-1": {
+        "rhino:object:surface#record-000000-offset-177.profile-0.lateral-1": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:vertex#record-000000-offset-177.cap-0.profile-0": {
+        "rhino:object:surface#record-000000-offset-177.profile-0.lateral-2": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:vertex#record-000000-offset-177.cap-0.profile-1": {
+        "rhino:object:surface#record-000000-offset-177.profile-0.lateral-3": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:vertex#record-000000-offset-177.cap-1.profile-0": {
+        "rhino:object:surface#record-000000-offset-177.profile-1.lateral-0": {
           "entity": "derived",
           "scope": "entity"
         },
-        "rhino:object:vertex#record-000000-offset-177.cap-1.profile-1": {
+        "rhino:object:surface#record-000000-offset-177.profile-1.lateral-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:surface#record-000000-offset-177.profile-1.lateral-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:surface#record-000000-offset-177.profile-1.lateral-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-0.cap-1.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-0.seg-3": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-0": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-1": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-2": {
+          "entity": "derived",
+          "scope": "entity"
+        },
+        "rhino:object:vertex#record-000000-offset-177.profile-1.cap-1.seg-3": {
           "entity": "derived",
           "scope": "entity"
         }
