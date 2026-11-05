@@ -12,8 +12,36 @@
       "curves": [
         {
           "geometry": {
-            "kind": "unknown",
-            "record": "rhino:object:record#000000"
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              0.0,
+              0.0,
+              2.0,
+              5.0,
+              5.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                {
+                  "x": 1.5,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                {
+                  "x": 3.0,
+                  "y": 0.0,
+                  "z": 0.0
+                }
+              ]
+            }
           },
           "id": "rhino:object:curve#record-000000-offset-177",
           "source_object": {
@@ -58,7 +86,30 @@
         },
         {
           "geometry": {
-            "kind": "unknown"
+            "degree": 1,
+            "kind": "nurbs",
+            "knots": [
+              10.0,
+              10.0,
+              20.0,
+              20.0
+            ],
+            "periodic": false,
+            "poles": {
+              "form": "polynomial",
+              "points": [
+                {
+                  "x": 2.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                {
+                  "x": 3.0,
+                  "y": 0.0,
+                  "z": 0.0
+                }
+              ]
+            }
           },
           "id": "rhino:object:curve#record-000000-offset-177.root.component-1",
           "source_object": {
