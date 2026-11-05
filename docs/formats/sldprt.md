@@ -1585,7 +1585,7 @@ Tags `00 43` and `00 44` use the same compact header. The orientation marker is 
 
 Surface support for an intersection curve or a spline-on-surface edge uses the same bridge-referenced carrier grammar. The bridge's `refs[4]` selects the ordinary compact analytic or B-spline surface carrier; neither relation introduces a separate surface-record family. The relation describes the edge curve and its pcurve, not a replacement surface carrier.
 
-The marker of a line, circle, or ellipse record is `0x2b` when the stored parameter direction is the direction of the owning edge, and `0x2d` when the edge runs against it. A reversed curve is read with its parameter direction reversed: the line direction, the circle axis, or the ellipse axis is negated and the reference directions are unchanged. A circle or ellipse edge that has two vertices and no stored parameter range runs from its start vertex to its end vertex in the direction of the edge, so the marker selects between the arc and its complement.
+The marker of a line, circle, or ellipse record is `0x2d` when the stored parameter direction is the direction of the owning edge, from its start vertex to its end vertex, and `0x2b` when the edge runs against it. A curve that runs against its edge is read with its parameter direction reversed: the line direction, the circle axis, or the ellipse axis is negated and the reference directions are unchanged. A circle or ellipse edge that has two vertices and no stored parameter range runs from its start vertex to its end vertex in the direction of the edge, so the marker selects between the arc and its complement.
 
 Compact records omit trim intervals, loop membership, edge orientation, and vertex points. Typed topology records contain those relations.
 

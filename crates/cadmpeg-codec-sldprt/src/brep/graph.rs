@@ -45,6 +45,7 @@ use super::offset::OffsetCarrier;
 use super::sweep::{self, SweepKind};
 use super::topology;
 use super::typed;
+use super::CurveMarkers;
 use super::{CurveCarrier, LEN_TO_MM};
 use crate::parasolid::StreamHeader;
 
@@ -1394,6 +1395,7 @@ fn header_body<'a>(
 /// Decode one parsed Parasolid stream into B-rep arenas.
 ///
 /// `stream` names the provenance stream recorded in [`Brep::annotations`].
+/// The stream is a `SolidWorks` stream.
 pub(crate) fn decode(
     ctx: &DecodeContext<'_>,
     payload: &[u8],
@@ -1473,10 +1475,12 @@ fn append_entity_facts(
 /// Partition records are the base set. Deltas records fill missing subordinate
 /// records and point updates, but do not replace a same-identity partition
 /// topology or carrier record. `stream` names the combined provenance source.
+/// `markers` selects how the curve orientation markers read.
 pub(crate) fn decode_bodies(
     ctx: &DecodeContext<'_>,
     bodies: &[(&[u8], &StreamHeader)],
     stream: &cadmpeg_ir::StreamName,
+    markers: CurveMarkers,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
     let mut carriers = CarrierIndex::default();
     let mut tables = topology::Tables::default();
@@ -1523,7 +1527,7 @@ pub(crate) fn decode_bodies(
         let is_deltas = is_deltas_stream(header);
         let typed_face_offsets =
             selected_typed_face_offsets(ctx, &stream_typed_facts, typed_bridge_attrs.as_ref())?;
-        carriers.merge_missing(ctx, scan_carriers(ctx, body)?)?;
+        carriers.merge_missing(ctx, scan_carriers(ctx, body, markers)?)?;
         let curve_attrs = carriers.curve_attrs(ctx)?;
         let scanned_tables = if is_deltas {
             topology::scan_deltas_with_curve_attrs_excluding(
@@ -1564,7 +1568,7 @@ fn decode_body(
     body: &[u8],
     stream: &cadmpeg_ir::StreamName,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
-    let mut carriers = scan_carriers(ctx, body)?;
+    let mut carriers = scan_carriers(ctx, body, CurveMarkers::SolidWorks)?;
     let curve_attrs = carriers.curve_attrs(ctx)?;
     let typed_facts = typed::scan(body, ctx)?;
     let typed_face_attrs = typed_facts.valid_ownership_face_attrs(ctx)?;
@@ -7975,7 +7979,7 @@ mod tests {
             .unwrap(),
         ));
         let carrier = CurveCarrier {
-            reversed: false,
+            marker: None,
             attr: 1,
             offset: 0,
             end: 0,
@@ -8000,7 +8004,8 @@ mod tests {
         let body = [0x00, 0x1e, 0x00];
         let (ctx, _) =
             cadmpeg_core::decode::DecodeContext::from_root_bytes(&body, &arena, &policy).unwrap();
-        let carriers = super::scan_carriers(&ctx, &body).unwrap();
+        let carriers =
+            super::scan_carriers(&ctx, &body, crate::brep::CurveMarkers::SolidWorks).unwrap();
         assert!(carriers.curve_attrs(&ctx).unwrap().is_empty());
         let tables = super::topology::scan(&ctx, &body).unwrap();
         assert!(tables.points().is_empty());
@@ -8257,7 +8262,7 @@ mod tests {
     #[test]
     fn line_edge_parameters_convert_from_metres_to_millimetres() {
         let carrier = crate::brep::CurveCarrier {
-            reversed: false,
+            marker: None,
             attr: 1,
             offset: 0,
             end: 0,

@@ -107,6 +107,7 @@ pub(crate) fn patch_partition(
         &ctx,
         &bodies,
         &cadmpeg_ir::stream_name!("native-patch-baseline"),
+        crate::brep::CurveMarkers::SolidWorks,
     )?;
     let colors = crate::writer::face_colors(ir)?;
     if native

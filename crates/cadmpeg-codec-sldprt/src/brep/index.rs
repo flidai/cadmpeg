@@ -205,11 +205,12 @@ fn merge_missing_map<K: Eq + Hash, V>(
 pub(super) fn scan_carriers(
     ctx: &DecodeContext<'_>,
     body: &[u8],
+    markers: super::CurveMarkers,
 ) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
     let mut stored = scan_carriers_stored(ctx, body)?;
     for curve in stored.curves.values_mut() {
         if let IndexedCurve::Exact(carrier) = curve {
-            *carrier = carrier.clone().into_edge_oriented();
+            *carrier = carrier.clone().into_edge_oriented(markers);
         }
     }
     Ok(stored)
@@ -282,7 +283,7 @@ mod tests {
         let (ctx, _) =
             cadmpeg_core::decode::DecodeContext::from_root_bytes(&body, &arena, &policy).unwrap();
         let (result, allocations) = crate::test_support::allocation::count_allocations(|| {
-            super::scan_carriers(&ctx, &body)
+            super::scan_carriers(&ctx, &body, crate::brep::CurveMarkers::SolidWorks)
         });
         let Err(cadmpeg_core::CodecError::ResourceLimit(limit)) = result else {
             panic!("work refusal");
@@ -337,7 +338,7 @@ mod tests {
                 cadmpeg_core::decode::DecodeContext::from_root_bytes(&bytes, &arena, &policy)
                     .expect("test carrier bytes fit the root limit");
             let Err(cadmpeg_core::CodecError::ResourceLimit(limit)) =
-                super::scan_carriers(&ctx, &bytes)
+                super::scan_carriers(&ctx, &bytes, crate::brep::CurveMarkers::SolidWorks)
             else {
                 panic!("expected a carrier resource refusal");
             };
@@ -358,7 +359,7 @@ mod tests {
                     cadmpeg_core::decode::DecodeContext::from_root_bytes(&bytes, &arena, &policy)
                         .expect("test carrier bytes fit the root limit");
                 let Err(cadmpeg_core::CodecError::ResourceLimit(repeated)) =
-                    super::scan_carriers(&ctx, &bytes)
+                    super::scan_carriers(&ctx, &bytes, crate::brep::CurveMarkers::SolidWorks)
                 else {
                     panic!("one unit below the carrier request must refuse");
                 };

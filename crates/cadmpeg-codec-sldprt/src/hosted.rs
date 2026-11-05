@@ -21,6 +21,7 @@ use cadmpeg_ir::unknown::UnknownRecord;
 use cadmpeg_ir::StreamName;
 
 use crate::brep::graph::decode_bodies;
+use crate::brep::CurveMarkers;
 use crate::decode::{bind_opaque_geometry, brep_losses};
 use crate::parasolid::{is_body_stream, stream_header, StreamHeader};
 
@@ -104,7 +105,7 @@ pub fn decode_hosted_brep(
     let mut bodies: Vec<(&[u8], &StreamHeader)> =
         ctx.collection_vec(streams.len(), "pair hosted Parasolid streams")?;
     bodies.extend(streams.iter().copied().zip(&headers));
-    let mut brep = decode_bodies(ctx, &bodies, origin)?;
+    let mut brep = decode_bodies(ctx, &bodies, origin, CurveMarkers::Hosted)?;
     bind_opaque_geometry(ctx, &mut brep, source)?;
     let losses = brep_losses(ctx, &mut brep, true)?;
     let entities = brep.neutral_entity_count()?;

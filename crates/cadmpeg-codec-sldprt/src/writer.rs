@@ -4102,7 +4102,13 @@ fn compact(out: &mut Vec<u8>, kind: u8, attr: u16, values: &[f64]) {
     be16(out, attr);
     be32(out, 0);
     out.extend_from_slice(&[0; 10]);
-    out.push(0x2b);
+    // A line, circle or ellipse is written in the direction of its edge, which
+    // its marker states as `0x2d`.
+    out.push(if matches!(kind, 0x1e..=0x20) {
+        0x2d
+    } else {
+        0x2b
+    });
     for value in values {
         bef64(out, *value);
     }

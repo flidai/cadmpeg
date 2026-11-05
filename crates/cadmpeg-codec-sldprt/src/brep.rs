@@ -16,7 +16,7 @@
 //! directly. Untyped carriers use opaque IR geometry while resolvable topology
 //! remains available.
 
-use self::index::{scan_carriers, scan_carriers_stored};
+use self::index::scan_carriers_stored;
 use self::spline::patch_nurbs_curve;
 
 use cadmpeg_core::decode::{DecodeContext, View};
@@ -108,9 +108,28 @@ mod tag {
     pub(super) const TORUS: u8 = 0x36;
 }
 
-/// Orientation marker of a compact analytic record whose curve runs against
-/// its owning edge.
-const MARKER_REVERSED: u8 = 0x2d;
+/// How a body host reads the orientation marker of a compact analytic curve
+/// record.
+///
+/// A `SolidWorks` stream states `0x2b` for a curve whose stored parameter
+/// direction runs against its owning edge, from the start vertex to the end
+/// vertex, and `0x2d` for a curve that runs with it. A foreign host keeps the
+/// reading in which `0x2d` marks the curve that runs against its edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CurveMarkers {
+    SolidWorks,
+    Hosted,
+}
+
+impl CurveMarkers {
+    /// The marker byte of a curve that runs against its owning edge.
+    const fn against_edge(self) -> u8 {
+        match self {
+            Self::SolidWorks => 0x2b,
+            Self::Hosted => 0x2d,
+        }
+    }
+}
 
 const COMPACT_REF_COUNT: usize = 5;
 const DELTAS_REF_STRIDE: usize = 3;
@@ -188,16 +207,15 @@ pub(crate) struct CurveCarrier {
     pub(crate) end: usize,
     pub(crate) geometry: CurveGeometry,
     parameter_range: Option<cadmpeg_ir::units::FiniteVector<2>>,
-    /// The stored orientation marker is `0x2d`: the owning edge runs against
-    /// the stored parameter direction.
-    reversed: bool,
+    /// The stored orientation marker of a compact analytic curve record.
+    marker: Option<u8>,
 }
 
 impl CurveCarrier {
     /// Rewrite the geometry so that its parameter direction is the owning
     /// edge direction. Only lines, circles and ellipses carry the marker.
-    fn into_edge_oriented(mut self) -> Self {
-        if !self.reversed {
+    fn into_edge_oriented(mut self, markers: CurveMarkers) -> Self {
+        if self.marker != Some(markers.against_edge()) {
             return self;
         }
         if let CurveGeometry::Solved(solved) = &mut self.geometry {
@@ -208,7 +226,6 @@ impl CurveCarrier {
                 _ => {}
             }
         }
-        self.reversed = false;
         self
     }
 }
@@ -273,7 +290,7 @@ fn parse_carrier_at_marker(
         return None;
     }
 
-    decode_carrier_values(tt, vals, attr, off, end, body[marker_at] == MARKER_REVERSED)
+    decode_carrier_values(tt, vals, attr, off, end, body[marker_at])
 }
 
 /// Try to parse a compact analytic carrier whose tag byte pair `00 TT` begins at
@@ -307,7 +324,7 @@ fn decode_carrier_values(
     attr: u16,
     offset: usize,
     end: usize,
-    marker_reversed: bool,
+    marker: u8,
 ) -> Option<Carrier> {
     let curve = |geometry| {
         Carrier::Curve(CurveCarrier {
@@ -316,7 +333,7 @@ fn decode_carrier_values(
             end,
             geometry,
             parameter_range: None,
-            reversed: marker_reversed,
+            marker: Some(marker),
         })
     };
     let surface = |geometry| {
@@ -456,7 +473,7 @@ pub(crate) fn patch_nurbs_by_attr(
     attr: u16,
     new: &cadmpeg_ir::geometry::nurbs::NurbsCurve,
 ) -> Result<bool, cadmpeg_core::CodecError> {
-    let carriers = scan_carriers(ctx, body)?;
+    let carriers = scan_carriers_stored(ctx, body)?;
     let Some(indexed) = carriers.curve(attr) else {
         return Ok(false);
     };
@@ -581,7 +598,8 @@ mod tests {
             &[1.0, 2.0, 3.0, 0.0, 0.0, 1.0],
         ));
 
-        let carriers = scan_carriers(&ctx, &bytes).expect("carrier scan");
+        let carriers =
+            scan_carriers(&ctx, &bytes, super::CurveMarkers::SolidWorks).expect("carrier scan");
 
         assert!(carriers.curve(7).is_some());
         assert!(carriers.curve(8).is_some());
@@ -675,10 +693,11 @@ mod tests {
         assert!(!carrier.orientation_reversed);
     }
 
-    fn with_reversed_marker(mut bytes: Vec<u8>) -> Vec<u8> {
+    /// The marker of a curve record that runs with its owning edge.
+    fn with_edge_direction_marker(mut bytes: Vec<u8>) -> Vec<u8> {
         const MARKER_AT: usize = 18;
         assert_eq!(bytes[MARKER_AT], 0x2b);
-        bytes[MARKER_AT] = super::MARKER_REVERSED;
+        bytes[MARKER_AT] = 0x2d;
         bytes
     }
 
@@ -693,45 +712,51 @@ mod tests {
     }
 
     #[test]
-    fn reversed_marker_turns_a_circle_toward_the_edge_direction() {
+    fn against_edge_marker_turns_a_circle_toward_the_edge_direction() {
         let (arena, policy) = scan_context();
         let (ctx, _) =
             cadmpeg_core::decode::DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
         let values = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.002];
-        let bytes = with_reversed_marker(compact_carrier(tag::CIRCLE, 8, &values));
+        let against = compact_carrier(tag::CIRCLE, 8, &values);
+        let with_edge = with_edge_direction_marker(compact_carrier(tag::CIRCLE, 9, &values));
+        let mut bytes = against;
+        bytes.extend(with_edge);
 
-        let axis_of = |index: &super::index::CarrierIndex| {
-            let Some(SolvedCurveGeometry::Circle(circle)) =
-                index.curve(8).expect("circle").carrier().geometry.solved()
+        let axis_of = |index: &super::index::CarrierIndex, attr: u16| {
+            let Some(SolvedCurveGeometry::Circle(circle)) = index
+                .curve(attr)
+                .expect("circle")
+                .carrier()
+                .geometry
+                .solved()
             else {
                 panic!("expected circle");
             };
             *circle.frame().axis().as_raw()
         };
-        let oriented = scan_carriers(&ctx, &bytes).expect("oriented scan");
+        let oriented =
+            scan_carriers(&ctx, &bytes, super::CurveMarkers::SolidWorks).expect("oriented scan");
         let stored = super::index::scan_carriers_stored(&ctx, &bytes).expect("stored scan");
 
-        assert_eq!(axis_of(&oriented), Vector3::new(0.0, 0.0, -1.0));
-        assert_eq!(axis_of(&stored), Vector3::new(0.0, 0.0, 1.0));
+        assert_eq!(axis_of(&oriented, 8), Vector3::new(0.0, 0.0, -1.0));
+        assert_eq!(axis_of(&oriented, 9), Vector3::new(0.0, 0.0, 1.0));
+        assert_eq!(axis_of(&stored, 8), Vector3::new(0.0, 0.0, 1.0));
     }
 
     #[test]
-    fn reversed_marker_turns_a_line_and_an_ellipse() {
+    fn against_edge_marker_turns_a_line_and_an_ellipse() {
         let (arena, policy) = scan_context();
         let (ctx, _) =
             cadmpeg_core::decode::DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
-        let mut bytes = with_reversed_marker(compact_carrier(
-            tag::LINE,
-            7,
-            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-        ));
-        bytes.extend(with_reversed_marker(compact_carrier(
+        let mut bytes = compact_carrier(tag::LINE, 7, &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        bytes.extend(compact_carrier(
             tag::ELLIPSE,
             8,
             &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.004, 0.002],
-        )));
+        ));
 
-        let carriers = scan_carriers(&ctx, &bytes).expect("oriented scan");
+        let carriers =
+            scan_carriers(&ctx, &bytes, super::CurveMarkers::SolidWorks).expect("oriented scan");
 
         let Some(SolvedCurveGeometry::Line(line)) =
             carriers.curve(7).expect("line").carrier().geometry.solved()

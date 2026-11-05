@@ -436,6 +436,7 @@ fn partition_topology_wins_when_deltas_reuse_a_bridge_identity() {
             (&partition_payload, &partition_header),
         ],
         &cadmpeg_ir::stream_name!("precedence"),
+        crate::brep::CurveMarkers::SolidWorks,
     )
     .expect("valid exactness fields");
 
@@ -465,6 +466,7 @@ fn partition_stream_index_refuses_collection_limit() {
             &ctx,
             &[(&payload, &header)],
             &cadmpeg_ir::stream_name!("precedence"),
+            crate::brep::CurveMarkers::SolidWorks,
         ),
         Err(cadmpeg_core::CodecError::ResourceLimit(_))
     ));

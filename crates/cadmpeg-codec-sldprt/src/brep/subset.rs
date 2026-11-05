@@ -153,7 +153,7 @@ pub(super) fn scan(
             geometry.try_clone_for_decode(ctx, "copy Parasolid subset curve lanes")?;
         ctx.reserve_vec(&mut out, 1, "collect Parasolid subset curves")?;
         out.push(CurveCarrier {
-            reversed: false,
+            marker: None,
             attr,
             offset: off,
             end: marker_at + 1 + PAYLOAD_LEN,
@@ -206,7 +206,7 @@ mod tests {
             .insert(
                 &ctx,
                 super::super::Carrier::Curve(CurveCarrier {
-                    reversed: false,
+                    marker: None,
                     attr: 10,
                     offset: 100,
                     end: 120,
@@ -243,7 +243,7 @@ mod tests {
             .insert(
                 &ctx,
                 super::super::Carrier::Curve(CurveCarrier {
-                    reversed: false,
+                    marker: None,
                     attr: 10,
                     offset: 100,
                     end: 120,
@@ -345,7 +345,7 @@ mod tests {
             .insert(
                 &cadmpeg_test_support::service_decode_context(),
                 super::super::Carrier::Curve(CurveCarrier {
-                    reversed: false,
+                    marker: None,
                     attr: 10,
                     offset: 100,
                     end: 120,
