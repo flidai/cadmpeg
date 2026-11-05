@@ -91,3 +91,61 @@ fn an_explicit_canonical_reference_to_the_sole_coedge_keeps_the_ends() {
     assert_eq!(pick(10), Some((10, false)));
     assert_eq!(pick(11), None);
 }
+
+#[test]
+fn a_face_of_no_body_record_joins_the_shell_of_its_neighbours() {
+    use super::{adopt_unclaimed_faces, WalkStop, WalkedFace};
+    use std::collections::HashMap;
+
+    let coedge = |attr, edge| Coedge {
+        attr,
+        refs: [0, 0, 0, 0, 101, 0, edge, 0, 0],
+        sense: Sense::Forward,
+        offset: 0,
+    };
+    let coedges: HashMap<u16, Coedge> = [(1, 7), (2, 8), (3, 7), (4, 9), (5, 9), (6, 11)]
+        .into_iter()
+        .map(|(attr, edge)| (attr, coedge(attr, edge)))
+        .collect();
+    let face = |bridge_attr, ring: Vec<u16>| WalkedFace {
+        bridge_attr,
+        surface_attr: 0,
+        sense: Sense::Forward,
+        loops: vec![(bridge_attr, ring)],
+        stop: WalkStop::End,
+        ring_stop: None,
+    };
+    // Face 10 is bound; 20 shares edge 7 with it; 30 shares edge 9 with 20;
+    // 40 shares nothing.
+    let faces = [
+        face(10, vec![1, 2]),
+        face(20, vec![3, 4]),
+        face(30, vec![5]),
+        face(40, vec![6]),
+    ];
+    let bytes = [0_u8; 8];
+    let arena = cadmpeg_core::decode::DecodeArena::new();
+    let ctx = cadmpeg_core::decode::DecodeContext::from_root_bytes(
+        &bytes,
+        &arena,
+        &cadmpeg_core::decode::DecodePolicy::service(),
+    )
+    .expect("root")
+    .0;
+    let mut group = HashMap::from([(10_u16, 3_usize)]);
+    let mut shell = HashMap::from([(10_u16, 5_u16)]);
+    assert_eq!(
+        adopt_unclaimed_faces(&ctx, &coedges, &faces, &mut group, &mut shell).expect("adopt"),
+        2
+    );
+    assert_eq!(group.get(&20), Some(&3));
+    assert_eq!(group.get(&30), Some(&3));
+    assert_eq!(shell.get(&30), Some(&5));
+    assert_eq!(group.get(&40), None);
+
+    // A face between two shells stays unclaimed.
+    let mut group = HashMap::from([(10_u16, 3_usize), (30_u16, 4_usize)]);
+    let mut shell = HashMap::from([(10_u16, 5_u16), (30_u16, 6_u16)]);
+    adopt_unclaimed_faces(&ctx, &coedges, &faces, &mut group, &mut shell).expect("adopt");
+    assert_eq!(group.get(&20), None);
+}

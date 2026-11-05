@@ -176,7 +176,7 @@ pub fn decode_hosted_brep(
                 "{{\"kind\":\"summary2\",\"admitted_29\":{},\"admitted_unreadable\":{},\
                  \"admitted_no_header\":{},\"admitted_inconsistent\":{},\
                  \"admitted_no_point\":{},\"unclaimed_faces\":{},\"unclaimed_admitted\":{},\
-                 \"faces_loops_all_dropped\":{}}}",
+                 \"adopted_faces\":{},\"faces_loops_all_dropped\":{}}}",
                 stats.admitted_by_reference.by_type[5],
                 stats.admitted_by_reference.unreadable,
                 stats.admitted_by_reference.no_header,
@@ -184,6 +184,7 @@ pub fn decode_hosted_brep(
                 stats.admitted_by_reference.no_point,
                 stats.unclaimed_faces,
                 stats.unclaimed_admitted,
+                stats.adopted_faces,
                 stats.faces_loops_all_dropped,
             ),
         );

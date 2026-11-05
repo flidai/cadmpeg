@@ -583,6 +583,8 @@ pub(crate) struct Stats {
     pub(crate) admitted_by_reference: topology::Admitted,
     /// Of the unclaimed faces, those of bridges admitted by reference.
     pub(crate) unclaimed_admitted: usize,
+    /// Faces that no body record names and that took the shell of a neighbour.
+    pub(crate) adopted_faces: usize,
     /// Faces with loops whose loops were all dropped later, as opposed to faces
     /// whose loop walk found no loop.
     pub(crate) faces_loops_all_dropped: usize,
@@ -791,6 +793,85 @@ struct WalkedFace {
     /// For a ring that did not close: the loop, the coedges walked, and the
     /// reference at which the walk stopped.
     ring_stop: Option<(u16, usize, u16)>,
+}
+
+/// Bind the faces that no body record names to the shell of the faces they
+/// share an edge with.
+///
+/// A face of an admitted bridge is named by no face node of the body hierarchy
+/// when that node is not held. The face still lies in the shell of its
+/// neighbours: two faces that use one edge are in one shell. A face is adopted
+/// only when every neighbour that is bound agrees on the group and the shell,
+/// and the pass runs until no face is adopted. Returns the faces adopted.
+fn adopt_unclaimed_faces(
+    ctx: &DecodeContext<'_>,
+    coedges: &HashMap<u16, topology::Coedge>,
+    faces: &[WalkedFace],
+    bridge_group: &mut HashMap<u16, usize>,
+    bridge_shell: &mut HashMap<u16, u16>,
+) -> Result<usize, cadmpeg_core::CodecError> {
+    let mut count = 0;
+    let mut face_edges: Vec<(u16, Vec<u16>)> = Vec::new();
+    let mut faces_of_edge: HashMap<u16, Vec<u16>> = HashMap::new();
+    for face in faces {
+        let mut edges = Vec::new();
+        for (_, ring) in &face.loops {
+            for coedge in ring {
+                ctx.charge_work(1, "index unclaimed Parasolid face edges")?;
+                let edge = coedges.get(coedge).map_or(0, |c| c.refs[6]);
+                if edge != 0 && !edges.contains(&edge) {
+                    ctx.push_vec(&mut edges, edge, "index unclaimed Parasolid face edges")?;
+                    let owners = faces_of_edge.entry(edge).or_default();
+                    ctx.push_vec(
+                        owners,
+                        face.bridge_attr,
+                        "index unclaimed Parasolid face edges",
+                    )?;
+                }
+            }
+        }
+        ctx.push_vec(
+            &mut face_edges,
+            (face.bridge_attr, edges),
+            "index unclaimed Parasolid face edges",
+        )?;
+    }
+    loop {
+        let mut adopted = false;
+        for (bridge, edges) in &face_edges {
+            if bridge_group.contains_key(bridge) {
+                continue;
+            }
+            let mut found: Option<(usize, Option<u16>)> = None;
+            let mut agree = true;
+            for edge in edges {
+                for other in faces_of_edge.get(edge).into_iter().flatten() {
+                    ctx.charge_work(1, "adopt unclaimed Parasolid faces")?;
+                    let Some(group) = bridge_group.get(other).copied() else {
+                        continue;
+                    };
+                    let seen = (group, bridge_shell.get(other).copied());
+                    if *found.get_or_insert(seen) != seen {
+                        agree = false;
+                    }
+                }
+            }
+            let Some((group, shell)) = found.filter(|_| agree) else {
+                continue;
+            };
+            ctx.admit_hash_map_entry(bridge_group, bridge, "index Parasolid bridge groups")?;
+            bridge_group.insert(*bridge, group);
+            if let Some(shell) = shell {
+                ctx.admit_hash_map_entry(bridge_shell, bridge, "index Parasolid bridge shells")?;
+                bridge_shell.insert(*bridge, shell);
+            }
+            adopted = true;
+            count += 1;
+        }
+        if !adopted {
+            return Ok(count);
+        }
+    }
 }
 
 /// Why the walk of a face's loop chain stopped early.
@@ -2937,7 +3018,16 @@ fn decode_graph(
         }
         Ok((bridge_group, bridge_shell))
     };
-    let (bridge_group, bridge_shell) = bind_bridges(&body_records, &faces)?;
+    let (mut bridge_group, mut bridge_shell) = bind_bridges(&body_records, &faces)?;
+    if hosted && !body_records.is_empty() {
+        out.stats.adopted_faces += adopt_unclaimed_faces(
+            ctx,
+            t.coedges(),
+            &faces,
+            &mut bridge_group,
+            &mut bridge_shell,
+        )?;
+    }
     if !body_records.is_empty() {
         out.stats.unclaimed_faces += faces
             .iter()
