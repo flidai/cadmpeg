@@ -6084,6 +6084,7 @@ fn stage_curve_tree_indexed(
                 ctx.collection_vec(parameter_count, "Rhino Brep curve tree parameters")?;
             let mut components =
                 ctx.collection_vec(children.len(), "Rhino Brep curve tree components")?;
+            let solved_cache = crate::curves::compound_solved_cache(ctx, &children, end_parameter)?;
             for (index, (parameter, child)) in children.into_iter().enumerate() {
                 let parameter = parameter.get();
                 parameters.push(parameter);
@@ -6100,8 +6101,13 @@ fn stage_curve_tree_indexed(
             }
             parameters.push(end_parameter.get());
             (
-                CurveGeometry::Solved(SolvedCurveGeometry::Unknown {
-                    record: Some(unknown.try_clone_for_decode(ctx, "Rhino typed identity copy")?),
+                CurveGeometry::Solved(match solved_cache {
+                    Some(nurbs) => SolvedCurveGeometry::Nurbs(nurbs),
+                    None => SolvedCurveGeometry::Unknown {
+                        record: Some(
+                            unknown.try_clone_for_decode(ctx, "Rhino typed identity copy")?,
+                        ),
+                    },
                 }),
                 Some(ProceduralCurveDefinition::Compound(
                     cadmpeg_ir::geometry::CompoundCurveConstruction::try_new(
@@ -6736,6 +6742,7 @@ fn commit_curve_tree_indexed(
                 ctx.collection_vec(parameter_count, "Rhino committed curve tree parameters")?;
             let mut components =
                 ctx.collection_vec(children.len(), "Rhino committed curve tree components")?;
+            let solved_cache = crate::curves::compound_solved_cache(ctx, &children, end_parameter)?;
             for (index, (parameter, child)) in children.into_iter().enumerate() {
                 let parameter = parameter.get();
                 parameters.push(parameter);
@@ -6759,8 +6766,11 @@ fn commit_curve_tree_indexed(
             }
             parameters.push(end_parameter.get());
             (
-                CurveGeometry::Solved(SolvedCurveGeometry::Unknown {
-                    record: source.record,
+                CurveGeometry::Solved(match solved_cache {
+                    Some(nurbs) => SolvedCurveGeometry::Nurbs(nurbs),
+                    None => SolvedCurveGeometry::Unknown {
+                        record: source.record,
+                    },
                 }),
                 Some(ProceduralCurveDefinition::Compound(
                     cadmpeg_ir::geometry::CompoundCurveConstruction::try_new(

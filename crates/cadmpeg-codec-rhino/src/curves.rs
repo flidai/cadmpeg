@@ -793,27 +793,53 @@ pub(crate) fn exact_nurbs(
             children,
             end_parameter,
             ..
-        } => {
-            let mut segments = ctx
-                .collection_vec(children.len(), "Rhino exact NURBS segments")
-                .map_err(crate::curves::GeometryError::from)?;
-            for (index, (start, child)) in children.iter().enumerate() {
-                let end = children
-                    .get(index + 1)
-                    .map_or(*end_parameter, |(next, _)| *next);
-                let target = [*start, end];
-                if target[0] >= target[1] {
-                    return Err(error(offset, "polycurve segment domain is invalid"));
-                }
-                segments.push(remap_nurbs_domain(
-                    ctx,
-                    exact_nurbs(ctx, child, offset)?,
-                    target,
-                    offset,
-                )?);
-            }
-            Ok(join_nurbs_segments(ctx, segments, offset)?.curve)
+        } => exact_compound_nurbs(ctx, children, *end_parameter, offset),
+    }
+}
+
+/// Converts the children of a polycurve to one exact NURBS curve over the
+/// parameters of the polycurve.
+fn exact_compound_nurbs(
+    ctx: &DecodeContext<'_>,
+    children: &[(FiniteReal, DecodedCurve)],
+    end_parameter: FiniteReal,
+    offset: usize,
+) -> Result<NurbsCurve, GeometryError> {
+    let mut segments = ctx
+        .collection_vec(children.len(), "Rhino exact NURBS segments")
+        .map_err(crate::curves::GeometryError::from)?;
+    for (index, (start, child)) in children.iter().enumerate() {
+        let end = children
+            .get(index + 1)
+            .map_or(end_parameter, |(next, _)| *next);
+        let target = [*start, end];
+        if target[0] >= target[1] {
+            return Err(error(offset, "polycurve segment domain is invalid"));
         }
+        segments.push(remap_nurbs_domain(
+            ctx,
+            exact_nurbs(ctx, child, offset)?,
+            target,
+            offset,
+        )?);
+    }
+    Ok(join_nurbs_segments(ctx, segments, offset)?.curve)
+}
+
+/// The exact single-NURBS form of the children of a polycurve, for the solved
+/// cache of the compound carrier that keeps them.
+///
+/// Children without an exact form yield no cache. A resource refusal is the
+/// only failure.
+pub(crate) fn compound_solved_cache(
+    ctx: &DecodeContext<'_>,
+    children: &[(FiniteReal, DecodedCurve)],
+    end_parameter: FiniteReal,
+) -> Result<Option<NurbsCurve>, CodecError> {
+    match exact_compound_nurbs(ctx, children, end_parameter, 0) {
+        Ok(nurbs) => Ok(Some(nurbs)),
+        Err(GeometryError::Codec(refusal @ CodecError::ResourceLimit(_))) => Err(refusal),
+        Err(_) => Ok(None),
     }
 }
 
@@ -1243,30 +1269,44 @@ pub(crate) fn join_nurbs_segments(
         } else {
             None
         };
-        // Unequal endpoint weights are different homogeneous poles. Keep both
-        // with a full-multiplicity knot so neither segment's rational shape changes.
+        // Scaling every weight of a rational segment keeps its curve. A
+        // segment whose first weight differs from the previous last weight is
+        // scaled to match, so the joint is one pole with a knot of
+        // multiplicity equal to the degree. A scale that leaves the finite
+        // nonzero range keeps both poles under a full-multiplicity knot.
         let unit = NonZeroReal::from(PositiveReal::ONE);
         let previous_weight = weights
             .as_ref()
             .and_then(|weights| weights.last())
             .copied()
             .unwrap_or(unit);
-        let next_weight = match segment.pole_rows() {
+        let source_weight = |point_index: usize| match segment.pole_rows() {
             cadmpeg_ir::geometry::nurbs::NurbsPoles3::Polynomial { .. } => unit,
             cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { points } => {
-                points.first().map_or(unit, |point| point.weight)
+                points[point_index].weight
             }
         };
-        let skip = usize::from(index > 0 && previous_weight.get() == next_weight.get());
+        let next_weight = source_weight(0);
+        let scale = (index > 0 && previous_weight.get() != next_weight.get())
+            .then(|| previous_weight.get() / next_weight.get())
+            .filter(|ratio| {
+                ratio.is_finite()
+                    && *ratio > 0.0
+                    && (0..segment.pole_rows().count()).all(|point_index| {
+                        NonZeroReal::new(source_weight(point_index).get() * ratio).is_some()
+                    })
+            });
+        let skip = usize::from(
+            index > 0 && (scale.is_some() || previous_weight.get() == next_weight.get()),
+        );
         let count = segment.pole_rows().count() - skip;
         if let Some(target) = &mut weights {
             ctx.reserve_vec(target, count, "Rhino joined polycurve weights")?;
             for point_index in skip..segment.pole_rows().count() {
-                let weight = match segment.pole_rows() {
-                    cadmpeg_ir::geometry::nurbs::NurbsPoles3::Polynomial { .. } => unit,
-                    cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { points } => {
-                        points[point_index].weight
-                    }
+                let weight = match scale {
+                    Some(ratio) => NonZeroReal::new(source_weight(point_index).get() * ratio)
+                        .ok_or_else(|| error(offset, "polycurve weight scale is invalid"))?,
+                    None => source_weight(point_index),
                 };
                 target.push(weight);
             }
@@ -3769,5 +3809,55 @@ mod tests {
             &[3.0, 3.0, 3.0, 4.0, 5.0, 5.0, 5.0]
         );
         assert_pieces_follow_curve(&curve, &pieces);
+    }
+
+    #[test]
+    fn polycurve_join_scales_a_segment_to_the_previous_end_weight() {
+        let rational = |points: Vec<Point3>, weights: Vec<f64>| {
+            corner_fixture(
+                2,
+                vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                points,
+                Some(weights),
+                false,
+            )
+        };
+        let first = rational(
+            vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+            ],
+            vec![1.0, 0.5, 2.0],
+        );
+        let second = corner_fixture(
+            2,
+            vec![1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+            vec![
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(3.0, -1.0, 0.0),
+                Point3::new(4.0, 0.0, 0.0),
+            ],
+            Some(vec![1.0, 0.8, 1.0]),
+            false,
+        );
+        let joined = with_test_context(|ctx| {
+            super::join_nurbs_segments(ctx, vec![first.clone(), second.clone()], 0)
+        })
+        .expect("segments join")
+        .curve;
+        // One pole at the joint and a joint knot of multiplicity equal to the degree.
+        assert_eq!(joined.pole_count(), 5);
+        assert_eq!(
+            joined.knots().as_slice(),
+            &[0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 2.0]
+        );
+        for parameter in [0.2, 0.9, 1.1, 1.8] {
+            let source = if parameter < 1.0 { &first } else { &second };
+            assert!(
+                evaluate_curve(&joined, parameter).distance(evaluate_curve(source, parameter))
+                    <= 1.0e-12
+            );
+        }
     }
 }
