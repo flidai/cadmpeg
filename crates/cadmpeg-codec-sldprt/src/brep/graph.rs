@@ -1248,6 +1248,24 @@ fn closed_seam_point(
     Ok((gap <= RING_CLOSURE_TOLERANCE_MM).then_some(first))
 }
 
+/// Put the start of a circle or ellipse edge range into one turn from zero.
+///
+/// A stored start angle may fall a rounding error below zero, or a turn away
+/// from it. The sweep stays as stored, except that a start within `1e-9` below
+/// zero is read as zero.
+fn canonical_angular_range(range: [f64; 2]) -> [f64; 2] {
+    const SNAP: f64 = 1.0e-9;
+    let [start, end] = range;
+    if (0.0..std::f64::consts::TAU).contains(&start) {
+        return range;
+    }
+    if (-SNAP..0.0).contains(&start) {
+        return [0.0, end];
+    }
+    let shift = (start / std::f64::consts::TAU).floor() * std::f64::consts::TAU;
+    [start - shift, end - shift]
+}
+
 fn edge_parameter_range(
     ctx: &DecodeContext<'_>,
     carrier: &CurveCarrier,
@@ -1269,6 +1287,12 @@ fn edge_parameter_range(
         range
     } else {
         [range[1], range[0]]
+    };
+    let range = match &carrier.geometry {
+        CurveGeometry::Solved(SolvedCurveGeometry::Circle(_) | SolvedCurveGeometry::Ellipse(_)) => {
+            canonical_angular_range(range)
+        }
+        _ => range,
     };
     let Some(endpoints) = endpoints else {
         return Ok(Some((range, false)));
@@ -8215,6 +8239,19 @@ mod tests {
         assert_eq!(sphere_latitude(2.1, 2.0), None);
         // A signed radius keeps the signed ratio.
         assert_eq!(sphere_latitude(2.0, -2.0), Some(-FRAC_PI_2));
+    }
+
+    #[test]
+    fn angular_edge_range_starts_within_one_turn_from_zero() {
+        use std::f64::consts::TAU;
+        // A start a rounding error below zero is read as zero.
+        assert_eq!(super::canonical_angular_range([-5.0e-15, 1.5]), [0.0, 1.5]);
+        // A start inside the turn stays as stored.
+        assert_eq!(super::canonical_angular_range([0.5, 1.5]), [0.5, 1.5]);
+        // A start further below zero moves up by whole turns with its sweep.
+        let [start, end] = super::canonical_angular_range([-1.0, 0.5]);
+        assert!((start - (TAU - 1.0)).abs() < 1.0e-12);
+        assert!((end - (TAU + 0.5)).abs() < 1.0e-12);
     }
 
     #[test]
