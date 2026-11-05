@@ -96,6 +96,8 @@ fn prepared(
         selection: TargetSelection::new(format, None),
         destination: ResolvedDestination::Stdout,
         loss_policy,
+        // These tests exercise loss policy over an empty document.
+        allow_empty: true,
     }
 }
 

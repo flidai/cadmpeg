@@ -87,7 +87,8 @@ output, because that spelling is nearly always `--input-format` (alias
 pipe, `--binary-stdout`.
 
 Conversion stops before export if the check finds errors. It also refuses
-geometry output when decoding transfers no geometry. `--allow-errors` and
+geometry output when decoding transfers no geometry, and STEP output whose
+planned file holds no face (refusal code `no_faces`). `--allow-errors` and
 `--allow-empty` write the current result anyway. They leave model data
 unchanged.
 
