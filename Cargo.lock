@@ -310,6 +310,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadmpeg-codec-parasolid"
+version = "0.6.1"
+dependencies = [
+ "cadmpeg-codec-sldprt",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "cadmpeg-parasolid",
+ "cadmpeg-test-support",
+ "serde_json",
+]
+
+[[package]]
 name = "cadmpeg-codec-rhino"
 version = "0.6.1"
 dependencies = [
@@ -464,6 +476,7 @@ dependencies = [
  "cadmpeg-codec-iges",
  "cadmpeg-codec-inventor",
  "cadmpeg-codec-nx",
+ "cadmpeg-codec-parasolid",
  "cadmpeg-codec-rhino",
  "cadmpeg-codec-sat",
  "cadmpeg-codec-sldprt",

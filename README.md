@@ -73,6 +73,7 @@ Each format carries one support level from the ladder; `cadmpeg inspect <file>` 
 - **Fusion 360 `.f3d`** — L4 ([profile](docs/format-support.md#fusion-360-f3d))
 - **Siemens NX `.prt`** — L1 ([profile](docs/format-support.md#siemens-nx-prt))
 - **Siemens Solid Edge `.par`, `.psm`, and `.asm`** — L1 ([profile](docs/format-support.md#siemens-solid-edge-par-psm-and-asm))
+- **Parasolid transmit `.x_b` and `.x_t` files** — L1 ([profile](docs/format-support.md#parasolid-transmit-xb-and-xt-files))
 - **CATIA V5 `.CATPart`** — L1 ([profile](docs/format-support.md#catia-v5-catpart))
 - **Creo Parametric `.prt`** — L1 ([profile](docs/format-support.md#creo-parametric-prt))
 - **STEP Part 21** — L9 ([profile](docs/format-support.md#step-part-21))

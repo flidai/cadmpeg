@@ -1,0 +1,46 @@
+{
+  "container_kind": "stream",
+  "entries": [
+    {
+      "attributes": {},
+      "compression": "stored",
+      "name": "transmit",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 1360
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [],
+      "primary": {
+        "admission": "residual",
+        "declared": {
+          "carrier": "transmit",
+          "encoding": "binary",
+          "schema": "SCH_3201255_32001"
+        },
+        "dialect": "parasolid:unknown"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "parasolid",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at transmit declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    }
+  ],
+  "notes": [
+    "description \"TRANSMIT FILE created by test\", binary schema SCH_3201255_32001"
+  ]
+}

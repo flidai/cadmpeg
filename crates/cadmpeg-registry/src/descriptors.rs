@@ -47,7 +47,8 @@ pub(crate) enum FormatKind {
         feature = "step",
         feature = "iges",
         feature = "sat",
-        feature = "solidedge"
+        feature = "solidedge",
+        feature = "parasolid"
     ))]
     Native(NativeDescriptor),
 }
@@ -133,7 +134,8 @@ impl FormatDescriptor {
                 feature = "step",
                 feature = "iges",
                 feature = "sat",
-                feature = "solidedge"
+                feature = "solidedge",
+                feature = "parasolid"
             ))]
             FormatKind::Native(native) => native.id,
         }
@@ -157,7 +159,8 @@ impl FormatDescriptor {
                 feature = "step",
                 feature = "iges",
                 feature = "sat",
-                feature = "solidedge"
+                feature = "solidedge",
+                feature = "parasolid"
             ))]
             FormatKind::Native(native) => native.input_extensions,
         }
@@ -178,7 +181,8 @@ impl FormatDescriptor {
                 feature = "step",
                 feature = "iges",
                 feature = "sat",
-                feature = "solidedge"
+                feature = "solidedge",
+                feature = "parasolid"
             ))]
             FormatKind::Native(native) => ForcedInput::Codec(native),
         }
@@ -191,7 +195,8 @@ impl FormatDescriptor {
     feature = "creo",
     feature = "nx",
     feature = "sat",
-    feature = "solidedge"
+    feature = "solidedge",
+    feature = "parasolid"
 ))]
 macro_rules! reader {
     ($name:ident, $id:expr, $input_exts:expr, $decoder:expr) => {
@@ -326,6 +331,13 @@ reader!(
     &["par", "psm", "asm"],
     || Box::new(cadmpeg_codec_solidedge::SolidEdgeCodec)
 );
+#[cfg(feature = "parasolid")]
+reader!(
+    PARASOLID,
+    FormatId::new("parasolid"),
+    &["x_t", "x_b"],
+    || Box::new(cadmpeg_codec_parasolid::ParasolidCodec)
+);
 static CADIR_OUTPUT: OutputDescriptor = OutputDescriptor {
     extensions: &["cadir", "json"],
     physics: OutputPhysics::NeutralText,
@@ -362,6 +374,8 @@ pub(crate) static FORMAT_DESCRIPTORS: &[&FormatDescriptor] = &[
     &SAT,
     #[cfg(feature = "solidedge")]
     &SOLIDEDGE,
+    #[cfg(feature = "parasolid")]
+    &PARASOLID,
     &CADIR,
 ];
 
