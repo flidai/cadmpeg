@@ -545,16 +545,72 @@ fn copy_sketch_entity_id(
     crate::records::identity::DesignEntityId::try_from(text).map_err(CodecError::NotImplemented)
 }
 
+/// Primary-index starts of the records in every Design `BulkStream`.
+///
+/// The primary index names the sole live sibling record of an entity. A
+/// record-shaped byte run at another offset is not a sibling record.
+#[derive(Default)]
+pub(crate) struct PrimaryScopeStarts {
+    by_stream: HashMap<String, std::collections::HashSet<(u64, u64)>>,
+}
+
+impl PrimaryScopeStarts {
+    /// Read the primary index of each Design `BulkStream`.
+    pub(crate) fn collect(
+        ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+        scan: &ContainerScan,
+    ) -> Result<Self, CodecError> {
+        let mut by_stream = HashMap::new();
+        for entry in scan
+            .entries
+            .iter()
+            .filter(|entry| scan.is_design_stream(entry, ContainerRole::Bulkstream))
+        {
+            let Some(meta) =
+                crate::design::decode::meta::metadata_for_bulk_stream(ctx, scan, &entry.name)?
+            else {
+                continue;
+            };
+            let stream = native_scope_charged(ctx, &entry.name)?;
+            let mut starts = std::collections::HashSet::new();
+            ctx.reserve_set(&mut starts, meta.records.len(), "f3d primary scope starts")?;
+            for record in &meta.records {
+                starts.insert((record.entity_id, record.bulk_offset));
+            }
+            ctx.reserve_map(&mut by_stream, 1, "f3d primary scope start streams")?;
+            by_stream.insert(stream, starts);
+        }
+        Ok(Self { by_stream })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_entries(stream: &str, entries: &[(u64, u64)]) -> Self {
+        Self {
+            by_stream: HashMap::from([(stream.to_owned(), entries.iter().copied().collect())]),
+        }
+    }
+
+    fn names(&self, stream: &str, record_index: u32, byte_offset: u64) -> bool {
+        self.by_stream
+            .get(stream)
+            .is_some_and(|starts| starts.contains(&(u64::from(record_index), byte_offset)))
+    }
+}
+
 /// Admit one envelope for every logical scope identity.
 ///
 /// Some Design streams retain more than one complete envelope for one record
 /// index. A history-bound envelope is authoritative when exactly one
-/// candidate resolves to a unique ASM state transition; an unresolved group
-/// remains an error so a duplicate cannot be selected by byte order.
+/// candidate resolves to a unique ASM state transition. Otherwise equivalent
+/// envelopes resolve to the later one. When the envelopes differ and no
+/// transition selects one, the envelope that the primary index names is
+/// authoritative if it names exactly one. An unresolved group remains an
+/// error so a duplicate cannot be selected by byte order.
 pub(crate) fn admit_history_bound_scope_variants(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     scopes: &mut Vec<DesignParameterScope>,
     histories: &[crate::history_records::AsmHistory],
+    primary_starts: &PrimaryScopeStarts,
 ) -> Result<(), CodecError> {
     let (mut admitted, _admitted_storage) =
         ctx.temporary_vec(scopes.len(), "f3d scope admission")?;
@@ -623,6 +679,17 @@ pub(crate) fn admit_history_bound_scope_variants(
                 })
             }
             _ => {
+                let mut indexed = indices.iter().copied().filter(|index| {
+                    let scope = &scopes[*index];
+                    let stream = native_stream(&scope.id).unwrap_or(ids::DEFAULT_STREAM);
+                    primary_starts.names(stream, scope.record_index, scope.byte_offset())
+                });
+                if let (Some(keep), None) = (indexed.next(), indexed.next()) {
+                    for index in indices {
+                        admitted[*index] = *index == keep;
+                    }
+                    continue;
+                }
                 return Err(CodecError::Malformed(
                     "Design scope record identity has unresolved duplicate envelopes".into(),
                 ));

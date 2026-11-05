@@ -4984,10 +4984,13 @@ fn extend_related_design_records(
             scan,
             &native.design_parameter_scopes,
         )?;
+    let primary_scope_starts =
+        crate::design::decode::scopes::parameter_scope::PrimaryScopeStarts::collect(ctx, scan)?;
     crate::design::decode::scopes::parameter_scope::admit_history_bound_scope_variants(
         ctx,
         &mut native.design_parameter_scopes,
         &native.asm_histories,
+        &primary_scope_starts,
     )?;
     native.design_face_source_groups = crate::design::decode::operands::decode_face_source_groups(
         ctx,
@@ -5006,6 +5009,11 @@ fn extend_related_design_records(
     native.design_decal_images = crate::design::decode::decal::decode_decal_images(
         ctx,
         scan,
+        &native.design_parameter_scopes,
+    )?;
+    crate::design::decode::operands::retain_scope_listed_parameter_owners(
+        ctx,
+        &mut native.design_parameter_owners,
         &native.design_parameter_scopes,
     )?;
     crate::design::decode::operands::disambiguate_fixed_fillet_parameters(

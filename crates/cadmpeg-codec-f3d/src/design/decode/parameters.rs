@@ -238,7 +238,14 @@ pub(in crate::design) fn parse_design_parameter(
             && payload.get(30) == Some(&1)
             && payload.get(35..41) == Some(&[0; 6]);
         let discriminated = !compact_owned && payload.get(30) == Some(&0);
-        if !compact_owned && !discriminated {
+        // The shifted discriminated form stores the u32 source ordinal at
+        // offset 30 and the owner marker at offset 34, four bytes after the
+        // compact owned form.
+        let shifted = !compact_owned
+            && !discriminated
+            && payload.get(34) == Some(&1)
+            && payload.get(39..45) == Some(&[0; 6]);
+        if !compact_owned && !discriminated && !shifted {
             return match parse_legacy_design_parameter(ctx, payload, class_tag, record_index) {
                 Ok(value) => value.map(Ok),
                 Err(error) => Some(Err(error)),
@@ -264,6 +271,19 @@ pub(in crate::design) fn parse_design_parameter(
                     owner.0,
                     owner.1,
                     owner.2,
+                )
+            } else if shifted {
+                let discriminator =
+                    crate::records::parameters::DesignParameterDiscriminator::try_from(
+                        View::u64_le_at(payload, 22)?,
+                    )
+                    .ok()?;
+                (
+                    Some(discriminator),
+                    View::u32_le_at(payload, 30)?,
+                    Some(View::u32_le_at(payload, 35)?),
+                    45,
+                    5,
                 )
             } else if compact_owned {
                 (
@@ -523,15 +543,6 @@ pub(crate) fn design_parameter_discriminator(source_kind: &str) -> u64 {
     }
 }
 
-/// Whether a class tag admits the legacy owner grammar without scope or scalar
-/// lanes.
-pub(crate) fn is_legacy_parameter_owner_68_class(class_tag: &str) -> bool {
-    matches!(
-        class_tag,
-        "268" | "282" | "284" | "289" | "297" | "299" | "325" | "336"
-    )
-}
-
 /// Whether a class tag admits the legacy owner grammar with repeated scope
 /// references but without scalar or local-ordinal lanes.
 pub(crate) fn is_legacy_parameter_owner_88_class(class_tag: &str) -> bool {
@@ -544,7 +555,7 @@ fn valid_design_parameter_family(
     tail: u8,
 ) -> bool {
     use crate::records::parameters::DesignParameterDiscriminator::{
-        Code0, Code3, Code4, Code5, Code6,
+        Code0, Code1, Code2, Code3, Code4, Code5, Code6,
     };
     match tail {
         16 => {
@@ -552,10 +563,15 @@ fn valid_design_parameter_family(
                 || discriminator == Some(Code6)
         }
         19 => discriminator.is_none_or(|value| {
-            matches!(value, Code0 | Code3 | Code4)
+            matches!(value, Code0 | Code1 | Code2 | Code3 | Code4)
                 || (value == Code6 && source_kind == "TangencyWeight")
         }),
-        _ => false,
+        // The closing code of the compact owned form takes values other than
+        // `13`. The discriminated families that store codes 0 through 4 do the
+        // same (open item DR-74).
+        _ => {
+            discriminator.is_none_or(|value| matches!(value, Code0 | Code1 | Code2 | Code3 | Code4))
+        }
     }
 }
 
@@ -660,7 +676,8 @@ pub(crate) fn decode_parameter_owners(
         let owner = parse_parameter_owner(frame)
             .or_else(|| parse_legacy_parameter_owner_68(frame, evaluated, header.byte_offset))
             .or_else(|| parse_legacy_parameter_owner_88(frame, evaluated, header.byte_offset))
-            .ok_or_else(|| malformed("does not match the parameter-owner grammar"))?
+            .ok_or_else(|| malformed("does not match the parameter-owner grammar"))?;
+        let owner = owner
             .into_record(&entry.name, header.byte_offset)
             .ok_or_else(|| malformed("has invalid owner fields or evaluated-value offset"))?;
         if owner.record_index() != owner_index
@@ -855,16 +872,16 @@ pub(in crate::design) fn parse_parameter_owner(frame: &[u8]) -> Option<ParsedPar
 
 /// Parse the legacy owner envelope whose scope and scalar lanes are absent.
 ///
-/// The class admission is intentional. A short frame is not enough to select
-/// this grammar because older class tags also occur on modern owner records.
+/// The frame length and the closed grammar select this form. The class tag is a
+/// per-file table ordinal and names no form; the parameter that references the
+/// owner and the consecutive record indices bind the frame.
 fn parse_legacy_parameter_owner_68(
     frame: &[u8],
     evaluated: crate::records::identity::Located<f64>,
     frame_start: u64,
 ) -> Option<ParsedParameterOwner> {
     let (class_tag, after_tag) = lp_ascii_filtered_view(frame, 0, 0..=2000, u8::is_ascii_graphic)?;
-    if !is_legacy_parameter_owner_68_class(class_tag)
-        || frame.len() != legacy_owner_68::LEN
+    if frame.len() != legacy_owner_68::LEN
         || after_tag != indexed_header::RECORD_INDEX
         || frame.get(legacy_owner_68::ZERO_RUN_8..legacy_owner_68::FIRST_MARKER) != Some(&[0; 8])
         || frame.get(legacy_owner_68::FIRST_MARKER) != Some(&1)
