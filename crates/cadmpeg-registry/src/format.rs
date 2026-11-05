@@ -111,6 +111,25 @@ impl Format {
     pub fn transfers_geometry(self) -> bool {
         self.descriptor().1.physics.transfers_geometry()
     }
+
+    /// The target-record kinds an export census counts for a record that
+    /// carries a face, such as `ADVANCED_FACE` in STEP.
+    ///
+    /// Empty for a format whose export census does not name face records.
+    /// A geometry export whose census counts none of these kinds writes no
+    /// surface geometry.
+    #[must_use]
+    pub const fn face_record_kinds(self) -> &'static [&'static str] {
+        match self {
+            #[cfg(feature = "step")]
+            Self::Step => &[
+                "ADVANCED_FACE",
+                "TRIANGULATED_FACE",
+                "TRIANGULATED_SURFACE_SET",
+            ],
+            _ => &[],
+        }
+    }
 }
 
 #[cfg(test)]

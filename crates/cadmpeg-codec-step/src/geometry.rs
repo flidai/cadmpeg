@@ -209,7 +209,7 @@ fn transformation_operator_2d(e: &mut Emitter, transform: Transform2) -> Option<
     }
     Some(e.emit(
         "CARTESIAN_TRANSFORMATION_OPERATOR_2D",
-        &format!("'',{x},{y},{origin},{}", e.real(scale)),
+        &format!("{},{x},{y},{origin},{}", e.operator_prefix(), e.real(scale)),
     ))
 }
 
@@ -420,7 +420,11 @@ pub(crate) fn transformation_operator(e: &mut Emitter, transform: Transform) -> 
     let z = direction(e, z);
     e.emit(
         "CARTESIAN_TRANSFORMATION_OPERATOR_3D",
-        &format!("'',{x},{y},{origin},{},{z}", e.real(scale)),
+        &format!(
+            "{},{x},{y},{origin},{},{z}",
+            e.operator_prefix(),
+            e.real(scale)
+        ),
     )
 }
 
