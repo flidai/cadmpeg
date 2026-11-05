@@ -46,6 +46,7 @@ fn a_ring_edge_on_a_circle_starts_at_the_start_of_its_range() {
         end: 0,
         geometry: geometry.clone(),
         parameter_range: cadmpeg_ir::units::FiniteVector::new(range),
+        reversed: false,
     };
     let at_zero = super::closed_seam_point(&ctx, &carrier([0.0, std::f64::consts::TAU]))
         .unwrap()

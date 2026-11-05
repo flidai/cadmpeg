@@ -188,7 +188,8 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
     if header.is_some() && !ctx.container_only() {
         let binary = bytes.get(transmit.binary_offset..).unwrap_or(bytes);
         let origin = cadmpeg_ir::stream_name!("parasolid:transmit");
-        let hosted = decode_hosted_brep(ctx, &mut ir.model, &[binary], &origin, &source)?;
+        // A standalone transmit file has no diagnostics switch of its own.
+        let hosted = decode_hosted_brep(ctx, &mut ir.model, &[binary], &origin, &source, false)?;
         ctx.admit_entities(hosted.entities, &mut admitted, "admit Parasolid entities")?;
         annotations = hosted.annotations;
         ctx.extend_vec(&mut losses, hosted.losses, "collect Parasolid losses")?;

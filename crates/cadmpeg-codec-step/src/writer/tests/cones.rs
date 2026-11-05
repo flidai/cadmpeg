@@ -12,6 +12,7 @@ use cadmpeg_ir::math::{Point3, Vector3};
 
 use cadmpeg_ir::examples::unit_cube;
 
+use super::round_trips::emit_surface_only;
 use crate::export::write_step;
 use crate::loss::StepLossCode;
 use crate::test_support::exchange::export;
@@ -192,4 +193,22 @@ fn zero_half_angle_cone_round_trips_as_a_cylinder_of_the_same_chart() {
             .hypot(source_point.z - written_point.z);
         assert!(distance < EPS_CYLINDER_POINT);
     }
+}
+
+#[test]
+fn zero_semi_angle_cone_writes_the_cylinder_of_the_same_radius() {
+    let source = SolvedSurfaceGeometry::Cone(
+        cadmpeg_ir::geometry::analytic::ConeSurface::try_new(
+            Point3::new(1.0, 2.0, 3.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.0,
+            1.0,
+            0.0,
+        )
+        .expect("finite cone"),
+    );
+    let text = emit_surface_only(&SurfaceGeometry::Solved(source));
+    assert!(text.contains("CYLINDRICAL_SURFACE('',#4,2.)"), "{text}");
+    assert!(!text.contains("CONICAL_SURFACE"));
 }

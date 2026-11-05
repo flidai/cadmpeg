@@ -277,29 +277,11 @@ fn align_sheet_edge_to_pcurve(
 }
 
 /// Emit a single surface carrier in isolation and return the DATA lines joined.
-fn emit_surface_only(g: &SurfaceGeometry) -> String {
+pub(super) fn emit_surface_only(g: &SurfaceGeometry) -> String {
     let mut e = crate::writer::Emitter::new();
     crate::geometry::surface(&mut e, g.solved().expect("solved surface"))
         .expect("surface geometry is writable");
     e.into_lines().expect("finite reals").join("\n")
-}
-
-#[test]
-fn zero_semi_angle_cone_writes_the_cylinder_of_the_same_radius() {
-    let source = SolvedSurfaceGeometry::Cone(
-        cadmpeg_ir::geometry::analytic::ConeSurface::try_new(
-            Point3::new(1.0, 2.0, 3.0),
-            Vector3::new(0.0, 0.0, 1.0),
-            Vector3::new(1.0, 0.0, 0.0),
-            2.0,
-            1.0,
-            0.0,
-        )
-        .expect("finite cone"),
-    );
-    let text = emit_surface_only(&SurfaceGeometry::Solved(source));
-    assert!(text.contains("CYLINDRICAL_SURFACE('',#4,2.)"), "{text}");
-    assert!(!text.contains("CONICAL_SURFACE"));
 }
 
 #[test]
