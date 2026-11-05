@@ -1156,6 +1156,15 @@ pub(super) fn classify_body_kinds(
             *counts.entry(&coedge.edge).or_default() += 1;
         }
     }
+    let mut double_sided_bodies = HashSet::new();
+    for sidedness in &out.face_sidedness {
+        if sidedness.containment.is_none() {
+            continue;
+        }
+        if let Some(body) = face_bodies.get(&sidedness.face).copied() {
+            ctx.insert_hash_set(&mut double_sided_bodies, body, "ASM double-sided bodies")?;
+        }
+    }
     for body in &mut out.bodies {
         if !body_has_faces.contains(&body.id) {
             body.kind = cadmpeg_ir::topology::BodyKind::Wire;
@@ -1166,9 +1175,15 @@ pub(super) fn classify_body_kinds(
             continue;
         }
         let counts = edge_use_counts.get(&body.id);
-        body.kind = if counts
-            .is_some_and(|counts| !counts.is_empty() && counts.values().all(|count| *count == 2))
-        {
+        // Single-sided faces bound material. Where every such face pairs its
+        // edges, an edge shared by four faces joins solids that touch along it.
+        let closed = counts.is_some_and(|counts| {
+            !counts.is_empty()
+                && counts.values().all(|count| {
+                    *count == 2 || (count % 2 == 0 && !double_sided_bodies.contains(&body.id))
+                })
+        });
+        body.kind = if closed {
             cadmpeg_ir::topology::BodyKind::Solid
         } else {
             cadmpeg_ir::topology::BodyKind::Sheet
