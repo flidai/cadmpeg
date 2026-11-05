@@ -965,6 +965,24 @@ fn trim_vertex_entries_retain_variable_incident_entity_counts() {
 }
 
 #[test]
+fn trim_vertex_entry_refuses_an_entry_with_no_leading_values() {
+    // An immediate terminator leaves zero incident values; the entry count
+    // `value_count - 1` must not be formed for such an entry.
+    let terminator_first = b"\x00\x07\x00";
+    assert_eq!(
+        trim_vertex_entry(terminator_first, 0, terminator_first.len()),
+        None
+    );
+    let empty: &[u8] = b"";
+    assert_eq!(trim_vertex_entry(empty, 0, 0), None);
+    let at_end = b"\x0a\x0b";
+    assert_eq!(trim_vertex_entry(at_end, 2, at_end.len()), None);
+    // Fewer than three values is no vertex entry either.
+    let two_values = b"\x0a\x07\x00";
+    assert_eq!(trim_vertex_entry(two_values, 0, two_values.len()), None);
+}
+
+#[test]
 fn trim_entity_bucket_counts_the_named_prototype_and_complete_bodies() {
     let payload = b"bucket_index\0\x00bucket_xar\0\xf8\x02\xf7\x43\xfb\xe3\
             entry_ptr(entity_entry)\0\xe3xid\0\x00ent_mode\0\x00start_vtx\0\xf6\

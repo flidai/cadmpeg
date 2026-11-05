@@ -3046,12 +3046,10 @@ fn trim_vertex_entry_bounds(
             return None;
         }
     }
-    (value_count >= 3 && cursor < end).then_some((
-        value_count - 1,
-        vertex_id?,
-        cursor + 1,
-        entities_start,
-    ))
+    // The tuple is built lazily: an eager `then_some` argument subtracts from
+    // a zero `value_count` before the guard is read.
+    (value_count >= 3 && cursor < end)
+        .then(|| Some((value_count - 1, vertex_id?, cursor + 1, entities_start)))?
 }
 
 fn trim_vertex_entry(
