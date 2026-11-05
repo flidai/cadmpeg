@@ -109,6 +109,8 @@ pub(in crate::brep) struct VertexUse {
     pub(super) refs: [u16; 5],
     pub(super) sequence: u32,
     pub(super) offset: usize,
+    /// The own tolerance of a tolerant vertex, in metres.
+    pub(super) tolerance_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,8 +177,14 @@ fn attr_at(buf: &[u8], p: usize) -> Option<u16> {
 /// The deltas form stores the owner as a `[hi][lo][01]` triple, so the magic
 /// sits at body+9 and the five refs follow as triples with the marker after.
 fn parse_bridge(buf: &[u8], off: usize) -> Option<Bridge> {
+    parse_bridge_with(buf, off, false)
+}
+
+/// The same record with the tolerance of a tolerant face in the place of the
+/// magic. The scan keeps it only when a loop names it as owner.
+fn parse_bridge_with(buf: &[u8], off: usize, tolerant: bool) -> Option<Bridge> {
     let p = body_start(buf, off, 0x0e)?;
-    if buf.get(p + 8) == Some(&1) && buf.get(p + 9..p + 17) == Some(MAGIC.as_slice()) {
+    if buf.get(p + 8) == Some(&1) && tolerance_field_at(buf, p + 9, tolerant) {
         let attr = attr_at(buf, p)?;
         let sequence = View::u32_be_at(buf, p + 2)?;
         let owner = View::u16_be_at(buf, p + 6)?;
@@ -191,7 +199,7 @@ fn parse_bridge(buf: &[u8], off: usize) -> Option<Bridge> {
             offset: off,
         });
     }
-    if p + 37 > buf.len() || buf.get(p + 8..p + 16)? != MAGIC {
+    if p + 37 > buf.len() || !tolerance_field_at(buf, p + 8, tolerant) {
         return None;
     }
     let attr = attr_at(buf, p)?;
@@ -236,6 +244,12 @@ fn parse_loop(buf: &[u8], off: usize) -> Option<Loop> {
 /// preserve that field in the compact variant. The missing
 /// canonical-coedge slot is resolved from the coedge table by the graph walk.
 fn parse_edge_use_candidates(buf: &[u8], off: usize) -> Vec<EdgeUse> {
+    parse_edge_use_candidates_with(buf, off, false)
+}
+
+/// The same readings with the tolerance of a tolerant edge in the place of the
+/// magic. The scan keeps a reading only when a coedge names the edge.
+fn parse_edge_use_candidates_with(buf: &[u8], off: usize, tolerant: bool) -> Vec<EdgeUse> {
     let Some(p) = body_start(buf, off, 0x10) else {
         return Vec::new();
     };
@@ -249,7 +263,7 @@ fn parse_edge_use_candidates(buf: &[u8], off: usize) -> Vec<EdgeUse> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    if buf.get(p + 8..p + 16) == Some(MAGIC.as_slice()) {
+    if tolerance_field_at(buf, p + 8, tolerant) {
         if let Some(refs) = refs_be::<6>(buf, p + 16) {
             out.push(EdgeUse {
                 attr,
@@ -262,7 +276,7 @@ fn parse_edge_use_candidates(buf: &[u8], off: usize) -> Vec<EdgeUse> {
 
     let magic_end = (p + 16).min(buf.len().checked_sub(MAGIC.len()).map_or(0, |end| end));
     for magic in p + 9..=magic_end {
-        if buf.get(magic..magic + MAGIC.len()) != Some(MAGIC.as_slice()) {
+        if !tolerance_field_at(buf, magic, tolerant) {
             continue;
         }
         let q = magic + MAGIC.len();
@@ -342,21 +356,73 @@ fn parse_coedge_candidates(buf: &[u8], off: usize) -> Vec<Coedge> {
     out
 }
 
+/// Whether the eight bytes at `at` hold the tolerance field of a node that the
+/// reading expects: the null real for the null-tolerance reading, and a set
+/// tolerance for the tolerant reading.
+fn tolerance_field_at(buf: &[u8], at: usize, tolerant: bool) -> bool {
+    if tolerant {
+        set_tolerance_at(buf, at)
+    } else {
+        buf.get(at..at + MAGIC.len()) == Some(MAGIC.as_slice())
+    }
+}
+
+/// Reference cells that a vertex-use may hold after its point cell.
+const EXTRA_VERTEX_CELLS: usize = 3;
+
+/// Smallest tolerance, in metres, that the scan accepts for a tolerant vertex.
+const MIN_VERTEX_TOLERANCE_M: f64 = 1e-12;
+
+/// Largest tolerance, in metres, that the scan accepts for a tolerant vertex.
+/// Larger values are far above the modelling resolution and are more likely
+/// bytes of another field.
+const MAX_VERTEX_TOLERANCE_M: f64 = 1e-2;
+
+/// Whether the eight bytes at `at` are the tolerance of a tolerant node, in
+/// metres. A node that has no own tolerance holds the null real `MAGIC` there.
+fn set_tolerance_at(buf: &[u8], at: usize) -> bool {
+    View::f64_be_at(buf, at).is_some_and(|tolerance| {
+        tolerance.is_finite()
+            && (MIN_VERTEX_TOLERANCE_M..=MAX_VERTEX_TOLERANCE_M).contains(&tolerance)
+    })
+}
+
 /// Vertex-use `00 12`: 24-byte body, magic at body+16, `refs[5]` at body+6.
 /// `refs[4]` = world-point attr.
 fn parse_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
+    vertex_use_with(buf, off, false)
+}
+
+/// The vertex-use of a tolerant vertex. Such a vertex states its own
+/// tolerance where the other vertices hold the null real, so [`MAGIC`] is
+/// absent. A byte pattern can pass this reading by chance, so the scan keeps
+/// the record only when its world point exists.
+fn parse_tolerant_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
+    vertex_use_with(buf, off, true)
+}
+
+fn vertex_use_with(buf: &[u8], off: usize, tolerant: bool) -> Option<VertexUse> {
     let p = body_start(buf, off, 0x12)?;
     if p + 24 > buf.len() {
         return None;
     }
     let attr = attr_at(buf, p)?;
     let sequence = View::u32_be_at(buf, p + 2)?;
-    let refs = if buf.get(p + 16..p + 24) == Some(MAGIC.as_slice()) {
+    let tolerance_at = |at: usize| tolerance_field_at(buf, at, tolerant);
+    // A later schema can add reference cells after the point cell, which moves
+    // the tolerance field by two bytes per cell. The tolerance field is a
+    // fixed eight-byte pattern, so the null reading finds it unambiguously.
+    let plain_tolerance = (0..=EXTRA_VERTEX_CELLS)
+        .map(|extra| p + 16 + 2 * extra)
+        .find(|at| tolerance_at(*at));
+    let tolerance_m;
+    let refs = if let Some(at) = plain_tolerance {
+        tolerance_m = View::f64_be_at(buf, at).filter(|_| tolerant);
         refs_be::<5>(buf, p + 6)?
     } else {
         let magic = (p + 21
             ..=(p + 32).min(buf.len().checked_sub(MAGIC.len()).map_or(0, |end| end)))
-            .find(|at| buf.get(*at..*at + MAGIC.len()) == Some(MAGIC.as_slice()))?;
+            .find(|at| tolerance_at(*at))?;
         let count = (magic.checked_sub(p + 6)?) / 3;
         if count < 5 || p + 6 + count * 3 != magic {
             return None;
@@ -364,6 +430,7 @@ fn parse_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
         if !(0..count).all(|index| buf.get(p + 8 + index * 3) == Some(&1)) {
             return None;
         }
+        tolerance_m = View::f64_be_at(buf, magic).filter(|_| tolerant);
         refs_tripled::<5>(buf, p + 6)?
     };
     Some(VertexUse {
@@ -371,6 +438,7 @@ fn parse_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
         sequence,
         refs,
         offset: off,
+        tolerance_m,
     })
 }
 
@@ -754,9 +822,14 @@ fn loop_is_owned(record: &Loop, bridges: &HashMap<u16, Bridge>) -> bool {
 /// fields identify the owner, vertex-use, edge-use, and ring; reciprocal links
 /// and loop-head membership provide additional confirmation. No field is a
 /// byte-position discriminator.
+/// Loop candidates by `attr`, in stream order. A stream of several megabytes
+/// holds many coedge candidates that share one 16-bit `attr`, so the evidence
+/// of each candidate looks its loops up and does not scan all loops.
+type LoopIndex<'a> = HashMap<u16, Vec<&'a Loop>>;
+
 fn coedge_evidence<'a>(
     candidate: &Coedge,
-    loops: &'a [Loop],
+    loops: &'a LoopIndex<'a>,
     bridges: &HashMap<u16, Bridge>,
     vertex_uses: &'a HashMap<u16, VertexUse>,
     edge_candidates: &'a CandidateMap<EdgeUse>,
@@ -764,9 +837,8 @@ fn coedge_evidence<'a>(
 ) -> CoedgeEvidence<'a> {
     let owner = candidate.refs[1];
     let owner_evidence = loops
-        .iter()
-        .rev()
-        .find(|loop_| loop_.attr == owner)
+        .get(&owner)
+        .and_then(|same| same.last().copied())
         .filter(|loop_| owner != 0 && loop_is_owned(loop_, bridges));
     let start = candidate.refs[4];
     let start_evidence = vertex_uses.get(&start).filter(|_| start != 0);
@@ -791,8 +863,9 @@ fn coedge_evidence<'a>(
                 previous_candidate.refs[3] == candidate.attr && previous_candidate.refs[1] == owner
             })
         });
-    let loop_head_valid = loops.iter().rev().any(|loop_| {
-        loop_.attr == owner && loop_is_owned(loop_, bridges) && loop_.refs[1] == candidate.attr
+    let loop_head_valid = loops.get(&owner).is_some_and(|same| {
+        same.iter()
+            .any(|loop_| loop_is_owned(loop_, bridges) && loop_.refs[1] == candidate.attr)
     });
     CoedgeEvidence {
         owner: owner_evidence,
@@ -815,7 +888,7 @@ fn evidence_dominates(left: CoedgeEvidence<'_>, right: CoedgeEvidence<'_>) -> bo
 fn select_coedge(
     ctx: &DecodeContext<'_>,
     candidates: &[Coedge],
-    loops: &[Loop],
+    loops: &LoopIndex<'_>,
     bridges: &HashMap<u16, Bridge>,
     vertex_uses: &HashMap<u16, VertexUse>,
     edge_candidates: &CandidateMap<EdgeUse>,
@@ -994,6 +1067,9 @@ fn scan_with_point_framing(
     let mut loop_candidates = Vec::new();
     let mut edge_candidates = CandidateMap::new();
     let mut coedge_candidates = CandidateMap::new();
+    let mut tolerant_vertices = Vec::new();
+    let mut tolerant_bridges = Vec::new();
+    let mut tolerant_edges = CandidateMap::new();
     let scan_len = u64::try_from(body.len()).map_err(|_| {
         ctx.refuse_codec_limit("scan Parasolid typed topology", u64::MAX - 1, u64::MAX)
     })?;
@@ -1013,6 +1089,12 @@ fn scan_with_point_framing(
                     if !excluded || carries_loop {
                         t.insert_bridge(ctx, record)?;
                     }
+                } else if let Some(record) = parse_bridge_with(body, i, true) {
+                    ctx.push_vec(
+                        &mut tolerant_bridges,
+                        record,
+                        "collect Parasolid tolerant bridge candidates",
+                    )?;
                 }
             }
             0x0f => {
@@ -1025,11 +1107,18 @@ fn scan_with_point_framing(
                     loop_candidates.push(record);
                 }
             }
-            0x10 => insert_candidates(
-                ctx,
-                &mut edge_candidates,
-                parse_edge_use_candidates(body, i),
-            )?,
+            0x10 => {
+                let candidates = parse_edge_use_candidates(body, i);
+                if candidates.is_empty() {
+                    insert_candidates(
+                        ctx,
+                        &mut tolerant_edges,
+                        parse_edge_use_candidates_with(body, i, true),
+                    )?;
+                } else {
+                    insert_candidates(ctx, &mut edge_candidates, candidates)?;
+                }
+            }
             0x11 => insert_candidates(
                 ctx,
                 &mut coedge_candidates,
@@ -1038,6 +1127,12 @@ fn scan_with_point_framing(
             0x12 => {
                 if let Some(record) = parse_vertex_use(body, i) {
                     t.insert_vertex_use(ctx, record)?;
+                } else if let Some(record) = parse_tolerant_vertex_use(body, i) {
+                    ctx.push_vec(
+                        &mut tolerant_vertices,
+                        record,
+                        "collect Parasolid tolerant vertex candidates",
+                    )?;
                 }
             }
             0x1d => {
@@ -1058,17 +1153,67 @@ fn scan_with_point_framing(
         i += 1;
     }
 
+    let mut loop_index = LoopIndex::new();
+    for record in &loop_candidates {
+        ctx.push_hash_group(
+            &mut loop_index,
+            record.attr,
+            record,
+            "index Parasolid loop candidates",
+            "collect Parasolid loop candidates by attr",
+        )?;
+    }
+    // A tolerant vertex counts only with its world point, and it never replaces
+    // a vertex that the null-tolerance reading found.
+    for record in tolerant_vertices {
+        if t.points.contains_key(&record.refs[4]) && !t.vertex_uses.contains_key(&record.attr) {
+            t.insert_vertex_use(ctx, record)?;
+        }
+    }
+    // A tolerant face counts only when a loop of the stream names it as owner.
+    for record in tolerant_bridges {
+        let owned = record.refs[2] > 1
+            && loop_index
+                .get(&record.refs[2])
+                .is_some_and(|same| same.iter().any(|loop_| loop_.refs[2] == record.attr));
+        if owned && !t.bridges.contains_key(&record.attr) {
+            t.insert_bridge(ctx, record)?;
+        }
+    }
+
     for candidates in coedge_candidates.values() {
         if let Some(record) = select_coedge(
             ctx,
             candidates,
-            &loop_candidates,
+            &loop_index,
             &t.bridges,
             &t.vertex_uses,
             &edge_candidates,
             &coedge_candidates,
         )? {
             t.insert_coedge(ctx, record)?;
+        }
+    }
+    drop(loop_index);
+    // A tolerant edge counts only when a coedge names it and the null-tolerance
+    // reading found no candidate for it.
+    let mut named_edges = HashSet::new();
+    for coedge in t.coedges.values() {
+        ctx.insert_hash_set(
+            &mut named_edges,
+            coedge.refs[6],
+            "index Parasolid edges named by coedges",
+        )?;
+    }
+    for (attr, candidates) in tolerant_edges {
+        if edge_candidates.contains_key(&attr)
+            || t.edge_uses.contains_key(&attr)
+            || !named_edges.contains(&attr)
+        {
+            continue;
+        }
+        if let Some(record) = select_edge_use(&candidates, &t.coedges, curve_attrs) {
+            t.insert_edge_use(ctx, record)?;
         }
     }
     for candidates in edge_candidates.into_values() {
@@ -1224,6 +1369,79 @@ mod tests {
         assert_eq!(vertex.sequence, 7);
         bytes[25] = 0;
         assert!(parse_vertex_use(&bytes, 0).is_none());
+    }
+
+    fn tolerant_vertex_bytes(attr: u16, point: u16, tolerance: f64) -> Vec<u8> {
+        let mut bytes = vec![0, 0x12];
+        bytes.extend(attr.to_be_bytes());
+        bytes.extend(7_u32.to_be_bytes());
+        for reference in [0_u16, 0, 0, 0, point] {
+            bytes.extend(reference.to_be_bytes());
+        }
+        bytes.extend(tolerance.to_be_bytes());
+        bytes
+    }
+
+    fn point_bytes(attr: u16) -> Vec<u8> {
+        let mut bytes = vec![0, 0x1d];
+        bytes.extend(attr.to_be_bytes());
+        bytes.extend(0_u32.to_be_bytes());
+        for reference in [0_u16, 0, 0, 0] {
+            bytes.extend(reference.to_be_bytes());
+        }
+        for value in [0.01_f64, 0.02, 0.03] {
+            bytes.extend(value.to_be_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn a_tolerant_vertex_reads_only_through_the_tolerant_reading() {
+        let bytes = tolerant_vertex_bytes(50, 60, 1.0e-6);
+        assert!(parse_vertex_use(&bytes, 0).is_none());
+        let vertex = super::parse_tolerant_vertex_use(&bytes, 0).unwrap();
+        assert_eq!((vertex.attr, vertex.refs[4]), (50, 60));
+        let mut null = bytes.clone();
+        null[18..26].copy_from_slice(&MAGIC);
+        assert!(parse_vertex_use(&null, 0).is_some());
+        let mut implausible = bytes;
+        implausible[18..26].copy_from_slice(&1.0e9_f64.to_be_bytes());
+        assert!(super::parse_tolerant_vertex_use(&implausible, 0).is_none());
+    }
+
+    #[test]
+    fn a_vertex_with_extra_reference_cells_keeps_its_point_reference() {
+        let mut bytes = vec![0, 0x12];
+        bytes.extend(50_u16.to_be_bytes());
+        bytes.extend(7_u32.to_be_bytes());
+        for reference in [0_u16, 0, 0, 0, 60, 0] {
+            bytes.extend(reference.to_be_bytes());
+        }
+        bytes.extend(MAGIC);
+        let vertex = parse_vertex_use(&bytes, 0).expect("extra cell");
+        assert_eq!((vertex.attr, vertex.refs[4]), (50, 60));
+        let mut tolerant = bytes;
+        tolerant[20..28].copy_from_slice(&1.0e-6_f64.to_be_bytes());
+        let vertex = super::parse_tolerant_vertex_use(&tolerant, 0).expect("tolerant");
+        assert_eq!(vertex.refs[4], 60);
+        assert_eq!(vertex.tolerance_m, Some(1.0e-6));
+    }
+
+    #[test]
+    fn the_scan_keeps_a_tolerant_vertex_only_with_its_world_point() {
+        let arena = DecodeArena::new();
+        for with_point in [true, false] {
+            let mut bytes = Vec::new();
+            if with_point {
+                bytes.extend(point_bytes(60));
+            }
+            bytes.extend(tolerant_vertex_bytes(50, 60, 1.0e-6));
+            bytes.resize(bytes.len() + 16, 0);
+            let (ctx, _) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::service())
+                .expect("root");
+            let tables = scan(&ctx, &bytes).expect("scan");
+            assert_eq!(tables.vertex_uses().contains_key(&50), with_point);
+        }
     }
 
     fn bridge_with_refs(refs: &[u16], tripled: bool) -> Vec<u8> {

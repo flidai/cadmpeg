@@ -327,6 +327,30 @@ fn a_coedge_range_outside_a_trimmed_pcurve_interval_is_out_of_domain() {
 }
 
 #[test]
+fn range_findings_name_the_coedge_of_an_out_of_domain_pcurve_range() {
+    let arena = cadmpeg_core::decode::DecodeArena::new();
+    let (ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
+        &[],
+        &arena,
+        &cadmpeg_core::decode::DecodePolicy::service(),
+    )
+    .unwrap();
+    let ir = cube_with_one_coedge_pcurve(trimmed_over_the_nurbs_leaf(), [0.0, 1.0]);
+    let findings = crate::validate::range_findings(&ctx, &ir).unwrap();
+    assert!(findings.iter().any(|finding| {
+        finding.check == Check::ParameterDomain
+            && finding
+                .entity
+                .as_deref()
+                .is_some_and(|id| id.contains("bottom"))
+    }));
+    let clean = cube_with_one_coedge_pcurve(trimmed_over_the_nurbs_leaf(), [0.25, 0.75]);
+    assert!(crate::validate::range_findings(&ctx, &clean)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn a_coedge_range_outside_an_offset_pcurve_basis_domain_is_out_of_domain() {
     assert!(!coedge_pcurve_range_reported(&cube_with_one_coedge_pcurve(
         offset_over_the_nurbs_leaf(),

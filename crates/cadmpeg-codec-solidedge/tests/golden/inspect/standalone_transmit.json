@@ -1,0 +1,66 @@
+{
+  "container_kind": "cfb",
+  "entries": [
+    {
+      "attributes": {
+        "directory_id": "1"
+      },
+      "compression": "storage",
+      "name": "PARASOLID",
+      "role": "storage"
+    },
+    {
+      "attributes": {
+        "allocation": "mini",
+        "directory_id": "2",
+        "parasolid_role": "transmit",
+        "start_sector": "0"
+      },
+      "compression": "stored",
+      "name": "PARASOLID/Body.X_B",
+      "role": "parasolid-stream",
+      "size": {
+        "form": "exact",
+        "size": 1360
+      }
+    }
+  ],
+  "identity": {
+    "classification": "classified",
+    "dialects": {
+      "extra": [
+        {
+          "admission": "residual",
+          "declared": {
+            "carrier": "PARASOLID/Body.X_B",
+            "schema": "SCH_3201255_32001"
+          },
+          "dialect": "parasolid:unknown"
+        }
+      ],
+      "primary": {
+        "admission": "admitted",
+        "declared": {
+          "storage": "PARASOLID"
+        },
+        "dialect": "solidedge:cfb-parasolid"
+      }
+    }
+  },
+  "losses": [
+    {
+      "code": {
+        "code": "source.kernel-dialect-unverified",
+        "kind": "source_dialect_unverified",
+        "namespace": "solidedge",
+        "scope": "namespaced",
+        "strict_floor": "warning"
+      },
+      "message": "The Parasolid stream at PARASOLID/Body.X_B declares schema \"SCH_3201255_32001\", which has no declared grammar. It was admitted as the `parasolid:unknown` residual layer without substituting another schema grammar; bounded structural recovery retains the source stream.",
+      "severity": "warning"
+    }
+  ],
+  "notes": [
+    "PARASOLID/Body.X_B: transmit stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE created by test\", binary schema SCH_3201255_32001"
+  ]
+}

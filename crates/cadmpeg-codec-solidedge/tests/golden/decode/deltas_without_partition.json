@@ -1,0 +1,117 @@
+{
+  "ir": {
+    "ir_version": "6",
+    "model": {
+      "appearance_bindings": [],
+      "appearances": [],
+      "assembly_joints": [],
+      "attributes": [],
+      "bodies": [],
+      "coedges": [],
+      "configurations": [],
+      "curves": [],
+      "drawings": [],
+      "edges": [],
+      "faces": [],
+      "features": [],
+      "loops": [],
+      "occurrences": [],
+      "parameters": [],
+      "pcurves": [],
+      "pmi": [],
+      "points": [],
+      "presentation_documents": [],
+      "presentation_layers": [],
+      "procedural_curves": [],
+      "procedural_surfaces": [],
+      "product_definitions": [],
+      "regions": [],
+      "semantic_annotations": [],
+      "shells": [],
+      "sketch_constraints": [],
+      "sketch_entities": [],
+      "sketches": [],
+      "spatial_sketch_entities": [],
+      "spatial_sketches": [],
+      "spreadsheets": [],
+      "subds": [],
+      "surfaces": [],
+      "tessellations": [],
+      "vertices": [],
+      "view_presentations": []
+    },
+    "native": {},
+    "source": {
+      "attributes": {
+        "parasolid_stream_count": "1"
+      },
+      "identity": {
+        "classification": "classified",
+        "dialects": {
+          "extra": [],
+          "primary": {
+            "admission": "admitted",
+            "declared": {
+              "storage": "PARASOLID"
+            },
+            "dialect": "solidedge:cfb-parasolid"
+          }
+        }
+      }
+    },
+    "tolerances": {
+      "angular": 1e-10,
+      "linear": 1e-6
+    },
+    "units": {
+      "length": "millimeter"
+    }
+  },
+  "report": {
+    "identity": {
+      "classification": "classified",
+      "dialects": {
+        "extra": [],
+        "primary": {
+          "admission": "admitted",
+          "declared": {
+            "storage": "PARASOLID"
+          },
+          "dialect": "solidedge:cfb-parasolid"
+        }
+      }
+    },
+    "losses": [
+      {
+        "code": {
+          "code": "container.no-partition-stream",
+          "kind": "missing_geometry_stream",
+          "namespace": "solidedge",
+          "scope": "namespaced",
+          "strict_floor": "warning"
+        },
+        "message": "the PARASOLID storage has a deltas stream and no partition or standalone transmit stream; deltas alone have no base state to apply to and are not decoded",
+        "severity": "error"
+      },
+      {
+        "code": {
+          "code": "geometry.not-transferred",
+          "kind": "geometry_not_transferred",
+          "namespace": "solidedge",
+          "scope": "namespaced",
+          "strict_floor": "warning"
+        },
+        "message": "no B-rep geometry was transferred; the other losses of this report state why",
+        "severity": "blocking"
+      }
+    ],
+    "notes": [],
+    "transfer": {
+      "geometry_transferred": false,
+      "transfer": "full"
+    }
+  },
+  "source_fidelity": {
+    "annotations": {}
+  }
+}
