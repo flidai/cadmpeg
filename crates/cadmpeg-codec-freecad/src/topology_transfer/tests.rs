@@ -1734,7 +1734,7 @@ Co 1001000 +2 1 +2 3 *
     assert_eq!(result.ir().model.bodies.len(), 1);
     assert_eq!(
         result.ir().model.bodies[0].kind,
-        cadmpeg_ir::topology::BodyKind::General
+        cadmpeg_ir::topology::BodyKind::Solid
     );
     assert_eq!(result.ir().model.bodies[0].regions.len(), 2);
     assert!(result.ir().model.bodies[0].transform.is_none());
