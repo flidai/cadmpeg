@@ -134,8 +134,7 @@ fn out_of_domain_cone_half_angle(mut geometry: &SolvedSurfaceGeometry) -> Option
         match geometry {
             SolvedSurfaceGeometry::Cone(cone) => {
                 let angle = cone.half_angle().get();
-                return (angle == 0.0 || angle.abs() >= std::f64::consts::FRAC_PI_2)
-                    .then_some(angle);
+                return (angle.abs() >= std::f64::consts::FRAC_PI_2).then_some(angle);
             }
             SolvedSurfaceGeometry::Transformed(placed) => geometry = placed.basis(),
             _ => return None,
