@@ -1829,6 +1829,11 @@ visibility. Its `name` is a `label` and may be empty. A valid assignment has
 at least one assigned item. `INVISIBILITY` targeting that assignment sets the
 layer's `visible=false`; it does not hide the assigned model or presentation
 items.
+ISO 10303-46 `invisible_item` selects `STYLED_ITEM`,
+`PRESENTATION_LAYER_ASSIGNMENT` and `PRESENTATION_REPRESENTATION`. A
+`STYLED_ITEM` whose styles state only `NULL_STYLE` hides the item it styles, and
+the reader maps `INVISIBILITY` over it onto the bodies of that item. The writer
+hides a body through such a styled item.
 The writer emits one assignment and a layer-targeted `INVISIBILITY` for each
 emitted hidden layer on schemas that support visibility. A target schema that
 does not support `INVISIBILITY` reports

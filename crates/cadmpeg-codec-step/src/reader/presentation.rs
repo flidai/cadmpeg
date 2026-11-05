@@ -125,11 +125,26 @@ pub(super) fn decode(
                 )?;
                 continue;
             }
-            if exchange
-                .records()
-                .get(&target)
-                .is_some_and(|record| styled_item_parts(record).is_some())
-            {
+            let styled_target = exchange.records().get(&target).and_then(styled_item_parts);
+            if let Some(parts) = &styled_target {
+                // A styled item with a null style hides the item it styles.
+                if contains_null_style(parts.styles, exchange, &mut BTreeSet::new(), 0, ctx)? {
+                    let (body_ids, target_supported) =
+                        invisible_body_ids(target, exchange, topology, &body_indices, ctx)?;
+                    let mut hidden = false;
+                    for body_id in body_ids {
+                        if let Some(index) = body_indices.get(body_id.as_str()) {
+                            ir.model.bodies[*index].visible = Some(false);
+                            hidden = true;
+                        }
+                    }
+                    if hidden && target_supported {
+                        ctx.insert_hash_set(&mut typed, target, "step_presentation_typed_claims")?;
+                        continue;
+                    }
+                }
+            }
+            if styled_target.is_some() {
                 ctx.insert_btree_set(
                     &mut hidden_style_ids,
                     target,

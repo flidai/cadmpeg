@@ -599,7 +599,7 @@ impl<'a> Builder<'a> {
             }
         }
 
-        self.emit_visibility();
+        self.emit_visibility(context);
         self.emit_tessellations(context);
         self.emit_presentation(context);
         self.emit_appearance_visibility();
@@ -1780,7 +1780,14 @@ impl<'a> Builder<'a> {
         )
     }
 
-    fn emit_visibility(&mut self) {
+    /// Hide each hidden body's STEP items.
+    ///
+    /// ISO 10303-46 `invisible_item` selects `styled_item`,
+    /// `presentation_layer_assignment` and `presentation_representation`; a
+    /// solid or shell is none of them. A `STYLED_ITEM` over the item with a
+    /// `NULL_STYLE` assignment states no appearance, and the `INVISIBILITY`
+    /// over that styled item hides the item it styles.
+    fn emit_visibility(&mut self, context: Ref) {
         if !self.schema.supports_visibility() {
             let hidden = self
                 .ir
@@ -1821,9 +1828,24 @@ impl<'a> Builder<'a> {
         }
         self.hidden_bodies_without_items
             .extend(hidden_without_items);
-        if !hidden.is_empty() {
-            self.emitter.emit("INVISIBILITY", &refs(&hidden));
+        if hidden.is_empty() {
+            return;
         }
+        let assignment = self
+            .emitter
+            .emit_interned("PRESENTATION_STYLE_ASSIGNMENT", "(NULL_STYLE(.NULL.))");
+        let styled = hidden
+            .into_iter()
+            .map(|item| {
+                self.emitter
+                    .emit("STYLED_ITEM", &format!("'',({assignment}),{item}"))
+            })
+            .collect::<Vec<_>>();
+        self.emitter.emit(
+            "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION",
+            &format!("'',{},{context}", refs(&styled)),
+        );
+        self.emitter.emit("INVISIBILITY", &refs(&styled));
     }
 
     fn emit_appearance_visibility(&mut self) {
