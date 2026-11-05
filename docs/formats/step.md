@@ -1191,6 +1191,12 @@ cross-section radius at axial distance `v` is `radius + v tan(semi_angle)`,
 and `(abs(semi_angle), -axis)` holds the same locus under the parameter change
 `(u, v) -> (-u, -v)`, which moves the chart that pcurves are written against.
 
+CADIR decision: the writer maps a zero half-angle, which `WR2` excludes, to the
+`CYLINDRICAL_SURFACE` of the same radius, placement, and `(u, v)` parameters,
+because the cross-section radius `radius + v tan(0)` is constant. A half-angle
+whose magnitude is `pi/2` or more has no `CONICAL_SURFACE` form and is refused
+at planning.
+
 A NURBS `closed` or `periodic` field uses the STEP LOGICAL domain.
 TRUE and FALSE encode the property state. UNKNOWN is a valid LOGICAL value.
 A `POLYLINE` with `n` points is the degree-one NURBS with those points as

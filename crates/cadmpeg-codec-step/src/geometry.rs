@@ -477,6 +477,16 @@ fn basis_surface(e: &mut Emitter, g: &SolvedSurfaceGeometry) -> Option<Ref> {
             let ref_direction = *cone_surface.frame().reference();
             let radius = cone_surface.radius().get();
             let half_angle = cone_surface.half_angle().get();
+            // A zero semi-angle is the degenerate cone `ISO 10303-42`
+            // `conical_surface` excludes; it is the cylinder of the same
+            // radius with identical `(u, v)` parameters.
+            if half_angle == 0.0 {
+                let pl = placement(e, origin, axis, ref_direction);
+                return Some(e.emit(
+                    "CYLINDRICAL_SURFACE",
+                    &format!("'',{pl},{}", e.real(radius)),
+                ));
+            }
             let written_axis = if half_angle < 0.0 {
                 axis.reversed()
             } else {

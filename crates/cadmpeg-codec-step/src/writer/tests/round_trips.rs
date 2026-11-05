@@ -285,6 +285,24 @@ fn emit_surface_only(g: &SurfaceGeometry) -> String {
 }
 
 #[test]
+fn zero_semi_angle_cone_writes_the_cylinder_of_the_same_radius() {
+    let source = SolvedSurfaceGeometry::Cone(
+        cadmpeg_ir::geometry::analytic::ConeSurface::try_new(
+            Point3::new(1.0, 2.0, 3.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.0,
+            1.0,
+            0.0,
+        )
+        .expect("finite cone"),
+    );
+    let text = emit_surface_only(&SurfaceGeometry::Solved(source));
+    assert!(text.contains("CYLINDRICAL_SURFACE('',#4,2.)"), "{text}");
+    assert!(!text.contains("CONICAL_SURFACE"));
+}
+
+#[test]
 fn negative_cone_writes_reversed_axis_positive_angle_and_exact_points() {
     const EPS_CONE_POINT: f64 = 1.0e-9;
     let origin = Point3::new(1.0, 2.0, 3.0);

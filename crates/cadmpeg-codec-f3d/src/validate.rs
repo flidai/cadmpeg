@@ -947,7 +947,8 @@ fn validate_loaded(
 }
 
 /// Validate ACT record identity, table/group joins, ordered registries, and the
-/// stored document-root discriminator.
+/// stored document-root discriminator. A stream without component links has no
+/// document-root link.
 fn validate_act(ctx: &Ctx<'_, '_>, findings: &mut Vec<Finding>) -> Result<(), CodecError> {
     let native = ctx.native;
     let mut streams = std::collections::BTreeMap::<&str, &str>::new();
@@ -1117,11 +1118,11 @@ fn validate_act(ctx: &Ctx<'_, '_>, findings: &mut Vec<Finding>) -> Result<(), Co
     }
 
     for (stream, witness) in streams {
-        if root_counts.get(stream).copied() != Some(1) {
+        if root_counts.get(stream).copied().unwrap_or(0) > 1 {
             ctx.push_constant_finding(
                 findings,
                 Check::NativeLinks,
-                "Fusion ACT stream does not have exactly one document-root component link",
+                "Fusion ACT stream has more than one document-root component link",
                 Some(
                     ctx.decode
                         .copy_retained_text(witness, "retain F3D validation entity")?,

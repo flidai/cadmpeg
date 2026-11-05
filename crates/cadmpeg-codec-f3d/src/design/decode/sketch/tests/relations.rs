@@ -449,6 +449,75 @@ fn genesis_entity_header_variant_resolves_suffix_and_id() {
     .is_none());
 }
 
+fn genesis_header_with_properties(properties: &[(&str, &str, &[u8])], entity_id: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&3u32.to_le_bytes());
+    bytes.extend_from_slice(b"346");
+    bytes.extend_from_slice(&201u32.to_le_bytes());
+    bytes.extend_from_slice(&[0u8; 9]);
+    bytes.push(1);
+    bytes.extend_from_slice(&u32::try_from(properties.len()).unwrap().to_le_bytes());
+    for (key, type_name, value) in properties {
+        for text in [key, type_name] {
+            bytes.extend_from_slice(&u32::try_from(text.len()).unwrap().to_le_bytes());
+            bytes.extend_from_slice(text.as_bytes());
+        }
+        bytes.extend_from_slice(value);
+    }
+    bytes.extend_from_slice(&u32::try_from(entity_id.len()).unwrap().to_le_bytes());
+    for unit in entity_id.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+#[test]
+fn genesis_entity_header_skips_leading_hstring_properties() {
+    const HSTRING: &str = "IntrinsicMetaTypeHString";
+    const UINT64: &str = "IntrinsicMetaTypeuint64";
+    let properties: [(&str, &str, &[u8]); 3] = [
+        ("AutoConstrainMLJobId", HSTRING, &[0; 4]),
+        ("AutoConstrainUniqueSketchId", HSTRING, &[7, 0, 0, 0]),
+        ("EntityGenesis", UINT64, &[10, 0, 0, 0, 0, 0, 0, 0]),
+    ];
+    let bytes = genesis_header_with_properties(&properties, "0_201");
+    let header =
+        parse_genesis_entity_header(&cadmpeg_test_support::service_decode_context(), &bytes, 0)
+            .unwrap()
+            .expect("HString properties precede EntityGenesis");
+    assert_eq!(header.entity_id.as_str(), "0_201");
+    assert_eq!(header.entity_id_offset, bytes.len() - 10);
+    assert_eq!(header.end, bytes.len());
+    let one = genesis_header_with_properties(&properties[2..], "0_201");
+    assert!(
+        parse_genesis_entity_header(&cadmpeg_test_support::service_decode_context(), &one, 0)
+            .unwrap()
+            .is_some()
+    );
+    for refused in [
+        // EntityGenesis is not last.
+        vec![properties[2], properties[0]],
+        // An unknown property type has no known value width.
+        vec![
+            ("Other", "IntrinsicMetaTypeDouble", &[0u8; 8][..]),
+            properties[2],
+        ],
+        // The last property is not EntityGenesis.
+        vec![properties[0]],
+        // EntityGenesis does not repeat.
+        vec![properties[2], properties[2]],
+    ] {
+        let bytes = genesis_header_with_properties(&refused, "0_201");
+        assert!(parse_genesis_entity_header(
+            &cadmpeg_test_support::service_decode_context(),
+            &bytes,
+            0
+        )
+        .unwrap()
+        .is_none());
+    }
+}
+
 #[test]
 fn genesis_entity_header_id_refuses_retained_limit() {
     use cadmpeg_core::decode::{DecodeArena, DecodeContext, DecodePolicy, ResourceDimension};

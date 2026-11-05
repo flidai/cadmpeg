@@ -737,9 +737,6 @@ fn decode_component_link(
     {
         components_marker += 1;
     }
-    if components_marker == cursor {
-        return Ok(None);
-    }
     let (components_root_record, end) = some!(marker_value(bytes, components_marker, frame.end));
     if !some!(bytes.get(end..frame.end))
         .iter()
@@ -816,7 +813,10 @@ fn marker_value(bytes: &[u8], position: usize, frame_end: usize) -> Option<(u32,
 mod tests {
     use cadmpeg_core::decode::u64_from_index;
 
-    use super::{decode_channel_group, merge_entities, ChannelGroup, RecordFrame, TableEntry};
+    use super::{
+        decode_channel_group, decode_component_link, merge_entities, ChannelGroup, RecordFrame,
+        TableEntry,
+    };
     use crate::records::act::ActTableRow;
     use crate::records::identity::Located;
     use crate::test_support::{lp_ascii, lp_utf16};
@@ -1029,5 +1029,74 @@ mod tests {
         let tail = group.class_tail.as_ref().unwrap();
         assert_eq!(tail.bytes(), class_tail);
         assert_eq!(tail.offset(), u64_from_index(tail_at));
+    }
+
+    fn component_link_record(display_name: &str, padding: usize, tracked: u32) -> Vec<u8> {
+        let mut bytes = vec![0; 11 + 10];
+        let marked = |bytes: &mut Vec<u8>, value: u32, zeros: usize| {
+            bytes.push(1);
+            bytes.extend_from_slice(&value.to_le_bytes());
+            bytes.extend(std::iter::repeat_n(0, zeros));
+        };
+        marked(&mut bytes, 2, 6);
+        lp_utf16(&mut bytes, "0_3");
+        marked(&mut bytes, tracked, 5);
+        marked(&mut bytes, 0, 0);
+        lp_utf16(&mut bytes, display_name);
+        bytes.extend(std::iter::repeat_n(0, padding));
+        marked(&mut bytes, 4, 6);
+        bytes
+    }
+
+    #[test]
+    fn component_link_admits_zero_through_eight_zero_bytes_before_the_components_root() {
+        let ctx = cadmpeg_test_support::service_decode_context();
+        for padding in 0..=8 {
+            let bytes = component_link_record("Root", padding, 3);
+            let frame = RecordFrame {
+                start: 0,
+                end: bytes.len(),
+                record_index: 7,
+                record_index_offset: 7,
+                payload_offset: 11,
+                class_tag: "261".to_owned().try_into().unwrap(),
+            };
+            let link = decode_component_link(&ctx, &bytes, &frame, "synthetic")
+                .expect("well-framed link")
+                .unwrap_or_else(|| panic!("link with {padding} padding bytes"));
+            let super::ComponentLink::Root(root) = link else {
+                panic!("tracked record 3 is the document root");
+            };
+            assert_eq!(root.components_root_record, 4);
+            assert_eq!(
+                serde_json::to_value(&root).unwrap()["components_root_record_offset"],
+                u64_from_index(bytes.len() - 10)
+            );
+        }
+        let bytes = component_link_record("Root", 9, 3);
+        let frame = RecordFrame {
+            start: 0,
+            end: bytes.len(),
+            record_index: 7,
+            record_index_offset: 7,
+            payload_offset: 11,
+            class_tag: "261".to_owned().try_into().unwrap(),
+        };
+        assert!(decode_component_link(&ctx, &bytes, &frame, "synthetic")
+            .expect("well-framed link")
+            .is_none());
+        let bytes = component_link_record("Root", 0, 9);
+        let frame = RecordFrame {
+            start: 0,
+            end: bytes.len(),
+            record_index: 7,
+            record_index_offset: 7,
+            payload_offset: 11,
+            class_tag: "261".to_owned().try_into().unwrap(),
+        };
+        assert!(matches!(
+            decode_component_link(&ctx, &bytes, &frame, "synthetic").unwrap(),
+            Some(super::ComponentLink::NonRoot)
+        ));
     }
 }

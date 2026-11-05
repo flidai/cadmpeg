@@ -233,11 +233,66 @@ fn act_root_count_index_refuses_collection_limit() {
     );
 }
 
+fn act_second_root() -> crate::records::act::ActRootComponent {
+    use crate::records::act::{ActRegistryFlag, ActRootComponent, ActRootLayout};
+    ActRootComponent::try_new(
+        "f3d:native:act-root-component#60".into(),
+        2,
+        "261".to_owned().try_into().unwrap(),
+        2,
+        4,
+        ActRegistryFlag::Off,
+        ActRootLayout::new(60, "0_3".into(), "Root".into(), 1).unwrap(),
+    )
+    .unwrap()
+}
+
+fn act_two_roots() -> crate::native::F3dNative {
+    let mut native = crate::native::F3dNative::default();
+    native.act_root_components.push(act_root());
+    native.act_root_components.push(act_second_root());
+    native
+}
+
+fn act_findings(native: &crate::native::F3dNative) -> Vec<String> {
+    crate::test_support::with_decode_context(|service_ctx| {
+        let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+        let ctx = super::super::Ctx::new(&ir, native, service_ctx).unwrap();
+        let mut findings = Vec::new();
+        super::super::validate_act(&ctx, &mut findings).unwrap();
+        findings
+            .into_iter()
+            .map(|finding| finding.message.clone())
+            .collect()
+    })
+}
+
 #[test]
-fn act_missing_root_finding_refuses_collection_limit() {
+fn act_stream_without_component_links_has_no_root_finding() {
     let mut native = crate::native::F3dNative::default();
     native.act_guids.push(act_guid(0));
-    let error = act_error(native, 4, u64::MAX);
+    native.act_entities.push(act_entity());
+    assert!(act_findings(&native).is_empty());
+}
+
+#[test]
+fn act_stream_with_one_root_has_no_root_finding() {
+    let mut native = crate::native::F3dNative::default();
+    native.act_root_components.push(act_root());
+    assert!(act_findings(&native).is_empty());
+}
+
+#[test]
+fn act_stream_with_two_roots_is_a_finding() {
+    assert_eq!(
+        act_findings(&act_two_roots()),
+        ["Fusion ACT stream has more than one document-root component link"]
+    );
+}
+
+#[test]
+fn act_extra_root_finding_refuses_collection_limit() {
+    let error = act_error(act_two_roots(), 4, u64::MAX);
     assert!(
         matches!(error, cadmpeg_core::CodecError::ResourceLimit(limit)
         if limit.operation == "collect F3D native validation findings")
@@ -245,9 +300,8 @@ fn act_missing_root_finding_refuses_collection_limit() {
 }
 
 #[test]
-fn act_missing_root_witness_refuses_retained_limit() {
-    let mut native = crate::native::F3dNative::default();
-    native.act_guids.push(act_guid(0));
+fn act_extra_root_witness_refuses_retained_limit() {
+    let native = act_two_roots();
     let error = cadmpeg_test_support::refusal::resource_limit_at(
         cadmpeg_core::decode::ResourceDimension::RetainedBytes,
         "retain F3D validation entity",
