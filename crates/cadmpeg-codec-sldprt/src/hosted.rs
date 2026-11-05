@@ -20,7 +20,7 @@ use cadmpeg_ir::report::loss::LossNote;
 use cadmpeg_ir::unknown::UnknownRecord;
 use cadmpeg_ir::StreamName;
 
-use crate::brep::graph::decode_bodies_in;
+use crate::brep::graph::{decode_bodies_in, Hosting};
 use crate::decode::{bind_opaque_geometry, brep_losses};
 use crate::parasolid::{is_body_stream, stream_header, StreamHeader};
 
@@ -67,6 +67,8 @@ pub struct HostedBrep {
     /// Number of face color records the neutral model does not take from a
     /// hosted stream.
     pub face_color_records: usize,
+    /// Structural diagnostics of the dropped edges as JSON lines, when asked.
+    pub diagnostics: Vec<String>,
 }
 
 /// Decode hosted Parasolid streams into the neutral B-rep arenas of `model`.
@@ -88,6 +90,7 @@ pub fn decode_hosted_brep(
     streams: &[&[u8]],
     origin: &StreamName,
     source: &UnknownId,
+    diagnostics: bool,
 ) -> Result<HostedBrep, CodecError> {
     let mut headers: Vec<StreamHeader> =
         ctx.collection_vec(streams.len(), "collect hosted Parasolid headers")?;
@@ -104,9 +107,45 @@ pub fn decode_hosted_brep(
     let mut bodies: Vec<(&[u8], &StreamHeader)> =
         ctx.collection_vec(streams.len(), "pair hosted Parasolid streams")?;
     bodies.extend(streams.iter().copied().zip(&headers));
-    let mut brep = decode_bodies_in(ctx, &bodies, origin, true)?;
+    let mut brep = decode_bodies_in(
+        ctx,
+        &bodies,
+        origin,
+        Hosting {
+            rules: true,
+            diagnostics,
+        },
+    )?;
     bind_opaque_geometry(ctx, &mut brep, source)?;
     let losses = brep_losses(ctx, &mut brep, true)?;
+    let mut lines = std::mem::take(&mut brep.stats.diagnostics.lines);
+    if diagnostics {
+        let stats = &brep.stats;
+        lines.insert(
+            0,
+            format!(
+                "{{\"kind\":\"summary\",\"unresolved\":{},\"null_vertex\":{},\
+                 \"absent_vertex\":{},\"absent_point\":{},\"no_canonical\":{},\
+                 \"no_forward\":{},\"several_forward\":{},\"off_ring\":{},\
+                 \"dropped_loops\":{},\"dropped_loops_missing_coedge\":{},\
+                 \"dropped_loops_unemitted_edge\":{},\"faces_without_loops\":{},\
+                 \"findings_over_limit\":{}}}",
+                stats.unresolved_edges,
+                stats.unresolved_null_vertex_use,
+                stats.unresolved_absent_vertex_use,
+                stats.unresolved_absent_point,
+                stats.skipped_edges_no_canonical,
+                stats.skipped_edges_no_forward,
+                stats.skipped_edges_several_forward,
+                stats.skipped_edges_off_ring,
+                stats.dropped_loops,
+                stats.dropped_loops_missing_coedge,
+                stats.dropped_loops_unemitted_edge,
+                stats.faces_without_loops,
+                stats.diagnostics.overflow,
+            ),
+        );
+    }
     let entities = brep.neutral_entity_count()?;
     model.bodies = brep.bodies;
     model.regions = brep.regions;
@@ -132,5 +171,6 @@ pub fn decode_hosted_brep(
         schema,
         entities,
         face_color_records: brep.face_colors.len(),
+        diagnostics: lines,
     })
 }

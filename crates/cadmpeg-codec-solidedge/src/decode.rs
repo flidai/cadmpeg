@@ -79,6 +79,8 @@ impl<'a> Group<'a> {
 
 /// The structure of one document, shared by inspection and decode.
 struct Analysis<'a> {
+    /// The second u16 of `DocVersion2`, when the stream has the usual layout.
+    doc_version: Option<u16>,
     /// Every body group with a base state, in decode order.
     groups: Vec<Group<'a>>,
     classification: LayerClassification,
@@ -324,10 +326,12 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
         )?;
         ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
     }
+    let mut doc_version = None;
     if let Some(mut view) = scan.open_root_stream(ctx, DOC_VERSION_STREAM)? {
         let length = view.window().len();
         let code = view.skip(2).and_then(|()| view.u16_le());
         if let (4, Some(code)) = (length, code) {
+            doc_version = Some(code);
             let note = ctx.format_retained(
                 format_args!("{DOC_VERSION_STREAM}: second u16 is {code}"),
                 "retain Solid Edge version note",
@@ -336,6 +340,7 @@ fn analyze<'a>(ctx: &DecodeContext<'a>, scan: &'a Scan<'a>) -> Result<Analysis<'
         }
     }
     Ok(Analysis {
+        doc_version,
         groups,
         classification,
         losses,
@@ -414,6 +419,15 @@ pub(crate) fn inspect(
         losses,
         notes,
     ))
+}
+
+/// The environment variable that turns on the structural diagnostics. When it
+/// is set to anything but `0`, the decode adds one report note per finding. Each
+/// note is a JSON line that starts with `{"kind":`.
+pub(crate) const DIAGNOSTICS_ENV: &str = "CADMPEG_SE_DIAGNOSTICS";
+
+fn diagnostics_requested() -> bool {
+    std::env::var_os(DIAGNOSTICS_ENV).is_some_and(|value| !value.is_empty() && value != "0")
 }
 
 /// What the range pass did to a model.
@@ -588,6 +602,7 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
         }
     };
     let Analysis {
+        doc_version,
         groups,
         classification,
         mut losses,
@@ -692,7 +707,32 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
                 streams.push(deltas.binary());
             }
             let origin = cadmpeg_ir::stream_name!("solidedge:parasolid");
-            let hosted = decode_hosted_brep(ctx, &mut ir.model, &streams, &origin, source)?;
+            let hosted = decode_hosted_brep(
+                ctx,
+                &mut ir.model,
+                &streams,
+                &origin,
+                source,
+                diagnostics_requested(),
+            )?;
+            if !hosted.diagnostics.is_empty() {
+                let file = ctx.format_retained(
+                    format_args!(
+                        "{{\"kind\":\"file\",\"schema\":\"{}\",\"doc_version\":{},\
+                         \"streams\":{}}}",
+                        hosted.schema.value(),
+                        doc_version.map_or_else(|| "null".to_owned(), |code| code.to_string()),
+                        streams.len()
+                    ),
+                    "retain Solid Edge diagnostic line",
+                )?;
+                ctx.push_vec(&mut notes, file, "collect Solid Edge notes")?;
+                for line in hosted.diagnostics {
+                    let line =
+                        ctx.copy_retained_text(&line, "retain Solid Edge diagnostic line")?;
+                    ctx.push_vec(&mut notes, line, "collect Solid Edge notes")?;
+                }
+            }
             ctx.admit_entities(hosted.entities, &mut admitted, "admit Solid Edge entities")?;
             face_colors += hosted.face_color_records;
             annotations = hosted.annotations;

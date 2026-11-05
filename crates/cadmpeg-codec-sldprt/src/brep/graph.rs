@@ -36,6 +36,7 @@ use cadmpeg_ir::Exactness;
 
 use super::attrib;
 use super::blend::BlendSupportRef;
+use super::diagnostics;
 use super::entity;
 use super::evaluation::{
     nurbs_surface_parameter_segment_chord_bound, nurbs_surface_parameter_within_tolerance, Solved,
@@ -568,6 +569,10 @@ pub(crate) struct Stats {
     pub(crate) dropped_loops: usize,
     /// Faces dropped because none of their loops was kept.
     pub(crate) faces_without_loops: usize,
+    /// Edges whose canonical coedge is in no ring of a kept face.
+    pub(crate) skipped_edges_off_ring: usize,
+    /// Structural findings about dropped edges, collected on request.
+    pub(crate) diagnostics: diagnostics::Diagnostics,
     /// Pcurves withheld because geometric inverse selection was ambiguous.
     pub(crate) ambiguous_pcurve_parameters: usize,
     /// NURBS edge carriers whose vertex range is off their bound surface.
@@ -1510,18 +1515,25 @@ pub(crate) fn decode_bodies(
     bodies: &[(&[u8], &StreamHeader)],
     stream: &cadmpeg_ir::StreamName,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
-    decode_bodies_in(ctx, bodies, stream, false)
+    decode_bodies_in(ctx, bodies, stream, Hosting::default())
+}
+
+/// What a hosting codec asks of the decode.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Hosting {
+    /// Admit the rules that no `SolidWorks` fixture has verified: an edge that
+    /// only one reversed coedge names takes that coedge as its definition.
+    pub(crate) rules: bool,
+    /// Collect structural diagnostics for the edges that the build drops.
+    pub(crate) diagnostics: bool,
 }
 
 /// [`decode_bodies`] with the rules of a hosting codec.
-///
-/// `hosted` admits the rules that no `SolidWorks` fixture has verified: an edge
-/// that only one reversed coedge names takes that coedge as its definition.
 pub(crate) fn decode_bodies_in(
     ctx: &DecodeContext<'_>,
     bodies: &[(&[u8], &StreamHeader)],
     stream: &cadmpeg_ir::StreamName,
-    hosted: bool,
+    hosting: Hosting,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
     let mut carriers = CarrierIndex::default();
     let mut tables = topology::Tables::default();
@@ -1601,14 +1613,18 @@ pub(crate) fn decode_bodies_in(
             append_entity_facts(ctx, &mut facts, scanned_facts)?;
         }
     }
-    decode_graph(
+    let mut brep = decode_graph(
         ctx,
         &mut carriers,
         &tables,
         facts,
         &typed_facts,
-        (stream, hosted),
-    )
+        (stream, hosting),
+    )?;
+    if hosting.diagnostics {
+        diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
+    }
+    Ok(brep)
 }
 
 fn decode_body(
@@ -1631,7 +1647,7 @@ fn decode_body(
         &t,
         entity_facts,
         &typed_facts,
-        (stream, false),
+        (stream, Hosting::default()),
     )
 }
 
@@ -1924,8 +1940,9 @@ fn decode_graph(
     t: &topology::Tables,
     entity_facts: entity::Facts,
     typed_facts: &typed::Facts,
-    (stream, hosted): (&cadmpeg_ir::StreamName, bool),
+    (stream, hosting): (&cadmpeg_ir::StreamName, Hosting),
 ) -> Result<Brep, cadmpeg_core::CodecError> {
+    let hosted = hosting.rules;
     let typed_records = typed_body_records(ctx, typed_facts, t)?;
     let body_records = typed_records.unwrap_or_default();
     let body_modifiers = unique_body_modifiers(ctx, entity_facts.body_modifiers)?;
@@ -2134,6 +2151,15 @@ fn decode_graph(
                     } else if forward > 1 {
                         out.stats.skipped_edges_several_forward += 1;
                     }
+                    if hosting.diagnostics {
+                        out.stats.diagnostics.record(
+                            ctx,
+                            diagnostics::Finding::NoCanonical {
+                                edge: edge_attr,
+                                forward,
+                            },
+                        )?;
+                    }
                     continue;
                 }
             },
@@ -2142,6 +2168,16 @@ fn decode_graph(
             .iter()
             .find(|(coedge_attr, _, _)| *coedge_attr == canonical)
         else {
+            out.stats.skipped_edges_off_ring += 1;
+            if hosting.diagnostics {
+                out.stats.diagnostics.record(
+                    ctx,
+                    diagnostics::Finding::OffRing {
+                        edge: edge_attr,
+                        canonical,
+                    },
+                )?;
+            }
             continue;
         };
         let end_vuse = edge_end_vuse(canonical, *ring_end_vuse, t.coedges());
@@ -2247,14 +2283,30 @@ fn decode_graph(
             // tables do not hold.
             let blocked = [start_v, end_v]
                 .into_iter()
-                .find(|vuse| !kept_vertices.contains(vuse));
-            match blocked {
-                Some(0) => out.stats.unresolved_null_vertex_use += 1,
-                Some(vuse) => match t.vertex_uses().get(&vuse) {
-                    None => out.stats.unresolved_absent_vertex_use += 1,
-                    Some(_) => out.stats.unresolved_absent_point += 1,
-                },
-                None => {}
+                .enumerate()
+                .find(|(_, vuse)| !kept_vertices.contains(vuse));
+            if let Some((end, vuse)) = blocked {
+                let cause = if vuse == 0 {
+                    out.stats.unresolved_null_vertex_use += 1;
+                    diagnostics::DropCause::NullVertex
+                } else if t.vertex_uses().contains_key(&vuse) {
+                    out.stats.unresolved_absent_point += 1;
+                    diagnostics::DropCause::AbsentPoint
+                } else {
+                    out.stats.unresolved_absent_vertex_use += 1;
+                    diagnostics::DropCause::AbsentVertex
+                };
+                if hosting.diagnostics {
+                    out.stats.diagnostics.record(
+                        ctx,
+                        diagnostics::Finding::Unresolved {
+                            edge: e,
+                            cause,
+                            end: u8::from(end == 1),
+                            vertex: vuse,
+                        },
+                    )?;
+                }
             }
             continue;
         }
@@ -9295,7 +9347,10 @@ mod tests {
                 ..Default::default()
             },
             &super::typed::Facts::default(),
-            (&cadmpeg_ir::stream_name!("empty"), false),
+            (
+                &cadmpeg_ir::stream_name!("empty"),
+                super::Hosting::default(),
+            ),
         )
         .expect("valid exactness fields");
 

@@ -4074,7 +4074,7 @@ pub(crate) fn brep_losses(
     {
         ctx.reserve_vec(&mut losses, 1, "append SLDPRT geometry loss")?;
         losses.push(SldprtLossCode::TopologyBoundaryUnresolved.note(format!(
-            "{} edge(s) were dropped because an endpoint vertex did not resolve and the edge is not a typed closed ring ({} with a null vertex reference, {} with an absent vertex record, {} with an absent point record); {} loop(s) were dropped ({} with a coedge that the tables do not hold, {} with a coedge whose edge was not emitted, of which {} edge(s) had no canonical coedge, {} with no forward coedge and {} with several); {} face(s) were dropped because none of their loops was kept.",
+            "{} edge(s) were dropped because an endpoint vertex did not resolve and the edge is not a typed closed ring ({} with a null vertex reference, {} with an absent vertex record, {} with an absent point record); {} loop(s) were dropped ({} with a coedge that the tables do not hold, {} with a coedge whose edge was not emitted, of which {} edge(s) had no canonical coedge, {} with no forward coedge and {} with several); {} face(s) were dropped because none of their loops was kept; {} edge(s) were dropped because their canonical coedge is in no ring of a kept face.",
             s.unresolved_edges,
             s.unresolved_null_vertex_use,
             s.unresolved_absent_vertex_use,
@@ -4085,7 +4085,8 @@ pub(crate) fn brep_losses(
             s.skipped_edges_no_canonical,
             s.skipped_edges_no_forward,
             s.skipped_edges_several_forward,
-            s.faces_without_loops
+            s.faces_without_loops,
+            s.skipped_edges_off_ring
         )));
     }
     if s.synthetic_body_grouping {
