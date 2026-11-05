@@ -6727,6 +6727,51 @@ fn nurbs_edge_parameter_range(
     Ok(Some([range[0].min(range[1]), range[0].max(range[1])]))
 }
 
+/// The part of a B-spline edge carrier between the two end points of the edge.
+pub(crate) struct NurbsEdgeSpan {
+    pub(crate) knots: Vec<f64>,
+    pub(crate) poles: Vec<Point3>,
+    pub(crate) weights: Option<Vec<f64>>,
+    /// The carrier runs from the end point of the edge to its start point.
+    pub(crate) against_edge: bool,
+}
+
+/// Cut a non-periodic B-spline carrier to the interval between the parameters
+/// of the edge end points. The end points select the parameters when each has
+/// one unique nearest parameter on the carrier. A carrier whose end points
+/// coincide, a periodic carrier, and a point without a unique parameter select
+/// no span.
+pub(crate) fn nurbs_edge_span(
+    ctx: &DecodeContext<'_>,
+    nurbs: &cadmpeg_ir::geometry::nurbs::NurbsCurve,
+    start: Point3,
+    end: Point3,
+) -> Result<Option<NurbsEdgeSpan>, cadmpeg_core::CodecError> {
+    if nurbs.periodic() {
+        return Ok(None);
+    }
+    let (InverseResolution::Unique(first), InverseResolution::Unique(last)) = (
+        nurbs_parameter_at_point(ctx, nurbs, start)?,
+        nurbs_parameter_at_point(ctx, nurbs, end)?,
+    ) else {
+        return Ok(None);
+    };
+    if first == last {
+        return Ok(None);
+    }
+    let Some((knots, poles, weights)) =
+        clamp_nurbs_curve_to_domain_lanes(ctx, nurbs, [first.min(last), first.max(last)])?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(NurbsEdgeSpan {
+        knots,
+        poles,
+        weights,
+        against_edge: first > last,
+    }))
+}
+
 fn derive_nurbs_edge_pcurve(
     ctx: &DecodeContext<'_>,
     surface: &cadmpeg_ir::geometry::nurbs::NurbsSurface,
