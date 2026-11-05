@@ -117,6 +117,11 @@ impl Diagnostics {
 struct Hit {
     node_type: u8,
     delta: bool,
+    /// Position of the header in its stream, and which stream.
+    at: usize,
+    stream: usize,
+    /// Headers of this type in this stream with the same index.
+    count: usize,
     /// Bytes from the index to the null real, when one follows closely.
     null_real_at: Option<usize>,
     /// Bytes from the index to the next header of a table type, and its type.
@@ -130,7 +135,7 @@ fn probe(
     targets: &HashSet<u16>,
 ) -> Result<HashMap<u16, Vec<Hit>>, CodecError> {
     let mut found: HashMap<u16, Vec<Hit>> = HashMap::new();
-    for (buf, delta) in streams {
+    for (stream, (buf, delta)) in streams.iter().enumerate() {
         ctx.charge_work(
             u64_from_index(buf.len() / BYTES_PER_WORK_UNIT + 1),
             "probe Parasolid node headers",
@@ -150,11 +155,14 @@ fn probe(
                 continue;
             }
             let slot = found.entry(index).or_default();
-            if slot.len() >= HITS_PER_INDEX
-                || slot
-                    .iter()
-                    .any(|hit| hit.node_type == buf[at + 1] && hit.delta == *delta)
+            if let Some(same) = slot
+                .iter_mut()
+                .find(|hit| hit.node_type == buf[at + 1] && hit.delta == *delta)
             {
+                same.count += 1;
+                continue;
+            }
+            if slot.len() >= HITS_PER_INDEX {
                 continue;
             }
             let tail = &buf[index_at + 2..];
@@ -170,6 +178,9 @@ fn probe(
             slot.push(Hit {
                 node_type: buf[at + 1],
                 delta: *delta,
+                at,
+                stream,
+                count: 1,
                 null_real_at,
                 next_header,
             });
@@ -214,9 +225,10 @@ fn hits_json(hits: Option<&Vec<Hit>>) -> String {
         .flatten()
         .map(|hit| {
             format!(
-                "{{\"t\":{},\"s\":\"{}\",\"magic\":{},\"next\":{},\"next_t\":{}}}",
+                "{{\"t\":{},\"s\":\"{}\",\"n\":{},\"magic\":{},\"next\":{},\"next_t\":{}}}",
                 hit.node_type,
                 if hit.delta { "d" } else { "p" },
+                hit.count,
                 option(hit.null_real_at),
                 option(hit.next_header.map(|(distance, _)| distance)),
                 option(hit.next_header.map(|(_, kind)| kind)),
@@ -408,7 +420,7 @@ pub(crate) fn render(
     }
     for item in &refs {
         ctx.charge_work(1, "render Parasolid reference diagnostics")?;
-        lines.push(ref_line(tables, &hits, &keys, item));
+        lines.push(ref_line(tables, streams, &hits, &keys, item));
     }
     census(ctx, tables, streams, &mut lines)?;
     diagnostics.lines = lines;
@@ -425,8 +437,8 @@ const REFERENCE_LIMIT: usize = 20_000;
 const NEIGHBOURS: std::ops::RangeInclusive<i32> = -8..=8;
 /// The most distinct key steps a census line lists.
 const STEPS_LISTED: usize = 4;
-/// The node type of a shell, which the tables do not hold.
-const SHELL_TYPE: u8 = 0x0d;
+/// The node type that the owner of a face-use is read against.
+const BRIDGE_TYPE: u8 = 0x0e;
 
 /// A reference that names no record of the type it should.
 struct RefItem {
@@ -501,7 +513,7 @@ fn collect_refs(
                             RefItem {
                                 what: "face_owner",
                                 value: shell,
-                                expected: SHELL_TYPE,
+                                expected: BRIDGE_TYPE,
                             },
                         )?;
                     }
@@ -556,6 +568,7 @@ fn neighbours(keys: &[u16], value: u16) -> (String, String) {
 
 fn ref_line(
     tables: &Tables,
+    streams: &[(&[u8], bool)],
     hits: &HashMap<u16, Vec<Hit>>,
     keys: &HashMap<u8, Vec<u16>>,
     item: &RefItem,
@@ -589,16 +602,32 @@ fn ref_line(
                 .is_ok_and(|index| table_has(tables, expected, index))
         })
         .collect();
+    let why: Vec<String> = hits
+        .get(&value)
+        .into_iter()
+        .flatten()
+        .filter(|hit| hit.node_type == expected)
+        .filter_map(|hit| {
+            let (buf, _) = streams.get(hit.stream)?;
+            Some(format!(
+                "{{\"s\":\"{}\",\"n\":{},\"r\":{}}}",
+                if hit.delta { "d" } else { "p" },
+                hit.count,
+                super::topology::rejection_json(buf, hit.at, expected, tables),
+            ))
+        })
+        .collect();
     format!(
         "{{\"kind\":\"ref\",\"what\":\"{what}\",\"value\":{value},\"expected\":{expected},\
          \"known\":{},\"below\":{below},\"above\":{above},\"m7fff\":{},\"low8\":{},\
-         \"plus_k\":{},\"hdr_p\":{},\"hdr_d\":{},\"hits\":{}}}",
+         \"plus_k\":{},\"hdr_p\":{},\"hdr_d\":{},\"why\":[{}],\"hits\":{}}}",
         list(known_as(tables, value)),
         variant(value & MASK_15),
         variant(value & MASK_8),
         list(plus_k),
         header(value, false),
         header(value, true),
+        why.join(","),
         hits_json(hits.get(&value)),
     )
 }
@@ -843,6 +872,9 @@ mod tests {
             vec![Hit {
                 node_type: 0x0f,
                 delta: true,
+                at: 0,
+                stream: 0,
+                count: 1,
                 null_real_at: None,
                 next_header: None,
             }],
@@ -853,7 +885,7 @@ mod tests {
             value: 0x8005,
             expected: 0x0f,
         };
-        let line = ref_line(&tables, &hits, &keys, &item);
+        let line = ref_line(&tables, &[], &hits, &keys, &item);
         assert!(line.starts_with("{\"kind\":\"ref\",\"what\":\"face_loop\",\"value\":32773,"));
         assert!(line.contains("\"below\":[9,32764],\"above\":null"));
         assert!(line.contains("\"hdr_p\":false,\"hdr_d\":true"));
