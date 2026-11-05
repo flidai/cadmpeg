@@ -575,6 +575,9 @@ pub(crate) struct Stats {
     pub(crate) faces_walked_empty_loop_absent: usize,
     pub(crate) faces_walked_empty_other_owner: usize,
     pub(crate) faces_walked_empty_ring_open: usize,
+    /// Records that a hosted decode admitted because a record in the tables names
+    /// them and the strict scan left them out.
+    pub(crate) admitted_by_reference: topology::Admitted,
     /// Edges whose canonical coedge is in no ring of a kept face.
     pub(crate) skipped_edges_off_ring: usize,
     /// Structural findings about dropped edges, collected on request.
@@ -1654,6 +1657,12 @@ pub(crate) fn decode_bodies_in(
             append_entity_facts(ctx, &mut facts, scanned_facts)?;
         }
     }
+    let admitted = if hosting.rules {
+        let bodies: Vec<&[u8]> = entity_streams.iter().map(|(body, _)| *body).collect();
+        topology::admit_referenced(ctx, &bodies, &mut tables)?
+    } else {
+        topology::Admitted::default()
+    };
     let mut brep = decode_graph(
         ctx,
         &mut carriers,
@@ -1662,6 +1671,7 @@ pub(crate) fn decode_bodies_in(
         &typed_facts,
         (stream, hosting),
     )?;
+    brep.stats.admitted_by_reference = admitted;
     if hosting.diagnostics {
         diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
     }

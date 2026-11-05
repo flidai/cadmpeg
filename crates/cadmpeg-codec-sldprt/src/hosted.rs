@@ -129,7 +129,9 @@ pub fn decode_hosted_brep(
                  \"no_forward\":{},\"several_forward\":{},\"off_ring\":{},\
                  \"dropped_loops\":{},\"dropped_loops_missing_coedge\":{},\
                  \"dropped_loops_unemitted_edge\":{},\"faces_without_loops\":{},\
-                 \"findings_over_limit\":{},\"empty_faces_over\":{},\"faces_empty_end\":{},\
+                 \"findings_over_limit\":{},\"empty_faces_over\":{},\
+                 \"admitted_14\":{},\"admitted_15\":{},\"admitted_16\":{},\"admitted_17\":{},\
+                 \"admitted_18\":{},\"admitted_ambiguous\":{},\"admitted_rounds\":{},\"faces_empty_end\":{},\
                  \"faces_empty_no_head\":{},\"faces_empty_loop_absent\":{},\
                  \"faces_empty_other_owner\":{},\"faces_empty_ring_open\":{}}}",
                 stats.unresolved_edges,
@@ -146,6 +148,13 @@ pub fn decode_hosted_brep(
                 stats.faces_without_loops,
                 stats.diagnostics.overflow,
                 stats.diagnostics.empty_faces_over,
+                stats.admitted_by_reference.by_type[0],
+                stats.admitted_by_reference.by_type[1],
+                stats.admitted_by_reference.by_type[2],
+                stats.admitted_by_reference.by_type[3],
+                stats.admitted_by_reference.by_type[4],
+                stats.admitted_by_reference.ambiguous,
+                stats.admitted_by_reference.rounds,
                 stats.faces_walked_empty_end,
                 stats.faces_walked_empty_no_head,
                 stats.faces_walked_empty_loop_absent,
