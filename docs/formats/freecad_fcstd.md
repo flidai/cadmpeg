@@ -318,7 +318,13 @@ CADIR decision: neutral occurrence keys, topology labels, and located curve or s
 use the exact components of the fully composed transform. Any nonzero component difference keeps
 the identities separate, including a difference below `1.0e-12`. Identity elision occurs only for
 an exact identity transform. This preserves source-distinct placements when the text carrier has
-already composed a location chain.
+already composed a location chain. One exception joins the faces of one region: a vertex or edge
+whose exact key is absent reuses the vertex or edge of the same region that holds the same `TShape`
+at a placement equal to `1.0e-9` in every component. A location product that multiplies a datum
+with the datum of the opposite rotation is the identity up to rounding, and without this
+exception the coedge rings of the faces around such an edge end at different vertices. Face
+connectivity inside a shell uses the same rounded placement. Source topology positions still use
+the exact transform.
 
 The native location chain is applied exactly once at the owning topology level. Display
 tessellation is presentation data and does not replace an available exact shape. Each root shape

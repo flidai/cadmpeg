@@ -44,6 +44,8 @@ use cadmpeg_ir::report::loss::LossNote;
 const EPS_TOPOLOGY_TRANSFER_GEOMETRY: f64 = 1.0e-9;
 const EPS_TOPOLOGY_TRANSFER_DEGENERATE: f64 = 1.0e-10;
 const EPS_TOPOLOGY_TRANSFER_EXACT_GEOMETRY: f64 = 1.0e-12;
+/// Two placements of one `TShape` whose matrices agree to this bound name one vertex or edge.
+const EPS_PLACEMENT_SAME_OCCURRENCE: f64 = 1.0e-9;
 
 fn copy_shape_for_transfer(
     ctx: &DecodeContext<'_>,
@@ -273,6 +275,36 @@ impl OccurrenceKey {
     }
 }
 
+/// Placement of one `TShape` rounded to [`EPS_PLACEMENT_SAME_OCCURRENCE`], inside one region.
+///
+/// A location product that composes a datum with the datum of the opposite
+/// rotation (a pattern member and its inverse) leaves matrix rounding error
+/// where the exact product is the identity. The exact keys of such placements
+/// differ in the last bits although they name the same point. The vertex and
+/// edge caches fall back to this key when the exact key misses, so the coedge
+/// rings of the faces around such an edge stay joined at one vertex identity.
+/// The region scope keeps separate occurrences of a shape apart.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct NearOccurrenceKey(String);
+
+impl NearOccurrenceKey {
+    fn new(region: usize, shape: usize, transform: Transform) -> Self {
+        // Adding zero turns a rounded negative zero into zero.
+        let steps: Vec<String> = transform
+            .affine_rows()
+            .into_iter()
+            .flatten()
+            .map(|value| {
+                format!(
+                    "{:.0}",
+                    (value / EPS_PLACEMENT_SAME_OCCURRENCE).round() + 0.0
+                )
+            })
+            .collect();
+        Self(format!("{region}:{shape},{}", steps.join(",")))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SourceOccurrenceKey(String);
 
@@ -289,6 +321,9 @@ struct Builder<'a, 'c, 'r> {
     tables: Tables<'a>,
     vertices: HashMap<OccurrenceKey, VertexId>,
     edges: HashMap<OccurrenceKey, EdgeId>,
+    near_vertices: HashMap<NearOccurrenceKey, VertexId>,
+    near_edges: HashMap<NearOccurrenceKey, EdgeId>,
+    region_scope: usize,
     emitted_curves: HashSet<CurveId>,
     emitted_surfaces: HashSet<SurfaceId>,
     emitted_triangulations: HashSet<usize>,
@@ -316,6 +351,9 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
             tables,
             vertices: HashMap::new(),
             edges: HashMap::new(),
+            near_vertices: HashMap::new(),
+            near_edges: HashMap::new(),
+            region_scope: 0,
             emitted_curves: HashSet::new(),
             emitted_surfaces: HashSet::new(),
             emitted_triangulations: HashSet::new(),
@@ -611,6 +649,8 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
         self.root_discriminator = root.root_ordinal;
         self.vertices.clear();
         self.edges.clear();
+        self.near_vertices.clear();
+        self.near_edges.clear();
         let root_shape = self.shape(root.shape)?;
         let root_kind = root_shape.kind();
         if let TextTShapeGeometry::Edge {
@@ -738,6 +778,7 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
             "FreeCAD region identity",
         )?)
         .map_err(CodecError::malformed)?;
+        self.region_scope += 1;
         let mut shells = Vec::new();
         if shape.kind() == TextShapeKind::Solid {
             for child in shape
@@ -1003,7 +1044,8 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
                     let edge_transform = wire_transform
                         .compose(self.tables.location(edge_use.location)?)
                         .map_err(location_transform_error)?;
-                    let edge_key = OccurrenceKey::new(
+                    let edge_key = NearOccurrenceKey::new(
+                        self.region_scope,
                         edge_use.shape,
                         self.body_scope
                             .compose(edge_transform)
@@ -1021,7 +1063,8 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
                         let vertex_transform = edge_transform
                             .compose(self.tables.location(vertex_use.location)?)
                             .map_err(location_transform_error)?;
-                        let vertex_key = OccurrenceKey::new(
+                        let vertex_key = NearOccurrenceKey::new(
+                            self.region_scope,
                             vertex_use.shape,
                             self.body_scope
                                 .compose(vertex_transform)
@@ -1399,13 +1442,14 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
         let transform = parent
             .compose(self.tables.location(edge_use.location)?)
             .map_err(location_transform_error)?;
-        let key = OccurrenceKey::new(
-            edge_use.shape,
-            self.body_scope
-                .compose(transform)
-                .map_err(location_transform_error)?,
-        );
-        if let Some(id) = self.edges.get(&key) {
+        let placed = self
+            .body_scope
+            .compose(transform)
+            .map_err(location_transform_error)?;
+        let key = OccurrenceKey::new(edge_use.shape, placed);
+        let near = NearOccurrenceKey::new(self.region_scope, edge_use.shape, placed);
+        let cached = self.edges.get(&key).or_else(|| self.near_edges.get(&near));
+        if let Some(id) = cached {
             let id: EdgeId =
                 id.try_clone_for_decode(self.ctx, "FreeCAD cached edge lookup identity")?;
             self.bind_topology(TextShapeKind::Edge, edge_use.shape, transform, id.as_str())?;
@@ -1495,8 +1539,19 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
                 .copy_retained_text(id.as_str(), "FreeCAD cached edge identity")?,
         )
         .map_err(CodecError::malformed)?;
+        let near_id = EdgeId::mint(
+            self.ctx
+                .copy_retained_text(id.as_str(), "FreeCAD near edge identity")?,
+        )
+        .map_err(CodecError::malformed)?;
         self.ctx
             .insert_hash_map(&mut self.edges, key, cached_id, "FreeCAD cached edges")?;
+        self.ctx.insert_hash_map(
+            &mut self.near_edges,
+            near,
+            near_id,
+            "FreeCAD near-placement cached edges",
+        )?;
         Ok(id)
     }
 
@@ -1683,13 +1738,17 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
         let transform = parent
             .compose(self.tables.location(vertex_use.location)?)
             .map_err(location_transform_error)?;
-        let key = OccurrenceKey::new(
-            vertex_use.shape,
-            self.body_scope
-                .compose(transform)
-                .map_err(location_transform_error)?,
-        );
-        if let Some(id) = self.vertices.get(&key) {
+        let placed = self
+            .body_scope
+            .compose(transform)
+            .map_err(location_transform_error)?;
+        let key = OccurrenceKey::new(vertex_use.shape, placed);
+        let near = NearOccurrenceKey::new(self.region_scope, vertex_use.shape, placed);
+        let cached = self
+            .vertices
+            .get(&key)
+            .or_else(|| self.near_vertices.get(&near));
+        if let Some(id) = cached {
             let id: VertexId =
                 id.try_clone_for_decode(self.ctx, "FreeCAD cached vertex lookup identity")?;
             self.bind_topology(
@@ -1760,11 +1819,22 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
                 .copy_retained_text(vertex_id.as_str(), "FreeCAD cached vertex identity")?,
         )
         .map_err(CodecError::malformed)?;
+        let near_id = VertexId::mint(
+            self.ctx
+                .copy_retained_text(vertex_id.as_str(), "FreeCAD near vertex identity")?,
+        )
+        .map_err(CodecError::malformed)?;
         self.ctx.insert_hash_map(
             &mut self.vertices,
             key,
             cached_id,
             "FreeCAD cached vertices",
+        )?;
+        self.ctx.insert_hash_map(
+            &mut self.near_vertices,
+            near,
+            near_id,
+            "FreeCAD near-placement cached vertices",
         )?;
         Ok(vertex_id)
     }
@@ -2856,3 +2926,6 @@ mod numerical_range_tests;
 
 #[cfg(test)]
 mod located_geometry_tests;
+
+#[cfg(test)]
+mod near_occurrence_tests;
