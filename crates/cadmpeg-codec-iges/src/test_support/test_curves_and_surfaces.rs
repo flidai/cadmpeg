@@ -132,6 +132,9 @@ pub(crate) fn transformed_circular_arc_file_with_global(
     global: &[u8],
 ) -> Vec<u8> {
     let form = form.to_string();
+    let matrix_lines = parameter_fragment_count(matrix);
+    let arc_lines = parameter_fragment_count(arc);
+    let arc_start = matrix_lines + 1;
     let mut bytes = fixed_ascii_with_global(global);
     bytes.truncate(bytes.len() - 81);
     bytes.extend(directory_card(
@@ -139,22 +142,53 @@ pub(crate) fn transformed_circular_arc_file_with_global(
         1,
     ));
     bytes.extend(directory_card(
-        ["124", "0", "0", "1", &form, "", "", "FRAME", "0"],
+        [
+            "124",
+            "0",
+            "0",
+            &matrix_lines.to_string(),
+            &form,
+            "",
+            "",
+            "FRAME",
+            "0",
+        ],
         2,
     ));
     bytes.extend(directory_card(
-        ["100", "2", "0", "0", "0", "0", "1", "0", "00000000"],
+        [
+            "100",
+            &arc_start.to_string(),
+            "0",
+            "0",
+            "0",
+            "0",
+            "1",
+            "0",
+            "00000000",
+        ],
         3,
     ));
     bytes.extend(directory_card(
-        ["100", "0", "0", "1", "0", "", "", "ARC", "0"],
+        [
+            "100",
+            "0",
+            "0",
+            &arc_lines.to_string(),
+            "0",
+            "",
+            "",
+            "ARC",
+            "0",
+        ],
         4,
     ));
-    bytes.extend(parameter_card(matrix, 1, 1));
-    bytes.extend(parameter_card(arc, 3, 2));
+    bytes.extend(parameter_cards(matrix, 1, 1));
+    bytes.extend(parameter_cards(arc, 3, u32::try_from(arc_start).unwrap()));
     let global_cards = global_card_count(global);
+    let parameter_lines = matrix_lines + arc_lines;
     bytes.extend(card(
-        format!("S0000001G{global_cards:07}D0000004P0000002").as_bytes(),
+        format!("S0000001G{global_cards:07}D0000004P{parameter_lines:07}").as_bytes(),
         b'T',
         1,
     ));

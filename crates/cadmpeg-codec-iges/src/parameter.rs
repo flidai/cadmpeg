@@ -70,6 +70,30 @@ impl Serialize for Token {
     }
 }
 
+/// The shortest printed mantissa that is treated as a rounded binary value
+/// rather than as a typed constant. A writer that prints fewer significant
+/// digits has either dropped trailing zeros or written a short literal.
+const MIN_ROUNDED_PRINT_DIGITS: u32 = 10;
+
+/// Count the significant digits of a real token's mantissa: the digits before
+/// any exponent, without leading zeros and without the decimal point.
+fn printed_mantissa_digits(token: &[u8]) -> u32 {
+    let mut digits = 0_u32;
+    let mut started = false;
+    for (position, byte) in token.iter().enumerate() {
+        match byte {
+            b'0'..=b'9' => {
+                started |= *byte != b'0';
+                digits += u32::from(started);
+            }
+            b'.' | b' ' => {}
+            b'+' | b'-' if position == 0 || token[..position].iter().all(|b| *b == b' ') => {}
+            _ => break,
+        }
+    }
+    digits
+}
+
 /// One entity's assembled Parameter Data.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ParameterRecord {
@@ -386,11 +410,19 @@ impl ParameterRecord {
             return None;
         }
         let bytes = self.bytes.get(token.span.clone())?;
-        if bytes.iter().any(|byte| matches!(byte, b'D' | b'd')) {
-            Some(precision.double_significance)
+        let declared = if bytes.iter().any(|byte| matches!(byte, b'D' | b'd')) {
+            precision.double_significance
         } else {
-            Some(precision.single_significance)
-        }
+            precision.single_significance
+        };
+        // A sender may declare more digits than its writer prints. A mantissa
+        // of `MIN_ROUNDED_PRINT_DIGITS` or more digits that is shorter than
+        // the declaration was rounded at its last printed digit, so that digit
+        // bounds the representation.
+        Some(match printed_mantissa_digits(bytes) {
+            printed if printed >= MIN_ROUNDED_PRINT_DIGITS && printed < declared => printed,
+            _ => declared,
+        })
     }
 
     pub(crate) fn string(&self, index: usize) -> Option<&[u8]> {
