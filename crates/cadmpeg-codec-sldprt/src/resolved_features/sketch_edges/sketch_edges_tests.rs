@@ -302,3 +302,113 @@ fn sketch_projection_refuses_opaque_curve_retained_limit() {
     .expect("service budget")
     .is_some());
 }
+
+/// A circle whose axis opposes the sketch normal runs clockwise in the sketch
+/// plane. Its projected arc must run counter-clockwise between the same end
+/// points, so the endpoints are exchanged and the angles are mirrored.
+#[test]
+fn clockwise_circle_projects_to_a_counter_clockwise_arc_with_exchanged_endpoints() {
+    use cadmpeg_ir::geometry::analytic::CircleCurve;
+    use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+    use cadmpeg_ir::ids::{CurveId, EdgeId, PointId, VertexId};
+    use cadmpeg_ir::math::{Point3, Vector3};
+    use cadmpeg_ir::sketches::SketchGeometryDefinition;
+    use cadmpeg_ir::topology::{Edge, EdgeCarrier};
+
+    let curve_id = CurveId::mint("test:model:entity#curve").expect("curve id");
+    let start_vertex = VertexId::mint("test:model:entity#start-vertex").expect("vertex id");
+    let end_vertex = VertexId::mint("test:model:entity#end-vertex").expect("vertex id");
+    let start_point = PointId::mint("test:model:entity#start-point").expect("point id");
+    let end_point = PointId::mint("test:model:entity#end-point").expect("point id");
+    // The circle runs from (1, 0) to (0, -1) as its parameter grows from 0 to
+    // a quarter turn: clockwise seen from +z.
+    let edge = Edge {
+        id: EdgeId::mint("test:model:entity#edge").expect("edge id"),
+        carrier: EdgeCarrier::new(
+            Some(curve_id.clone()),
+            Some([0.0, std::f64::consts::FRAC_PI_2]),
+        )
+        .expect("ordered range"),
+        start: start_vertex.clone(),
+        end: end_vertex.clone(),
+        tolerance: None,
+    };
+    let vertices = HashMap::from([(&start_vertex, &start_point), (&end_vertex, &end_point)]);
+    let points = HashMap::from([
+        (&start_point, Point3::new(1.0, 0.0, 0.0)),
+        (&end_point, Point3::new(0.0, -1.0, 0.0)),
+    ]);
+    let geometry = CurveGeometry::Solved(SolvedCurveGeometry::Circle(
+        CircleCurve::try_new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, -1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            1.0,
+        )
+        .expect("orthonormal frame"),
+    ));
+    let curves = HashMap::from([(&curve_id, &geometry)]);
+    let frame = super::SketchPlaneFrame {
+        origin: Point3::new(0.0, 0.0, 0.0),
+        u_axis: Vector3::new(1.0, 0.0, 0.0),
+        v_axis: Vector3::new(0.0, 1.0, 0.0),
+    };
+    let arena = cadmpeg_core::decode::DecodeArena::new();
+    let (ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
+        &[],
+        &arena,
+        &cadmpeg_core::decode::DecodePolicy::service(),
+    )
+    .expect("empty root fits service policy");
+    let projected = super::project_edge(
+        &ctx,
+        &edge,
+        &vertices,
+        &points,
+        &curves,
+        frame,
+        &mut crate::lane_refusal::LaneRefusals::new(),
+    )
+    .expect("service budget")
+    .expect("projected edge");
+    assert!(projected.reversed_endpoints);
+    let SketchGeometryDefinition::Arc {
+        start_angle,
+        end_angle,
+        ..
+    } = projected.geometry.definition()
+    else {
+        panic!("a partial circle projects to an arc")
+    };
+    assert!((start_angle.get() + std::f64::consts::FRAC_PI_2).abs() < 1.0e-12);
+    assert!(end_angle.get().abs() < 1.0e-12);
+}
+
+#[test]
+fn straight_chart_is_the_chord_when_it_spans_both_end_points() {
+    use super::straight_chart_contains;
+    // The chart runs past both end points and is a chart error off them.
+    let chart = [Point2::new(-0.0004, -3.0), Point2::new(0.0004, 3.0)];
+    assert!(straight_chart_contains(
+        &chart,
+        Point2::new(0.0, -1.0),
+        Point2::new(0.0, 2.0)
+    ));
+    // A chart that stops before the second end point is not the chord.
+    assert!(!straight_chart_contains(
+        &chart,
+        Point2::new(0.0, -1.0),
+        Point2::new(0.0, 4.0)
+    ));
+    // A chart that bends away from the chord is not the chord.
+    let bent = [
+        Point2::new(0.0, -3.0),
+        Point2::new(0.5, 0.0),
+        Point2::new(0.0, 3.0),
+    ];
+    assert!(!straight_chart_contains(
+        &bent,
+        Point2::new(0.0, -1.0),
+        Point2::new(0.0, 2.0)
+    ));
+}
