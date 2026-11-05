@@ -2387,10 +2387,36 @@ impl<'a> Builder<'a> {
         if face_refs.is_empty() {
             return None;
         }
+        // A sheet body can hold a shell whose faces meet every edge twice. The
+        // entity states that closure, whatever the body kind says of volume.
+        let closed = closed
+            || (face_refs.len() == face_ids.len() && self.faces_close_every_edge_twice(&face_ids));
         Some(self.emitter.emit(
             if closed { "CLOSED_SHELL" } else { "OPEN_SHELL" },
             &format!("'',{}", refs(&face_refs)),
         ))
+    }
+
+    /// Whether the coedges of `face_ids` use every edge exactly twice.
+    fn faces_close_every_edge_twice(&self, face_ids: &[String]) -> bool {
+        let mut uses: HashMap<&str, usize> = HashMap::new();
+        for face_id in face_ids {
+            let Some(face) = self.faces.get(face_id.as_str()) else {
+                return false;
+            };
+            for loop_id in &face.loops {
+                let Some(lp) = self.loops.get(loop_id.as_str()) else {
+                    return false;
+                };
+                for coedge_id in lp.coedges() {
+                    let Some(coedge) = self.coedges.get(coedge_id.as_str()) else {
+                        return false;
+                    };
+                    *uses.entry(coedge.edge.as_str()).or_default() += 1;
+                }
+            }
+        }
+        !uses.is_empty() && uses.values().all(|count| *count == 2)
     }
 
     fn emit_face(&mut self, face_id: &str) -> Option<Ref> {

@@ -193,3 +193,48 @@ fn a_transposed_full_turn_is_written_as_a_surface_of_revolution() {
         assert!(omits_an_unknown_surface_face(&report));
     }
 }
+
+#[test]
+fn a_sheet_body_writes_a_shell_that_meets_every_edge_twice_as_closed() {
+    use cadmpeg_ir::topology::{BodyKind, Shell};
+    let write = |ir: &cadmpeg_ir::document::CadIr| {
+        let mut bytes = Vec::new();
+        super::write_step(
+            ir,
+            &mut bytes,
+            crate::StepSchema::Ap214,
+            &crate::StepWriteOptions::default(),
+        )
+        .unwrap();
+        String::from_utf8(bytes).unwrap()
+    };
+
+    let mut closed = cadmpeg_ir::examples::unit_cube().unwrap();
+    closed.model.bodies[0].kind = BodyKind::Sheet;
+    let text = write(&closed);
+    assert!(text.contains("SHELL_BASED_SURFACE_MODEL"));
+    assert!(text.contains("CLOSED_SHELL"));
+    assert!(!text.contains("OPEN_SHELL"));
+    assert!(!text.contains("MANIFOLD_SOLID_BREP"));
+    let decoded = crate::StepCodec::default()
+        .decode(
+            &mut Cursor::new(text.into_bytes()),
+            &DecodeOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(decoded.ir().model.bodies.len(), 1);
+    assert_eq!(decoded.ir().model.bodies[0].kind, BodyKind::Sheet);
+
+    let mut open = cadmpeg_ir::examples::unit_cube().unwrap();
+    open.model.bodies[0].kind = BodyKind::Sheet;
+    let first_face = open.model.shells[0].faces()[0].clone();
+    let (id, region) = (
+        open.model.shells[0].id.clone(),
+        open.model.shells[0].region.clone(),
+    );
+    open.model.shells[0] =
+        Shell::new(id, region, vec![first_face], Vec::new(), Vec::new()).unwrap();
+    let text = write(&open);
+    assert!(text.contains("OPEN_SHELL"));
+    assert!(!text.contains("CLOSED_SHELL"));
+}
