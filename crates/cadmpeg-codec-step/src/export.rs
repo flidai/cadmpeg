@@ -2918,6 +2918,54 @@ impl<'a> Builder<'a> {
                     &format!("'',{directrix},{vector}"),
                 ))
             }
+            // A bounded extrusion is the STEP linear extrusion: the face
+            // trims bound it. A solved carrier that the writer can emit stays
+            // the carrier, so a patch with its own extent is not widened.
+            ProceduralSurfaceDefinition::Extrusion(definition_payload) => {
+                if solved.is_some_and(geometry::surface_is_supported) {
+                    return None;
+                }
+                let direction = cadmpeg_ir::units::DirectionAboveEpsilon::new(
+                    definition_payload.direction().get(),
+                )?;
+                let directrix = self.emit_curve(definition_payload.directrix().as_str())?;
+                let direction_ref = geometry::direction(&mut self.emitter, direction);
+                let vector = self.emitter.emit(
+                    "VECTOR",
+                    &format!("'',{direction_ref},{}", self.emitter.real(direction.norm())),
+                );
+                Some(self.emitter.emit(
+                    "SURFACE_OF_LINEAR_EXTRUSION",
+                    &format!("'',{directrix},{vector}"),
+                ))
+            }
+            // A transposed full turn has the chart of a STEP surface of
+            // revolution: U is the angle and V the directrix parameter.
+            ProceduralSurfaceDefinition::Revolution(definition_payload) => {
+                let [start, end] = definition_payload.angular_interval().endpoints();
+                if solved.is_some_and(geometry::surface_is_supported)
+                    || !*definition_payload.transposed()
+                    || definition_payload.angular_parameter_interval().is_some()
+                    || start != 0.0
+                    || end != std::f64::consts::TAU
+                {
+                    return None;
+                }
+                let directrix = self.emit_curve(definition_payload.directrix().as_str())?;
+                let origin =
+                    geometry::point(&mut self.emitter, definition_payload.axis_origin().get());
+                let direction = geometry::direction(
+                    &mut self.emitter,
+                    definition_payload.axis_direction().into(),
+                );
+                let axis = self
+                    .emitter
+                    .emit("AXIS1_PLACEMENT", &format!("'',{origin},{direction}"));
+                Some(
+                    self.emitter
+                        .emit("SURFACE_OF_REVOLUTION", &format!("'',{directrix},{axis}")),
+                )
+            }
             ProceduralSurfaceDefinition::AxisRevolution(definition_payload) => {
                 let directrix = self.emit_curve(definition_payload.directrix().as_str())?;
                 let origin =
