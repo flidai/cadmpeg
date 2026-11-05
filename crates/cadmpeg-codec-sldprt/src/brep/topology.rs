@@ -120,6 +120,9 @@ pub(crate) struct Point {
     pub(crate) offset: usize,
 }
 
+/// Marker of a vertex coedge: the single coedge of an isolated-vertex loop.
+const VERTEX_COEDGE_MARKER: u8 = 0x3f;
+
 fn parse_sense(marker: u8) -> Option<Sense> {
     match marker {
         0x2b => Some(Sense::Forward),
@@ -342,6 +345,19 @@ fn parse_coedge_candidates(buf: &[u8], off: usize) -> Vec<Coedge> {
     out
 }
 
+/// Vertex coedge `00 11`: the coedge of an isolated-vertex loop. It has the
+/// coedge layout, the marker [`VERTEX_COEDGE_MARKER`], and a null twin and edge
+/// reference. Returns the attribute and the owning loop attribute.
+fn parse_vertex_coedge(buf: &[u8], off: usize) -> Option<(u16, u16)> {
+    let p = body_start(buf, off, 0x11)?;
+    if p + 21 > buf.len() || buf.get(p + 20) != Some(&VERTEX_COEDGE_MARKER) {
+        return None;
+    }
+    let attr = attr_at(buf, p)?;
+    let refs = refs_be::<9>(buf, p + 2)?;
+    (refs[1] > 1 && refs[5] <= 1 && refs[6] <= 1).then_some((attr, refs[1]))
+}
+
 /// Vertex-use `00 12`: 24-byte body, magic at body+16, `refs[5]` at body+6.
 /// `refs[4]` = world-point attr.
 fn parse_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
@@ -502,9 +518,30 @@ pub(crate) struct Tables {
     coedges: HashMap<u16, Coedge>,
     vertex_uses: HashMap<u16, VertexUse>,
     points: HashMap<u16, Point>,
+    /// Loop heads whose only coedge is a vertex coedge. They keep the sibling
+    /// chain of the face intact and have no ring.
+    vertex_loops: HashMap<u16, Loop>,
 }
 
 impl Tables {
+    pub(super) fn vertex_loops(&self) -> &HashMap<u16, Loop> {
+        &self.vertex_loops
+    }
+
+    fn insert_vertex_loop(
+        &mut self,
+        ctx: &DecodeContext<'_>,
+        record: Loop,
+    ) -> Result<(), CodecError> {
+        ctx.insert_hash_map(
+            &mut self.vertex_loops,
+            record.attr,
+            record,
+            "index Parasolid topology vertex loops",
+        )
+        .map(|_previous| ())
+    }
+
     pub(super) fn bridges(&self) -> &HashMap<u16, Bridge> {
         &self.bridges
     }
@@ -638,6 +675,12 @@ impl Tables {
             &mut self.loops,
             deltas.loops,
             "merge Parasolid topology loops",
+        )?;
+        merge_missing(
+            ctx,
+            &mut self.vertex_loops,
+            deltas.vertex_loops,
+            "merge Parasolid topology vertex loops",
         )?;
         merge_missing(
             ctx,
@@ -1043,6 +1086,7 @@ fn scan_with_point_framing(
     let mut loop_candidates = Vec::new();
     let mut edge_candidates = CandidateMap::new();
     let mut coedge_candidates = CandidateMap::new();
+    let mut vertex_coedges = HashMap::<u16, u16>::new();
     let mut toleranced_vertex_uses = Vec::new();
     let mut toleranced_edge_uses = Vec::new();
     let scan_len = u64::try_from(body.len()).map_err(|_| {
@@ -1091,11 +1135,21 @@ fn scan_with_point_framing(
                     insert_candidates(ctx, &mut edge_candidates, candidates)?;
                 }
             }
-            0x11 => insert_candidates(
-                ctx,
-                &mut coedge_candidates,
-                parse_coedge_candidates(body, i),
-            )?,
+            0x11 => {
+                let candidates = parse_coedge_candidates(body, i);
+                if candidates.is_empty() {
+                    if let Some((attr, owner)) = parse_vertex_coedge(body, i) {
+                        ctx.insert_hash_map(
+                            &mut vertex_coedges,
+                            attr,
+                            owner,
+                            "index Parasolid vertex coedges",
+                        )?;
+                    }
+                } else {
+                    insert_candidates(ctx, &mut coedge_candidates, candidates)?;
+                }
+            }
             0x12 => {
                 if let Some(record) = parse_vertex_use(body, i) {
                     t.insert_vertex_use(ctx, record)?;
@@ -1155,12 +1209,16 @@ fn scan_with_point_framing(
     for record in loop_candidates {
         let owner = record.refs[2];
         let first = record.refs[1];
-        if t.bridges.contains_key(&owner)
-            && t.coedges
-                .get(&first)
-                .is_some_and(|coedge| coedge.refs[1] == record.attr)
+        if !t.bridges.contains_key(&owner) {
+            continue;
+        }
+        if t.coedges
+            .get(&first)
+            .is_some_and(|coedge| coedge.refs[1] == record.attr)
         {
             t.insert_loop(ctx, record)?;
+        } else if vertex_coedges.get(&first) == Some(&record.attr) {
+            t.insert_vertex_loop(ctx, record)?;
         }
     }
     Ok(t)
@@ -1672,6 +1730,16 @@ mod tests {
         bytes
     }
 
+    fn loop_record(attr: u16, first: u16, bridge: u16) -> Vec<u8> {
+        let mut bytes = vec![0, 0x0f];
+        bytes.extend(attr.to_be_bytes());
+        bytes.extend(0_u32.to_be_bytes());
+        for reference in [0, first, bridge, 0] {
+            bytes.extend(u16::to_be_bytes(reference));
+        }
+        bytes
+    }
+
     #[test]
     fn toleranced_vertex_use_is_admitted_when_a_coedge_starts_at_it() {
         let tolerance = TOLERANCE_M.to_be_bytes();
@@ -1726,4 +1794,22 @@ mod tests {
         assert!(scan_bytes(&bytes).edge_uses.contains_key(&90));
     }
 
+    #[test]
+    fn vertex_loop_is_kept_apart_from_the_ring_loops() {
+        let mut bytes = topology_bridge(10, 20);
+        bytes.extend(loop_record(20, 30, 10));
+        bytes.extend(coedge_record(30, 20, 50, 0, 0x3f));
+        bytes.extend([0; 16]);
+        let tables = scan_bytes(&bytes);
+        assert!(tables.vertex_loops.contains_key(&20));
+        assert!(!tables.loops.contains_key(&20));
+        assert!(tables.coedges.is_empty());
+
+        // A coedge that names an edge is not a vertex coedge.
+        let mut bytes = topology_bridge(10, 20);
+        bytes.extend(loop_record(20, 30, 10));
+        bytes.extend(coedge_record(30, 20, 50, 90, 0x3f));
+        bytes.extend([0; 16]);
+        assert!(scan_bytes(&bytes).vertex_loops.is_empty());
+    }
 }

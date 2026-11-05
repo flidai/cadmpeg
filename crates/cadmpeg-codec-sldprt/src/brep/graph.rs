@@ -1132,7 +1132,11 @@ fn walk_face(
         if !ctx.insert_hash_set(&mut loop_guard, loop_ref, "walk Parasolid face loops")? {
             break;
         }
-        let Some(lp) = t.loops().get(&loop_ref) else {
+        let Some(lp) = t
+            .loops()
+            .get(&loop_ref)
+            .or_else(|| t.vertex_loops().get(&loop_ref))
+        else {
             break;
         };
         let owner_bridge = lp.refs[2];
