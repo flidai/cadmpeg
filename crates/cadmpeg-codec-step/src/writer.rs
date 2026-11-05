@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::transform::Transform;
 
+use crate::options::StepSchema;
+
 pub(crate) mod target;
 
 /// A STEP instance name such as `#42`.
@@ -42,15 +44,42 @@ pub(crate) struct Emitter {
     /// The first value the emitter could not state. The emitted lines are
     /// not handed out once one is recorded.
     refusal: Cell<Option<Refusal>>,
+    /// Whether a transformation operator states the `name` and `description`
+    /// of `functionally_defined_transformation` after its own `name`.
+    functionally_defined: bool,
 }
 
 impl Emitter {
+    /// An emitter for a schema whose transformation operators are
+    /// functionally defined transformations.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::for_schema(StepSchema::Ap214)
+    }
+
+    /// An emitter that states each schema entity with the attribute list of
+    /// `schema`.
+    pub(crate) fn for_schema(schema: StepSchema) -> Self {
         Emitter {
             lines: Vec::new(),
             counts: BTreeMap::new(),
             interned: HashMap::new(),
             refusal: Cell::new(None),
+            functionally_defined: schema.operator_is_functionally_defined(),
+        }
+    }
+
+    /// The attributes that precede `axis1` in a
+    /// `CARTESIAN_TRANSFORMATION_OPERATOR`: the `representation_item` name and,
+    /// when the operator is a functionally defined transformation, that
+    /// supertype's `name` and `description`, both empty. The description is
+    /// optional in the schema, but OCCT reads an omitted one as an invalid
+    /// string.
+    pub(crate) fn operator_prefix(&self) -> &'static str {
+        if self.functionally_defined {
+            "'','',''"
+        } else {
+            "''"
         }
     }
 

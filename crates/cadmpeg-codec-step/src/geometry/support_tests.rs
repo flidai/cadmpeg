@@ -339,3 +339,64 @@ fn a_transformation_operator_refuses_a_zero_column() {
         [0.0, 0.0, 0.0, 0.0],
     ]);
 }
+
+/// The number of top-level parameters in the record of one STEP line.
+fn parameter_count(line: &str) -> usize {
+    let open = line
+        .find('(')
+        .expect("an entity record has a parameter list");
+    let mut depth = 0_usize;
+    let mut count = 1;
+    for c in line[open..].chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 1 => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
+/// The operator records written for `schema`.
+fn operator_records(schema: crate::options::StepSchema) -> Vec<String> {
+    let mut emitter = crate::writer::Emitter::for_schema(schema);
+    let rows = [
+        [0.0, -2.0, 0.0, 10.0],
+        [2.0, 0.0, 0.0, 20.0],
+        [0.0, 0.0, 2.0, 30.0],
+    ];
+    super::transformation_operator(&mut emitter, Transform::affine(rows).expect("affine"));
+    let planar = cadmpeg_ir::transform::Transform2::affine([[0.0, -2.0, 5.0], [2.0, 0.0, 6.0]])
+        .expect("affine");
+    super::transformation_operator_2d(&mut emitter, planar).expect("a similarity");
+    emitter
+        .into_lines()
+        .expect("finite similarity")
+        .into_iter()
+        .filter(|line| line.contains("CARTESIAN_TRANSFORMATION_OPERATOR"))
+        .collect()
+}
+
+/// ISO 10303-42 `cartesian_transformation_operator` is also a
+/// `functionally_defined_transformation` in every schema after AP203 edition
+/// 1: `name`, `name`, `description`, `axis1`, `axis2`, `local_origin`, `scale`
+/// and, in three dimensions, `axis3`.
+#[test]
+fn a_functionally_defined_operator_states_the_transformation_name_and_description() {
+    use crate::options::StepSchema;
+    for schema in StepSchema::ALL {
+        let records = operator_records(schema);
+        assert_eq!(records.len(), 2, "{schema:?}");
+        let (three, two) = records.split_at(1);
+        if schema == StepSchema::Ap203Edition1 {
+            assert_eq!(parameter_count(&three[0]), 6, "{schema:?} {three:?}");
+            assert_eq!(parameter_count(&two[0]), 5, "{schema:?} {two:?}");
+        } else {
+            assert_eq!(parameter_count(&three[0]), 8, "{schema:?} {three:?}");
+            assert_eq!(parameter_count(&two[0]), 7, "{schema:?} {two:?}");
+            assert!(three[0].contains("_3D('','','',#"), "{three:?}");
+            assert!(two[0].contains("_2D('','','',#"), "{two:?}");
+        }
+    }
+}

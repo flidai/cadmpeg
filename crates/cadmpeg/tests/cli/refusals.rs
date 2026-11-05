@@ -167,6 +167,46 @@ fn convert_rejects_empty_native_geometry_unless_allowed() {
 }
 
 #[test]
+fn convert_refuses_a_step_without_faces_unless_allowed() {
+    let dir = tempdir().unwrap();
+    let mut ir = unit_cube().expect("unit cube fixture is admitted");
+    ir.model = cadmpeg_ir::document::Model::default();
+    let input = fixture(dir.path(), "faceless.json", &ir);
+    let report = dir.path().join("report.json");
+    Command::cargo_bin("cadmpeg")
+        .unwrap()
+        .args([
+            "convert",
+            input.to_str().unwrap(),
+            "-f",
+            "step",
+            "--report",
+            report.to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("no face").and(predicate::str::contains("--allow-empty")));
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(value["status"], "refused");
+    assert_eq!(value["refusal"]["stage"], "plan");
+    assert_eq!(value["refusal"]["code"], "no_faces");
+    assert!(value["export"]["census"]["counts"].is_object());
+    Command::cargo_bin("cadmpeg")
+        .unwrap()
+        .args([
+            "convert",
+            input.to_str().unwrap(),
+            "-f",
+            "step",
+            "--allow-empty",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("ISO-10303-21"));
+}
+
+#[test]
 fn convert_rejects_container_only_geometry_unless_allowed() {
     let dir = tempdir().unwrap();
     let input = geometryless_creo(dir.path(), "empty.prt");

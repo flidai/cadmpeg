@@ -313,6 +313,7 @@ pub(crate) struct PreparedConversion {
     selection: TargetSelection,
     destination: ResolvedDestination,
     loss_policy: LossPolicy,
+    allow_empty: bool,
 }
 
 /// Loads and validates a conversion without planning or writing it.
@@ -372,6 +373,7 @@ pub(crate) fn prepare(
         selection: target.selection,
         destination,
         loss_policy: policy.losses,
+        allow_empty: policy.allow_empty,
     })
 }
 
@@ -395,6 +397,26 @@ impl PreparedConversion {
                 ));
             }
         };
+        let format = self.selection.format;
+        let face_kinds = format.face_record_kinds();
+        if !self.allow_empty
+            && !face_kinds.is_empty()
+            && !face_kinds.iter().any(|kind| {
+                plan.report()
+                    .census
+                    .counts
+                    .get(*kind)
+                    .is_some_and(|count| *count > 0)
+            })
+        {
+            return Err(ConversionRefusal::NoFaces {
+                format,
+                decode_report: self.document.decode_report().cloned(),
+                validation: self.validation,
+                export_report: plan.report().clone(),
+            }
+            .into());
+        }
         if self.loss_policy.rejects_export() && !plan.report().losses.is_empty() {
             return Err(ConversionRefusal::ExportLossRejected {
                 decode_report: self.document.decode_report().cloned(),

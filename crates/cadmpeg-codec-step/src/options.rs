@@ -156,6 +156,14 @@ impl StepSchema {
         self.supports_tessellation()
     }
 
+    /// Whether `cartesian_transformation_operator` is also a
+    /// `functionally_defined_transformation` in this schema, which puts that
+    /// supertype's `name` and `description` before the operator's own
+    /// attributes. AP203 edition 1 predates the supertype.
+    pub(crate) const fn operator_is_functionally_defined(self) -> bool {
+        !matches!(self, Self::Ap203Edition1)
+    }
+
     pub(crate) const fn supports_visibility(self) -> bool {
         !matches!(self, Self::Ap203Edition1)
     }
