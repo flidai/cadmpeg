@@ -4,13 +4,21 @@
 use std::io::Cursor;
 
 use cadmpeg_ir::codec::{Codec, DecodeOptions};
+use cadmpeg_ir::geometry::SolvedCurveGeometry;
 
-use super::super::{tokenize, ParameterDefect, Token, TokenValue, TokenizeFailure};
+use super::super::{
+    printed_mantissa_digits, tokenize, ParameterDefect, Token, TokenValue, TokenizeFailure,
+};
 use crate::global::{GlobalTable, NumericLimits};
 use crate::loss::IgesLossCode;
-use crate::test_support::test_curves_and_surfaces::point_file_with_global;
+use crate::test_support::test_curves_and_surfaces::{
+    point_file_with_global, transformed_circular_arc_file,
+};
 use crate::test_support::test_owned::{owned_test_file_with_raw_parameters, OwnedTestEntity};
 use crate::IgesCodec;
+
+/// Round-off allowance for a unit radius after frame canonicalization.
+const EPS_RADIUS_COMPARISON: f64 = 1.0e-12;
 
 #[test]
 fn hollerith_token_refuses_retained_limit_before_copy() {
@@ -360,4 +368,74 @@ fn a_split_numeric_parameter_is_quarantined_in_the_decode() {
     assert!(result.report().losses[0]
         .message
         .contains("numeric field or its delimiter crosses a card boundary"));
+}
+
+#[test]
+fn printed_mantissa_digits_count_significant_digits_before_the_exponent() {
+    for (token, digits) in [
+        (&b"7.071790238004D-1"[..], 13),
+        (b"-7.070345311911D-1", 13),
+        (b"0.000123456789012E+3", 12),
+        (b"-4.25D0", 3),
+        (b"0D0", 0),
+        (b"0.0", 0),
+        (b"100", 3),
+        (b"1.5-3", 2),
+        (b"  .6000001D0", 7),
+    ] {
+        assert_eq!(
+            printed_mantissa_digits(token),
+            digits,
+            "{}",
+            String::from_utf8_lossy(token)
+        );
+    }
+}
+
+#[test]
+fn decode_bounds_a_transform_by_the_digits_its_writer_printed() {
+    // The Global record declares 15 double-precision digits. The writer prints
+    // 10 and rounds there, so the rotation is orthonormal only to that digit.
+    let result = IgesCodec
+        .decode(
+            &mut Cursor::new(transformed_circular_arc_file(
+                b"124,.7071067812D0,-.7071067812D0,0,0,.7071067812D0,.7071067812D0,0,0,0,0,1,0;",
+                b"100,0,0,0,1,0,0,1;",
+            )),
+            &DecodeOptions::default(),
+        )
+        .unwrap();
+
+    let Some(SolvedCurveGeometry::Circle(circle_curve)) =
+        result.ir().model.curves[0].geometry.solved()
+    else {
+        panic!("expected a circle carrier");
+    };
+    assert!((circle_curve.radius().get() - 1.0).abs() < EPS_RADIUS_COMPARISON);
+    assert!(
+        result.report().losses.is_empty(),
+        "{:#?}",
+        result.report().losses
+    );
+}
+
+#[test]
+fn decode_rejects_a_transform_beyond_the_digits_its_writer_printed() {
+    // The same rotation with a 1e-6 error in one coefficient exceeds the
+    // 10-digit print resolution.
+    let result = IgesCodec
+        .decode(
+            &mut Cursor::new(transformed_circular_arc_file(
+                b"124,.7071067812D0,-.7071067812D0,0,0,.7071077812D0,.7071067812D0,0,0,0,0,1,0;",
+                b"100,0,0,0,1,0,0,1;",
+            )),
+            &DecodeOptions::default(),
+        )
+        .unwrap();
+
+    assert!(result.ir().model.curves.is_empty());
+    assert!(result.report().losses.iter().any(|loss| {
+        loss.message
+            .contains("not orthonormal within its declared numeric precision")
+    }));
 }

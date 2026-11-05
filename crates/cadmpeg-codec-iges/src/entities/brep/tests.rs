@@ -718,7 +718,7 @@ fn decode_rejects_closed_shell_with_inconsistent_radial_sense() {
         .all(|body| body.id.as_str() != "iges:model:body#D55"));
     assert!(result.report().losses.iter().any(|loss| {
         loss.message
-            == "IGES entity type 186 form 0 geometry was not projected: closed shell does not use every edge exactly twice with opposite senses"
+            == "IGES entity type 186 form 0 geometry was not projected: closed shell does not use every edge in equal numbers of both senses"
     }));
     assert_eq!(
         result.ir().native.namespace("iges").unwrap().arenas()["entities"].len(),
@@ -951,4 +951,17 @@ fn decode_preserves_a_three_use_non_manifold_radial_ring() {
     let validation = cadmpeg_ir::validate_neutral(result.ir(), Vec::new())
         .expect("resource allocation did not fail");
     assert!(validation.is_ok(), "{:#?}", validation.findings);
+}
+
+#[test]
+fn a_closed_shell_ring_pairs_every_use_with_an_opposite_use() {
+    use super::radial_ring_is_balanced;
+
+    assert!(radial_ring_is_balanced(1, 1));
+    // Two solids that touch along an edge use it four times.
+    assert!(radial_ring_is_balanced(2, 2));
+    assert!(!radial_ring_is_balanced(2, 0));
+    assert!(!radial_ring_is_balanced(0, 2));
+    assert!(!radial_ring_is_balanced(2, 1));
+    assert!(!radial_ring_is_balanced(0, 0));
 }

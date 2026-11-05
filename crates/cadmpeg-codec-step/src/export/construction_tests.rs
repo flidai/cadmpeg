@@ -238,3 +238,45 @@ fn a_sheet_body_writes_a_shell_that_meets_every_edge_twice_as_closed() {
     assert!(text.contains("OPEN_SHELL"));
     assert!(!text.contains("CLOSED_SHELL"));
 }
+
+#[test]
+fn a_solid_that_loses_a_face_is_written_as_a_surface_model() {
+    let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    ir.model.surfaces[0].geometry =
+        SurfaceGeometry::Solved(SolvedSurfaceGeometry::Unknown { record: None });
+    let mut bytes = Vec::new();
+    let report = super::write_step(
+        &ir,
+        &mut bytes,
+        crate::StepSchema::Ap214,
+        &crate::StepWriteOptions::default(),
+    )
+    .unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert_eq!(text.matches("ADVANCED_FACE").count(), 5);
+    assert!(text.contains("SHELL_BASED_SURFACE_MODEL"));
+    assert!(text.contains("OPEN_SHELL"));
+    assert!(!text.contains("MANIFOLD_SOLID_BREP"));
+    assert!(!text.contains("CLOSED_SHELL"));
+    assert!(report
+        .losses
+        .iter()
+        .any(|loss| loss.code == crate::loss::StepLossCode::UnknownSurfaceFaceOmitted.kind()));
+}
+
+#[test]
+fn a_solid_that_keeps_every_face_is_written_as_a_solid() {
+    let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let mut bytes = Vec::new();
+    super::write_step(
+        &ir,
+        &mut bytes,
+        crate::StepSchema::Ap214,
+        &crate::StepWriteOptions::default(),
+    )
+    .unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("MANIFOLD_SOLID_BREP"));
+    assert!(text.contains("CLOSED_SHELL"));
+    assert!(!text.contains("OPEN_SHELL"));
+}

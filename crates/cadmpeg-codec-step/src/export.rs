@@ -1639,12 +1639,12 @@ impl<'a> Builder<'a> {
                 }
                 continue;
             }
-            let closed = body_kind == BodyKind::Solid;
+            let solid_body = body_kind == BodyKind::Solid;
             let Some((outer_id, void_ids)) = region.shells.split_first() else {
                 self.empty_regions.insert(region.id.as_str().to_owned());
                 continue;
             };
-            let Some(outer) = self.emit_shell(outer_id.as_str(), closed) else {
+            let Some((outer, outer_closed)) = self.emit_shell(outer_id.as_str(), solid_body) else {
                 self.topology_relation_loss(
                     format!("region:{}:outer-shell:{}", region.id, outer_id),
                     StepLossCode::RegionNoWritableOuterShell,
@@ -1652,9 +1652,13 @@ impl<'a> Builder<'a> {
                 );
                 continue;
             };
+            // Only a solid body is promoted to a solid; a closed shell of a sheet
+            // body stays in a surface model.
+            let mut closed = solid_body && outer_closed;
             let mut voids = Vec::new();
             for sid in void_ids {
-                if let Some(void) = self.emit_shell(sid.as_str(), closed) {
+                if let Some((void, void_closed)) = self.emit_shell(sid.as_str(), solid_body) {
+                    closed &= void_closed;
                     voids.push(void);
                 } else {
                     self.topology_relation_loss(
@@ -2357,7 +2361,10 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn emit_shell(&mut self, shell_id: &str, closed: bool) -> Option<Ref> {
+    /// Write one shell and report whether it was written as closed. A shell
+    /// that lost a face to an unwritable carrier or boundary no longer
+    /// encloses volume, so a requested closed shell is written open.
+    fn emit_shell(&mut self, shell_id: &str, closed: bool) -> Option<(Ref, bool)> {
         let shell = self.shells.get(shell_id).copied()?;
         let face_ids: Vec<String> = shell
             .faces()
@@ -2387,14 +2394,17 @@ impl<'a> Builder<'a> {
         if face_refs.is_empty() {
             return None;
         }
-        // A sheet body can hold a shell whose faces meet every edge twice. The
-        // entity states that closure, whatever the body kind says of volume.
-        let closed = closed
-            || (face_refs.len() == face_ids.len() && self.faces_close_every_edge_twice(&face_ids));
-        Some(self.emitter.emit(
+        // A shell closes when every face was written and either the body is a
+        // solid or the written coedges use each edge exactly twice. A sheet body
+        // can hold such a shell; the entity states the closure whatever the body
+        // kind says of volume. A shell that lost a face closes in neither case.
+        let closed = face_refs.len() == face_ids.len()
+            && (closed || self.faces_close_every_edge_twice(&face_ids));
+        let shell = self.emitter.emit(
             if closed { "CLOSED_SHELL" } else { "OPEN_SHELL" },
             &format!("'',{}", refs(&face_refs)),
-        ))
+        );
+        Some((shell, closed))
     }
 
     /// Whether the coedges of `face_ids` use every edge exactly twice.

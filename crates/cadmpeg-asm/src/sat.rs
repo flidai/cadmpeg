@@ -451,6 +451,8 @@ const FIRST_UNITS_LINE_SAVE_FORMAT: u32 = 200;
 
 /// The first save format whose major version selects the ASM branch.
 const FIRST_ASM_SAVE_FORMAT: u32 = 10_000;
+/// Stream unit that makes a stored position equal its millimetre value.
+const MILLIMETRES_PER_MILLIMETRE: f64 = 1.0;
 
 fn push_diagnostic(
     ctx: &DecodeContext<'_>,
@@ -1271,6 +1273,17 @@ struct Cur<'a, 'c, 'p> {
     ctx: &'c DecodeContext<'p>,
 }
 
+/// How a triple of stream numbers converts into the centimetre convention.
+#[derive(Clone, Copy)]
+enum Conversion {
+    /// A model-space position.
+    Position,
+    /// A vector whose magnitude is a model-space length.
+    Length,
+    /// A dimensionless unit direction.
+    None,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TypeFailure {
     UnrepresentableLength,
@@ -1368,7 +1381,22 @@ impl<'a> Cur<'a, '_, '_> {
     }
 
     fn length(&mut self, value: f64) -> Option<f64> {
-        match length_cm(value, self.scale) {
+        self.convert_length(value, self.scale)
+    }
+
+    /// Convert a model-space position. An ASM-branch stream stores positions
+    /// in millimetres whatever its `scale`; every other length takes `scale`.
+    fn position(&mut self, value: f64) -> Option<f64> {
+        let scale = if self.save_format >= FIRST_ASM_SAVE_FORMAT {
+            MILLIMETRES_PER_MILLIMETRE
+        } else {
+            self.scale
+        };
+        self.convert_length(value, scale)
+    }
+
+    fn convert_length(&mut self, value: f64, scale: f64) -> Option<f64> {
+        match length_cm(value, scale) {
             Some(converted) => Some(converted),
             None => {
                 self.failure = Some(TypeFailure::UnrepresentableLength);
@@ -1472,7 +1500,7 @@ impl<'a> Cur<'a, '_, '_> {
         }
     }
 
-    fn triple(&mut self, scale: bool) -> Option<[f64; 3]> {
+    fn triple(&mut self, conversion: Conversion) -> Option<[f64; 3]> {
         let mark = self.pos;
         let mut values = [0.0; 3];
         for value in &mut values {
@@ -1480,7 +1508,11 @@ impl<'a> Cur<'a, '_, '_> {
                 self.pos = mark;
                 return None;
             };
-            *value = if scale { self.length(number)? } else { number };
+            *value = match conversion {
+                Conversion::Position => self.position(number)?,
+                Conversion::Length => self.length(number)?,
+                Conversion::None => number,
+            };
         }
         Some(values)
     }
@@ -1602,17 +1634,17 @@ fn take_slot(cur: &mut Cur<'_, '_, '_>, slot: Slot, out: &mut Vec<Token>) -> Opt
             _ => None,
         },
         Slot::P => {
-            let triple = cur.triple(true)?;
+            let triple = cur.triple(Conversion::Position)?;
             push_token!(cur, out, Token::Position(triple));
             Some(())
         }
         Slot::VLen => {
-            let triple = cur.triple(true)?;
+            let triple = cur.triple(Conversion::Length)?;
             push_token!(cur, out, Token::Vector3(triple));
             Some(())
         }
         Slot::VUnit => {
-            let triple = cur.triple(false)?;
+            let triple = cur.triple(Conversion::None)?;
             push_token!(cur, out, Token::Vector3(triple));
             Some(())
         }
@@ -1778,7 +1810,7 @@ fn bs_curve_block(cur: &mut Cur<'_, '_, '_>, kind: BsKind, out: &mut Vec<Token>)
             push_token!(
                 cur,
                 out,
-                Token::Double(if scaled { cur.length(value)? } else { value })
+                Token::Double(if scaled { cur.position(value)? } else { value })
             );
         }
     }
@@ -1833,7 +1865,7 @@ fn bs_surface_block(cur: &mut Cur<'_, '_, '_>, out: &mut Vec<Token>) -> Option<(
                 cur,
                 out,
                 Token::Double(if coordinate < 3 {
-                    cur.length(value)?
+                    cur.position(value)?
                 } else {
                     value
                 })
@@ -3294,6 +3326,50 @@ mod tests {
         assert!(approx(p[0], 18.0) && approx(p[1], 3.0) && approx(p[2], 2.0));
     }
 
+    /// An `ellipse-curve` record of a stream with the given first header line
+    /// and a length unit of ten millimetres.
+    fn ellipse_stream(first_line: &str, terminator: &str) -> Vec<u8> {
+        format!(
+            "{first_line} \n16 Autodesk Neutron 21 ASM 232.4.0.65535 OSX 24 \
+             Fri Jul 17 14:46:47 2026 \n10 1e-06 1.0e-10 \n\
+             ellipse-curve $-1 -1 $-1 0 0 100 0 0 -1 -0.5 0 0 1 I I #\n{terminator} \n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn asm_branch_positions_are_millimetres_whatever_the_unit_scale() {
+        // The centre is 100 mm. The major axis takes the 10 mm unit, so it is
+        // 0.5 unit or 5 mm long. Both are in centimetres after conversion.
+        let stream = parse(&ellipse_stream("23200 0 2 2", "End-of-ASM-data")).expect("ASM stream");
+        let tokens = &stream.records[0].tokens;
+        let Some(Token::Position(centre)) = tokens.iter().find(|t| matches!(t, Token::Position(_)))
+        else {
+            panic!("position token expected");
+        };
+        assert!(approx(centre[2], 10.0));
+        let axes: Vec<_> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                Token::Vector3(v) => Some(*v),
+                _ => None,
+            })
+            .collect();
+        assert!(approx(axes[0][2], -1.0));
+        assert!(approx(axes[1][0], -0.5));
+    }
+
+    #[test]
+    fn acis_branch_positions_take_the_unit_scale() {
+        let stream = parse(&ellipse_stream("700 0 2 2", "End-of-ACIS-data")).expect("ACIS stream");
+        let tokens = &stream.records[0].tokens;
+        let Some(Token::Position(centre)) = tokens.iter().find(|t| matches!(t, Token::Position(_)))
+        else {
+            panic!("position token expected");
+        };
+        assert!(approx(centre[2], 100.0));
+    }
+
     #[test]
     fn range_bound_words_and_logical_words_type_by_slot_class() {
         // `F` in a straight-curve range slot is a present bound: TRUE + value.
@@ -3419,8 +3495,12 @@ mod tests {
 
     #[test]
     fn positive_subnormal_scale_preserves_or_refuses_each_point_coordinate() {
+        // The ACIS branch applies the stream unit to a position; the ASM
+        // branch reads a position as millimetres.
         let source = String::from_utf8(asm_stream("point $-1 -1 $-1 10 0 0 #\n"))
             .expect("ASCII stream")
+            .replacen("23200 0 2 2", "700 0 2 2", 1)
+            .replacen("End-of-ASM-data", "End-of-ACIS-data", 1)
             .replacen("1 1e-06 1.0e-10", "5e-324 0 0", 1);
         let stream = parse(source.as_bytes()).expect("representable subnormal coordinate");
         assert_eq!(stream.header.scale().get(), f64::from_bits(1));
