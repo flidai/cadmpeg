@@ -595,6 +595,30 @@ pub(crate) mod paramesh_mesh_collection_prefix {
     pub(crate) const TEXTURE_TABLE_REFERENCE: usize = 27;
 }
 
+/// Byte offsets for the `paramesh_mesh_collection_extended_prefix` record.
+///
+/// Spec §3.1. Record length 42 B.
+///
+/// ```text
+/// Offsets are relative to the mesh-collection indexed header. The nested CommonData record starts at the end of this prefix.
+/// ```
+pub(crate) mod paramesh_mesh_collection_extended_prefix {
+    /// Record length in bytes. Spec §3.1.
+    pub(crate) const LEN: usize = 42;
+    /// Offset of `zero_run_9` (`bytes[9]`). Spec §3.1.
+    pub(crate) const ZERO_RUN_9: usize = 11;
+    /// Offset of `form_marker` (`u8`). Spec §3.1.
+    pub(crate) const FORM_MARKER: usize = 20;
+    /// Offset of `zero_count` (`u32`, little-endian). Spec §3.1.
+    pub(crate) const ZERO_COUNT: usize = 21;
+    /// Offset of `body_count` (`u32`, little-endian). Spec §3.1.
+    pub(crate) const BODY_COUNT: usize = 25;
+    /// Offset of `constant_01_01` (`bytes[2]`). Spec §3.1.
+    pub(crate) const CONSTANT_01_01: usize = 29;
+    /// Offset of `texture_table_reference` (`bytes[11]`). Spec §3.1.
+    pub(crate) const TEXTURE_TABLE_REFERENCE: usize = 31;
+}
+
 /// Byte offsets for the `paramesh_mesh_collection_base_prefix` record.
 ///
 /// Spec §3.1. Record length 24 B.
