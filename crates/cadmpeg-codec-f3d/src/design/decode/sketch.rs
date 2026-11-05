@@ -451,13 +451,36 @@ pub(crate) fn decode_sketch_placements(
             })
             .map(|candidate| candidate.byte_offset)
             .min();
-        let mut matching_scopes = scopes.iter().filter(|scope| {
+        // A Sketch scope names its entity directly. A scope bound to this
+        // entity owns the placement; a scope bound to another entity never
+        // does. A scope with no entity binding is localized and belongs to the
+        // interval of the preceding sketch entity.
+        let mut bound_scopes = scopes.iter().filter(|scope| {
             design_feature_family(&scope.kind()) == Some(DesignFeatureFamily::Sketch)
                 && native_stream(&scope.id) == Some(stream)
-                && scope.byte_offset() > entity.byte_offset
-                && next_entity_offset.is_none_or(|end| scope.byte_offset() < end)
+                && scope
+                    .sketch_entity()
+                    .is_some_and(|binding| binding.entity_id == entity.entity_id)
         });
-        if let (Some(scope), None) = (matching_scopes.next(), matching_scopes.next()) {
+        let bound = (bound_scopes.next(), bound_scopes.next());
+        let owner = match bound {
+            (Some(scope), None) => Some(scope),
+            (Some(_), Some(_)) => None,
+            (None, _) => {
+                let mut localized = scopes.iter().filter(|scope| {
+                    design_feature_family(&scope.kind()) == Some(DesignFeatureFamily::Sketch)
+                        && native_stream(&scope.id) == Some(stream)
+                        && scope.sketch_entity().is_none()
+                        && scope.byte_offset() > entity.byte_offset
+                        && next_entity_offset.is_none_or(|end| scope.byte_offset() < end)
+                });
+                match (localized.next(), localized.next()) {
+                    (Some(scope), None) => Some(scope),
+                    _ => None,
+                }
+            }
+        };
+        if let Some(scope) = owner {
             placement.scope_record_index = Some(scope.record_index);
         }
         placement.id = design_record_id_charged(
@@ -2048,6 +2071,7 @@ fn decode_sketch_points_from_stream(
             ),
         );
     }
+    let mut legacy_records = None;
     let mut out = Vec::new();
     for frame in &frames {
         if !frame
@@ -2074,11 +2098,20 @@ fn decode_sketch_points_from_stream(
                 )
             })?;
         let (u, v) = (decoded.coordinates[0] * 10.0, decoded.coordinates[1] * 10.0);
-        if !point_target_has_guid(
+        let owned_by_container = point_target_has_guid(
             &types_by_entity,
             decoded.trailing_reference(),
             SKETCH_CONTAINER_TYPE_GUID,
-        ) {
+        ) || legacy_container_owns_point(
+            ctx,
+            bytes,
+            &frames_by_entity,
+            &types_by_entity,
+            &mut legacy_records,
+            decoded.trailing_reference(),
+            record_index,
+        )?;
+        if !owned_by_container {
             return Err(crate::design::text::malformed_design(
                 ctx,
                 format_args!(
@@ -3317,6 +3350,49 @@ fn decode_sketch_point_record(payload: &[u8], class_version: u32) -> Option<Deco
         paired_reference,
         coordinates,
     })
+}
+
+/// Whether a point's trailing reference names a legacy sketch container that
+/// owns the point. A legacy container is registered to an `MSketch` type other
+/// than the current container type, is followed by its same-index record, and
+/// either lists the point in its counted member run or has the localized form
+/// with no run.
+fn legacy_container_owns_point(
+    ctx: &DecodeContext<'_>,
+    bytes: &[u8],
+    frames_by_entity: &HashMap<u32, &crate::design::decode::meta::DesignPrimaryFrame<'_>>,
+    types_by_entity: &HashMap<u32, (&str, u32, &str)>,
+    records: &mut Option<IndexedRecordOffsets>,
+    target: Option<u32>,
+    point_record_index: u32,
+) -> Result<bool, CodecError> {
+    let Some(target) = target else {
+        return Ok(false);
+    };
+    if types_by_entity
+        .get(&target)
+        .is_none_or(|(_, _, module)| *module != DESIGN_MODULE_SKETCH)
+    {
+        return Ok(false);
+    }
+    let Some(frame) = frames_by_entity.get(&target) else {
+        return Ok(false);
+    };
+    if records.is_none() {
+        *records = Some(IndexedRecordOffsets::build(ctx, bytes)?);
+    }
+    let Some(records) = records.as_ref() else {
+        return Ok(false);
+    };
+    let Some(members) =
+        parse_legacy_sketch_container_members(ctx, bytes, frame.start, target, records)?
+    else {
+        return Ok(false);
+    };
+    Ok(members.is_empty()
+        || members
+            .iter()
+            .any(|member| member.value == point_record_index))
 }
 
 fn point_target_has_guid(

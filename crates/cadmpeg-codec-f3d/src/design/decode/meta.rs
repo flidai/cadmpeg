@@ -313,19 +313,33 @@ pub(crate) fn decode_component_naming_spaces(
             }) {
                 continue;
             }
-            let Some((context_uuid, _)) = lp_utf16_bounded_charged(
-                ctx,
-                bytes,
-                uuid_offset,
-                36..=36,
-                "f3d Design UTF-16 text",
-            )?
-            else {
-                continue;
-            };
-            let Ok(context_uuid) =
-                crate::records::mesh::DesignRelaxedGuidText::try_from(context_uuid)
-            else {
+            // The UUID follows the reference directly or after one zero pad byte.
+            let mut bound = None;
+            for candidate in [
+                Some(uuid_offset),
+                (bytes.get(uuid_offset) == Some(&0)).then(|| uuid_offset + 1),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let Some((context_uuid, _)) = lp_utf16_bounded_charged(
+                    ctx,
+                    bytes,
+                    candidate,
+                    36..=36,
+                    "f3d Design UTF-16 text",
+                )?
+                else {
+                    continue;
+                };
+                if let Ok(context_uuid) =
+                    crate::records::mesh::DesignRelaxedGuidText::try_from(context_uuid)
+                {
+                    bound = Some((context_uuid, candidate));
+                    break;
+                }
+            }
+            let Some((context_uuid, uuid_offset)) = bound else {
                 continue;
             };
             insert_component_naming_space(
