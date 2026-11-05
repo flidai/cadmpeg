@@ -17,8 +17,8 @@ use super::topology::Tables;
 
 /// The most findings a decode keeps, so that a damaged file stays cheap.
 pub(crate) const FINDING_LIMIT: usize = 20_000;
-/// The most stream positions the probe keeps for one index.
-const HITS_PER_INDEX: usize = 4;
+/// The most distinct (type, stream) headers the probe keeps for one index.
+const HITS_PER_INDEX: usize = 12;
 /// The most coedges one finding lists.
 const COEDGES_PER_FINDING: usize = 8;
 /// The span after a node header in which the probe looks for the null real.
@@ -65,11 +65,36 @@ pub(crate) struct Diagnostics {
     pub(crate) findings: Vec<Finding>,
     /// Findings that did not fit the limit.
     pub(crate) overflow: usize,
+    /// `(bridge, loop reference)` of faces whose first loop reference names no
+    /// loop record.
+    pub(crate) empty_faces: Vec<(u16, u16)>,
+    /// Such faces that did not fit the limit.
+    pub(crate) empty_faces_over: usize,
     /// JSON lines, filled by [`render`].
     pub(crate) lines: Vec<String>,
 }
 
+/// The most faces without a loop record that one decode lists.
+const EMPTY_FACE_LIMIT: usize = 2_000;
+
 impl Diagnostics {
+    pub(crate) fn record_empty_face(
+        &mut self,
+        ctx: &DecodeContext<'_>,
+        bridge: u16,
+        loop_ref: u16,
+    ) -> Result<(), CodecError> {
+        if self.empty_faces.len() >= EMPTY_FACE_LIMIT {
+            self.empty_faces_over += 1;
+            return Ok(());
+        }
+        ctx.push_vec(
+            &mut self.empty_faces,
+            (bridge, loop_ref),
+            "collect Parasolid face diagnostics",
+        )
+    }
+
     pub(crate) fn record(
         &mut self,
         ctx: &DecodeContext<'_>,
@@ -125,7 +150,11 @@ fn probe(
                 continue;
             }
             let slot = found.entry(index).or_default();
-            if slot.len() >= HITS_PER_INDEX {
+            if slot.len() >= HITS_PER_INDEX
+                || slot
+                    .iter()
+                    .any(|hit| hit.node_type == buf[at + 1] && hit.delta == *delta)
+            {
                 continue;
             }
             let tail = &buf[index_at + 2..];
@@ -151,20 +180,23 @@ fn probe(
 
 /// The table types that hold a record with this index.
 fn known_as(tables: &Tables, index: u16) -> Vec<u8> {
-    let mut codes = Vec::new();
-    for (code, present) in [
-        (0x0e, tables.bridges().contains_key(&index)),
-        (0x0f, tables.loops().contains_key(&index)),
-        (0x10, tables.edge_uses().contains_key(&index)),
-        (0x11, tables.coedges().contains_key(&index)),
-        (0x12, tables.vertex_uses().contains_key(&index)),
-        (0x1d, tables.points().contains_key(&index)),
-    ] {
-        if present {
-            codes.push(code);
-        }
+    TABLE_TYPES
+        .into_iter()
+        .filter(|code| table_has(tables, *code, index))
+        .collect()
+}
+
+/// Whether the table of a node type holds a record with this index.
+fn table_has(tables: &Tables, code: u8, index: u16) -> bool {
+    match code {
+        0x0e => tables.bridges().contains_key(&index),
+        0x0f => tables.loops().contains_key(&index),
+        0x10 => tables.edge_uses().contains_key(&index),
+        0x11 => tables.coedges().contains_key(&index),
+        0x12 => tables.vertex_uses().contains_key(&index),
+        0x1d => tables.points().contains_key(&index),
+        _ => false,
     }
-    codes
 }
 
 fn list<T: std::fmt::Display>(items: impl IntoIterator<Item = T>) -> String {
@@ -270,6 +302,10 @@ pub(crate) fn render(
     for finding in &diagnostics.findings {
         targets_of(ctx, tables, finding, &mut wanted)?;
     }
+    let refs = collect_refs(ctx, tables, diagnostics)?;
+    for item in &refs {
+        wanted.extend([item.value, item.value & MASK_15, item.value & MASK_8]);
+    }
     let targets: HashSet<u16> = wanted.into_iter().filter(|index| *index != 0).collect();
     let hits = probe(ctx, streams, &targets)?;
     let at = |index: u16| hits_json(hits.get(&index));
@@ -364,7 +400,358 @@ pub(crate) fn render(
         };
         lines.push(line);
     }
+    let mut keys = HashMap::new();
+    for item in &refs {
+        if let std::collections::hash_map::Entry::Vacant(slot) = keys.entry(item.expected) {
+            slot.insert(sorted_keys(ctx, tables, item.expected)?);
+        }
+    }
+    for item in &refs {
+        ctx.charge_work(1, "render Parasolid reference diagnostics")?;
+        lines.push(ref_line(tables, &hits, &keys, item));
+    }
+    census(ctx, tables, streams, &mut lines)?;
     diagnostics.lines = lines;
+    Ok(())
+}
+
+/// Mask of the low fifteen bits, the first cell of a wide node pointer.
+const MASK_15: u16 = 0x7fff;
+/// Mask of the low byte.
+const MASK_8: u16 = 0x00ff;
+/// The most reference lines one decode lists.
+const REFERENCE_LIMIT: usize = 20_000;
+/// Offsets from a reference that the numbering check tries.
+const NEIGHBOURS: std::ops::RangeInclusive<i32> = -8..=8;
+/// The most distinct key steps a census line lists.
+const STEPS_LISTED: usize = 4;
+/// The node type of a shell, which the tables do not hold.
+const SHELL_TYPE: u8 = 0x0d;
+
+/// A reference that names no record of the type it should.
+struct RefItem {
+    what: &'static str,
+    value: u16,
+    expected: u8,
+}
+
+fn collect_refs(
+    ctx: &DecodeContext<'_>,
+    tables: &Tables,
+    diagnostics: &Diagnostics,
+) -> Result<Vec<RefItem>, CodecError> {
+    let mut refs: Vec<RefItem> = Vec::new();
+    let mut push = |ctx: &DecodeContext<'_>, item: RefItem| -> Result<(), CodecError> {
+        if item.value > 1 && refs.len() < REFERENCE_LIMIT {
+            ctx.push_vec(&mut refs, item, "collect Parasolid reference diagnostics")?;
+        }
+        Ok(())
+    };
+    for finding in &diagnostics.findings {
+        match *finding {
+            Finding::Unresolved { cause, vertex, .. } => match cause {
+                DropCause::AbsentVertex => push(
+                    ctx,
+                    RefItem {
+                        what: "vertex",
+                        value: vertex,
+                        expected: 0x12,
+                    },
+                )?,
+                DropCause::AbsentPoint => {
+                    if let Some(record) = tables.vertex_uses().get(&vertex) {
+                        push(
+                            ctx,
+                            RefItem {
+                                what: "point",
+                                value: record.refs[4],
+                                expected: 0x1d,
+                            },
+                        )?;
+                    }
+                }
+                DropCause::NullVertex => {}
+            },
+            Finding::NoCanonical { edge, .. } => {
+                if let Some(named) = tables
+                    .edge_uses()
+                    .get(&edge)
+                    .and_then(|record| record.references.canonical())
+                {
+                    if !tables.coedges().contains_key(&named) {
+                        push(
+                            ctx,
+                            RefItem {
+                                what: "canonical",
+                                value: named,
+                                expected: 0x11,
+                            },
+                        )?;
+                    }
+                }
+                for coedge in coedges_of(ctx, tables, edge)? {
+                    let shell = tables
+                        .loops()
+                        .get(&coedge.refs[1])
+                        .and_then(|loop_| tables.bridges().get(&loop_.refs[2]))
+                        .and_then(|bridge| bridge.owner);
+                    if let Some(shell) = shell {
+                        push(
+                            ctx,
+                            RefItem {
+                                what: "face_owner",
+                                value: shell,
+                                expected: SHELL_TYPE,
+                            },
+                        )?;
+                    }
+                }
+            }
+            Finding::OffRing { .. } => {}
+        }
+    }
+    for (_, loop_ref) in &diagnostics.empty_faces {
+        push(
+            ctx,
+            RefItem {
+                what: "face_loop",
+                value: *loop_ref,
+                expected: 0x0f,
+            },
+        )?;
+    }
+    Ok(refs)
+}
+
+/// The keys of the table of a node type, in ascending order.
+fn sorted_keys(ctx: &DecodeContext<'_>, tables: &Tables, code: u8) -> Result<Vec<u16>, CodecError> {
+    let mut keys: Vec<u16> = match code {
+        0x0e => tables.bridges().keys().copied().collect(),
+        0x0f => tables.loops().keys().copied().collect(),
+        0x10 => tables.edge_uses().keys().copied().collect(),
+        0x11 => tables.coedges().keys().copied().collect(),
+        0x12 => tables.vertex_uses().keys().copied().collect(),
+        0x1d => tables.points().keys().copied().collect(),
+        _ => Vec::new(),
+    };
+    ctx.stable_sort_by(&mut keys, Ord::cmp, |_| 0, "order Parasolid table keys")?;
+    Ok(keys)
+}
+
+/// `[key, value - key]` of the nearest key below and above a value.
+fn neighbours(keys: &[u16], value: u16) -> (String, String) {
+    let at = keys.partition_point(|key| *key < value);
+    let pair = |key: Option<&u16>| {
+        key.map_or_else(
+            || "null".to_owned(),
+            |key| format!("[{key},{}]", i32::from(value) - i32::from(*key)),
+        )
+    };
+    let below = at.checked_sub(1).and_then(|index| keys.get(index));
+    let above = keys
+        .get(at..)
+        .and_then(|rest| rest.iter().find(|key| **key > value));
+    (pair(below), pair(above))
+}
+
+fn ref_line(
+    tables: &Tables,
+    hits: &HashMap<u16, Vec<Hit>>,
+    keys: &HashMap<u8, Vec<u16>>,
+    item: &RefItem,
+) -> String {
+    let RefItem {
+        what,
+        value,
+        expected,
+    } = *item;
+    let sorted = keys.get(&expected).map_or(&[][..], Vec::as_slice);
+    let (below, above) = neighbours(sorted, value);
+    let header = |index: u16, delta: bool| {
+        hits.get(&index).is_some_and(|found| {
+            found
+                .iter()
+                .any(|hit| hit.node_type == expected && hit.delta == delta)
+        })
+    };
+    let variant = |index: u16| {
+        format!(
+            "{{\"v\":{index},\"key\":{},\"hdr_p\":{},\"hdr_d\":{}}}",
+            table_has(tables, expected, index),
+            header(index, false),
+            header(index, true),
+        )
+    };
+    let plus_k: Vec<i32> = NEIGHBOURS
+        .filter(|step| *step != 0)
+        .filter(|step| {
+            u16::try_from(i32::from(value) + step)
+                .is_ok_and(|index| table_has(tables, expected, index))
+        })
+        .collect();
+    format!(
+        "{{\"kind\":\"ref\",\"what\":\"{what}\",\"value\":{value},\"expected\":{expected},\
+         \"known\":{},\"below\":{below},\"above\":{above},\"m7fff\":{},\"low8\":{},\
+         \"plus_k\":{},\"hdr_p\":{},\"hdr_d\":{},\"hits\":{}}}",
+        list(known_as(tables, value)),
+        variant(value & MASK_15),
+        variant(value & MASK_8),
+        list(plus_k),
+        header(value, false),
+        header(value, true),
+        hits_json(hits.get(&value)),
+    )
+}
+
+/// `(offset, key, sequence)` of every record of a node type, by offset.
+fn offsets_of(
+    ctx: &DecodeContext<'_>,
+    tables: &Tables,
+    code: u8,
+) -> Result<Vec<(usize, u16, Option<u32>)>, CodecError> {
+    let mut found: Vec<(usize, u16, Option<u32>)> = match code {
+        0x0e => tables
+            .bridges()
+            .iter()
+            .map(|(key, record)| (record.offset, *key, Some(record.sequence)))
+            .collect(),
+        0x0f => tables
+            .loops()
+            .iter()
+            .map(|(key, record)| (record.offset, *key, None))
+            .collect(),
+        0x10 => tables
+            .edge_uses()
+            .iter()
+            .map(|(key, record)| (record.offset, *key, Some(record.sequence)))
+            .collect(),
+        0x11 => tables
+            .coedges()
+            .iter()
+            .map(|(key, record)| (record.offset, *key, None))
+            .collect(),
+        0x12 => tables
+            .vertex_uses()
+            .iter()
+            .map(|(key, record)| (record.offset, *key, Some(record.sequence)))
+            .collect(),
+        0x1d => tables
+            .points()
+            .iter()
+            .map(|(key, record)| (record.offset, *key, None))
+            .collect(),
+        _ => Vec::new(),
+    };
+    ctx.stable_sort_by(
+        &mut found,
+        |left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)),
+        |_| 0,
+        "order Parasolid table records",
+    )?;
+    Ok(found)
+}
+
+/// Per node type and stream kind: headers, headers without a table record, and
+/// the largest index.
+type RawCounts = HashMap<(u8, bool), (usize, usize, u16)>;
+
+/// Raw header counts: per node type and stream kind, the headers, those whose
+/// index no table of the type holds, and the largest index.
+fn raw_census(
+    ctx: &DecodeContext<'_>,
+    tables: &Tables,
+    streams: &[(&[u8], bool)],
+) -> Result<RawCounts, CodecError> {
+    let mut census = RawCounts::new();
+    for (buf, delta) in streams {
+        ctx.charge_work(
+            u64_from_index(buf.len() / BYTES_PER_WORK_UNIT + 1),
+            "count Parasolid node headers",
+        )?;
+        let Some(last) = buf.len().checked_sub(4) else {
+            continue;
+        };
+        for at in 0..last {
+            if buf[at] != 0 || !TABLE_TYPES.contains(&buf[at + 1]) {
+                continue;
+            }
+            let index_at = if buf[at + 2] == 0xff { at + 3 } else { at + 2 };
+            let Some(index) = View::u16_be_at(buf, index_at).filter(|index| *index > 1) else {
+                continue;
+            };
+            let entry = census.entry((buf[at + 1], *delta)).or_default();
+            entry.0 += 1;
+            if !table_has(tables, buf[at + 1], index) {
+                entry.1 += 1;
+            }
+            entry.2 = entry.2.max(index);
+        }
+    }
+    Ok(census)
+}
+
+/// One line per table type on how the keys of its records relate to the
+/// records themselves.
+fn census(
+    ctx: &DecodeContext<'_>,
+    tables: &Tables,
+    streams: &[(&[u8], bool)],
+    lines: &mut Vec<String>,
+) -> Result<(), CodecError> {
+    let raw = raw_census(ctx, tables, streams)?;
+    for code in TABLE_TYPES {
+        let records = offsets_of(ctx, tables, code)?;
+        let (Some(min), Some(max)) = (
+            records.iter().map(|record| record.1).min(),
+            records.iter().map(|record| record.1).max(),
+        ) else {
+            continue;
+        };
+        let over = records.iter().filter(|record| record.1 > MASK_15).count();
+        let equal_sequence = if records.iter().any(|record| record.2.is_some()) {
+            records
+                .iter()
+                .filter(|record| record.2 == Some(u32::from(record.1)))
+                .count()
+                .to_string()
+        } else {
+            "null".to_owned()
+        };
+        let mut steps: HashMap<i32, usize> = HashMap::new();
+        for pair in records.windows(2) {
+            *steps
+                .entry(i32::from(pair[1].1) - i32::from(pair[0].1))
+                .or_insert(0) += 1;
+        }
+        let mut ranked: Vec<(i32, usize)> = steps.into_iter().collect();
+        ctx.stable_sort_by(
+            &mut ranked,
+            |left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)),
+            |_| 0,
+            "order Parasolid key steps",
+        )?;
+        ranked.truncate(STEPS_LISTED);
+        let steps = format!(
+            "[{}]",
+            ranked
+                .iter()
+                .map(|(step, count)| format!("[{step},{count}]"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let side = |delta: bool| {
+            let (total, unkeyed, largest) = raw.get(&(code, delta)).copied().unwrap_or_default();
+            format!("{total},{unkeyed},{largest}")
+        };
+        lines.push(format!(
+            "{{\"kind\":\"keys\",\"t\":{code},\"n\":{},\"min\":{min},\"max\":{max},\
+             \"over_7fff\":{over},\"eq_seq\":{equal_sequence},\"steps\":{steps},\
+             \"raw_p\":[{}],\"raw_d\":[{}]}}",
+            records.len(),
+            side(false),
+            side(true),
+        ));
+    }
     Ok(())
 }
 
@@ -429,5 +816,47 @@ mod tests {
         assert!(line.contains("\"end\":\"end\",\"vertex\":300"));
         assert!(line.contains("\"edge_hits\":[{\"t\":16,\"s\":\"p\""));
         assert!(line.contains("\"vertex_hits\":[]"));
+    }
+
+    #[test]
+    fn the_nearest_keys_of_an_unnamed_reference_are_listed_with_their_distance() {
+        let keys = [10_u16, 20, 30];
+        assert_eq!(
+            neighbours(&keys, 25),
+            ("[20,5]".to_owned(), "[30,-5]".to_owned())
+        );
+        assert_eq!(
+            neighbours(&keys, 5),
+            ("null".to_owned(), "[10,-5]".to_owned())
+        );
+        assert_eq!(
+            neighbours(&keys, 40),
+            ("[30,10]".to_owned(), "null".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_reference_line_states_the_numbering_checks_without_values() {
+        let tables = Tables::default();
+        let hits = HashMap::from([(
+            0x8005_u16,
+            vec![Hit {
+                node_type: 0x0f,
+                delta: true,
+                null_real_at: None,
+                next_header: None,
+            }],
+        )]);
+        let keys = HashMap::from([(0x0f_u8, vec![3_u16, 9])]);
+        let item = RefItem {
+            what: "face_loop",
+            value: 0x8005,
+            expected: 0x0f,
+        };
+        let line = ref_line(&tables, &hits, &keys, &item);
+        assert!(line.starts_with("{\"kind\":\"ref\",\"what\":\"face_loop\",\"value\":32773,"));
+        assert!(line.contains("\"below\":[9,32764],\"above\":null"));
+        assert!(line.contains("\"hdr_p\":false,\"hdr_d\":true"));
+        assert!(line.contains("\"m7fff\":{\"v\":5,"));
     }
 }

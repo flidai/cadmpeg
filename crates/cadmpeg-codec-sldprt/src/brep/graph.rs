@@ -569,16 +569,6 @@ pub(crate) struct Stats {
     pub(crate) dropped_loops: usize,
     /// Faces dropped because none of their loops was kept.
     pub(crate) faces_without_loops: usize,
-    /// Groups of face-uses with one owner and distinct payloads that a hosted
-    /// decode keeps as separate faces.
-    pub(crate) owner_groups_split: usize,
-    /// Loops that the loop chain of their face did not reach and a hosted decode
-    /// attached to the face that owns them.
-    pub(crate) orphan_loops_attached: usize,
-    /// Vertex-uses read in front of their point (hosted).
-    pub(crate) recovered_vertices_before_point: usize,
-    /// Vertex indices that name a world point directly (hosted).
-    pub(crate) recovered_vertices_point_as_vertex: usize,
     /// Faces that have no loop after the walk, by the reason the walk stopped.
     pub(crate) faces_walked_empty_end: usize,
     pub(crate) faces_walked_empty_no_head: usize,
@@ -1243,122 +1233,6 @@ fn walk_face(
     })
 }
 
-/// The closed coedge ring that starts at `first` in the loop `loop_ref`.
-fn closed_ring(
-    ctx: &DecodeContext<'_>,
-    t: &topology::Tables,
-    loop_ref: u16,
-    first: u16,
-) -> Result<Option<Vec<u16>>, cadmpeg_core::CodecError> {
-    let mut ring = Vec::new();
-    let mut guard = HashSet::new();
-    let mut ce_ref = first;
-    while ce_ref != 0 {
-        ctx.charge_work(1, "walk Parasolid orphan loop coedges")?;
-        if !ctx.insert_hash_set(&mut guard, ce_ref, "walk Parasolid orphan loop coedges")? {
-            break;
-        }
-        let Some(ce) = t.coedges().get(&ce_ref) else {
-            break;
-        };
-        if ce.refs[1] != loop_ref {
-            break;
-        }
-        ctx.reserve_vec(&mut ring, 1, "walk Parasolid orphan loop coedges")?;
-        ring.push(ce_ref);
-        ce_ref = ce.refs[3];
-        if ce_ref == first {
-            return Ok(Some(ring));
-        }
-    }
-    Ok(None)
-}
-
-/// Attach the loops that no face reached to the face that owns them.
-///
-/// A loop names its owning face-use in `refs[2]`. When the loop chain of that
-/// face does not reach the loop, the face lacks the ring. A loop joins the face
-/// of its owner when its coedges are in no ring yet and its ring closes.
-fn attach_orphan_loops(
-    ctx: &DecodeContext<'_>,
-    t: &topology::Tables,
-    faces: &mut [WalkedFace],
-    stats: &mut Stats,
-) -> Result<(), cadmpeg_core::CodecError> {
-    let mut reached_loops: HashSet<u16> = HashSet::new();
-    let mut ring_coedges: HashSet<u16> = HashSet::new();
-    let mut by_bridge: HashMap<u16, usize> = HashMap::new();
-    let mut by_owner: HashMap<u16, usize> = HashMap::new();
-    for (index, face) in faces.iter().enumerate() {
-        ctx.admit_hash_map_entry(
-            &mut by_bridge,
-            &face.bridge_attr,
-            "index Parasolid face bridges",
-        )?;
-        by_bridge.insert(face.bridge_attr, index);
-        if let Some(owner) = t
-            .bridges()
-            .get(&face.bridge_attr)
-            .and_then(|bridge| bridge.owner)
-        {
-            ctx.admit_hash_map_entry(&mut by_owner, &owner, "index Parasolid face owners")?;
-            by_owner.entry(owner).or_insert(index);
-        }
-        for (loop_attr, ring) in &face.loops {
-            ctx.insert_hash_set(
-                &mut reached_loops,
-                *loop_attr,
-                "index Parasolid reached loops",
-            )?;
-            for coedge in ring {
-                ctx.insert_hash_set(&mut ring_coedges, *coedge, "index Parasolid ring coedges")?;
-            }
-        }
-    }
-    let mut loop_attrs: Vec<u16> = t
-        .loops()
-        .keys()
-        .copied()
-        .filter(|attr| !reached_loops.contains(attr))
-        .collect();
-    ctx.stable_sort_by(
-        &mut loop_attrs,
-        Ord::cmp,
-        |_| 0,
-        "order Parasolid orphan loops",
-    )?;
-    for loop_attr in loop_attrs {
-        ctx.charge_work(1, "attach Parasolid orphan loops")?;
-        let Some(lp) = t.loops().get(&loop_attr) else {
-            continue;
-        };
-        let owner_bridge = lp.refs[2];
-        let face_index = by_bridge.get(&owner_bridge).copied().or_else(|| {
-            t.bridges()
-                .get(&owner_bridge)
-                .and_then(|bridge| bridge.owner)
-                .and_then(|owner| by_owner.get(&owner).copied())
-        });
-        let Some(face_index) = face_index else {
-            continue;
-        };
-        if ring_coedges.contains(&lp.refs[1]) {
-            continue;
-        }
-        let Some(ring) = closed_ring(ctx, t, loop_attr, lp.refs[1])? else {
-            continue;
-        };
-        for coedge in &ring {
-            ctx.insert_hash_set(&mut ring_coedges, *coedge, "index Parasolid ring coedges")?;
-        }
-        let face = &mut faces[face_index];
-        ctx.reserve_vec(&mut face.loops, 1, "attach Parasolid orphan loops")?;
-        face.loops.push((loop_attr, ring));
-        stats.orphan_loops_attached += 1;
-    }
-    Ok(())
-}
-
 /// Largest gap between the two ends of a ring edge, in millimetres.
 const RING_CLOSURE_TOLERANCE_MM: f64 = 1.0e-4;
 
@@ -1780,12 +1654,6 @@ pub(crate) fn decode_bodies_in(
             append_entity_facts(ctx, &mut facts, scanned_facts)?;
         }
     }
-    let recovered = if hosting.rules {
-        let bodies: Vec<&[u8]> = entity_streams.iter().map(|(body, _)| *body).collect();
-        topology::recover_vertex_uses(ctx, &bodies, &mut tables)?
-    } else {
-        topology::RecoveredVertices::default()
-    };
     let mut brep = decode_graph(
         ctx,
         &mut carriers,
@@ -1794,8 +1662,6 @@ pub(crate) fn decode_bodies_in(
         &typed_facts,
         (stream, hosting),
     )?;
-    brep.stats.recovered_vertices_before_point = recovered.before_point;
-    brep.stats.recovered_vertices_point_as_vertex = recovered.point_as_vertex;
     if hosting.diagnostics {
         diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
     }
@@ -2230,14 +2096,6 @@ fn decode_graph(
                 ctx.reserve_vec(&mut faces, 1, "collect Parasolid faces")?;
                 faces.push(first_face);
             }
-        } else if hosted {
-            // The owner field of a hosted stream need not be unique to a face,
-            // so a group of distinct payloads is a set of distinct faces.
-            out.stats.owner_groups_split += 1;
-            for (_, face) in uses {
-                ctx.reserve_vec(&mut faces, 1, "collect Parasolid faces")?;
-                faces.push(face);
-            }
         } else {
             ambiguous_face_owners += 1;
         }
@@ -2250,12 +2108,22 @@ fn decode_graph(
     )?;
     out.stats.ambiguous_face_owners += ambiguous_face_owners;
     if hosted {
-        attach_orphan_loops(ctx, t, &mut faces, &mut out.stats)?;
         for face in faces.iter().filter(|face| face.loops.is_empty()) {
             match face.stop {
                 WalkStop::End => out.stats.faces_walked_empty_end += 1,
                 WalkStop::NoHead => out.stats.faces_walked_empty_no_head += 1,
-                WalkStop::LoopAbsent => out.stats.faces_walked_empty_loop_absent += 1,
+                WalkStop::LoopAbsent => {
+                    out.stats.faces_walked_empty_loop_absent += 1;
+                    if hosting.diagnostics {
+                        let loop_ref = t
+                            .bridges()
+                            .get(&face.bridge_attr)
+                            .map_or(0, |bridge| bridge.refs[2]);
+                        out.stats
+                            .diagnostics
+                            .record_empty_face(ctx, face.bridge_attr, loop_ref)?;
+                    }
+                }
                 WalkStop::OtherOwner => out.stats.faces_walked_empty_other_owner += 1,
                 WalkStop::RingOpen => out.stats.faces_walked_empty_ring_open += 1,
             }

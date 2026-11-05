@@ -129,9 +129,7 @@ pub fn decode_hosted_brep(
                  \"no_forward\":{},\"several_forward\":{},\"off_ring\":{},\
                  \"dropped_loops\":{},\"dropped_loops_missing_coedge\":{},\
                  \"dropped_loops_unemitted_edge\":{},\"faces_without_loops\":{},\
-                 \"findings_over_limit\":{},\"owner_groups_split\":{},\
-                 \"orphan_loops_attached\":{},\"recovered_before_point\":{},\
-                 \"recovered_point_as_vertex\":{},\"faces_empty_end\":{},\
+                 \"findings_over_limit\":{},\"empty_faces_over\":{},\"faces_empty_end\":{},\
                  \"faces_empty_no_head\":{},\"faces_empty_loop_absent\":{},\
                  \"faces_empty_other_owner\":{},\"faces_empty_ring_open\":{}}}",
                 stats.unresolved_edges,
@@ -147,10 +145,7 @@ pub fn decode_hosted_brep(
                 stats.dropped_loops_unemitted_edge,
                 stats.faces_without_loops,
                 stats.diagnostics.overflow,
-                stats.owner_groups_split,
-                stats.orphan_loops_attached,
-                stats.recovered_vertices_before_point,
-                stats.recovered_vertices_point_as_vertex,
+                stats.diagnostics.empty_faces_over,
                 stats.faces_walked_empty_end,
                 stats.faces_walked_empty_no_head,
                 stats.faces_walked_empty_loop_absent,

@@ -30,9 +30,6 @@ use cadmpeg_ir::topology::Sense;
 
 use crate::layout::world_point as world_pt;
 
-mod hosted;
-pub(super) use hosted::{recover_vertex_uses, RecoveredVertices};
-
 /// The magic anchoring magic-bearing topology records ([spec §5](https://github.com/cadmpeg/cadmpeg/blob/main/docs/formats/sldprt.md#4-typed-topology-records)).
 const MAGIC: [u8; 8] = [0xc2, 0xbc, 0x92, 0x8f, 0x99, 0x6e, 0x00, 0x00];
 
