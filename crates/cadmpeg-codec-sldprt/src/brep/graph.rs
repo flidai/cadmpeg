@@ -574,7 +574,10 @@ pub(crate) struct Stats {
     pub(crate) faces_walked_empty_no_head: usize,
     pub(crate) faces_walked_empty_loop_absent: usize,
     pub(crate) faces_walked_empty_other_owner: usize,
-    pub(crate) faces_walked_empty_ring_open: usize,
+    pub(crate) faces_walked_empty_ring_coedge_absent: usize,
+    pub(crate) faces_walked_empty_ring_foreign_loop: usize,
+    pub(crate) faces_walked_empty_ring_cycle: usize,
+    pub(crate) faces_walked_empty_ring_null_next: usize,
     /// Records that a hosted decode admitted because a record in the tables names
     /// them and the strict scan left them out.
     pub(crate) admitted_by_reference: topology::Admitted,
@@ -780,6 +783,9 @@ struct WalkedFace {
     loops: Vec<(u16, Vec<u16>)>,
     /// Why the walk of the loop chain ended before the end of the chain.
     stop: WalkStop,
+    /// For a ring that did not close: the loop, the coedges walked, and the
+    /// reference at which the walk stopped.
+    ring_stop: Option<(u16, usize, u16)>,
 }
 
 /// Why the walk of a face's loop chain stopped early.
@@ -794,7 +800,32 @@ enum WalkStop {
     /// A loop names another face-use as its owner.
     OtherOwner,
     /// A loop's coedge ring did not close.
-    RingOpen,
+    Ring(RingStop),
+}
+
+/// Why a coedge ring did not close.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RingStop {
+    /// A coedge reference names no coedge record.
+    CoedgeAbsent,
+    /// A coedge names another loop as its owner.
+    ForeignLoop,
+    /// The walk met a coedge twice without returning to the first.
+    Cycle,
+    /// The next reference is null before the ring returns to the first coedge.
+    NullNext,
+}
+
+impl RingStop {
+    /// The number that the diagnostics use for the cause.
+    const fn code(self) -> u8 {
+        match self {
+            Self::CoedgeAbsent => 0,
+            Self::ForeignLoop => 1,
+            Self::Cycle => 2,
+            Self::NullNext => 3,
+        }
+    }
 }
 
 /// Follow the sibling loop-head chain of a bridge and each loop's coedge ring,
@@ -1169,6 +1200,7 @@ fn walk_face(
     let mut loops = Vec::new();
     let mut loop_ref = bridge.refs[2];
     let mut loop_guard = HashSet::new();
+    let mut ring_stop = None;
     let mut stop = if loop_ref == 0 {
         WalkStop::NoHead
     } else {
@@ -1180,7 +1212,9 @@ fn walk_face(
             break;
         }
         let Some(lp) = t.loops().get(&loop_ref) else {
-            stop = WalkStop::LoopAbsent;
+            if stop == WalkStop::End {
+                stop = WalkStop::LoopAbsent;
+            }
             break;
         };
         let owner_bridge = lp.refs[2];
@@ -1192,7 +1226,9 @@ fn walk_face(
                     == Some(owner)
             });
         if !same_face_use {
-            stop = WalkStop::OtherOwner;
+            if stop == WalkStop::End {
+                stop = WalkStop::OtherOwner;
+            }
             break;
         }
         let first = lp.refs[1];
@@ -1200,15 +1236,19 @@ fn walk_face(
         let mut ce_ref = first;
         let mut ce_guard = HashSet::new();
         let mut ring_closed = false;
+        let mut ring_failure = RingStop::NullNext;
         while ce_ref != 0 {
             ctx.charge_work(1, "walk Parasolid face coedges")?;
             if !ctx.insert_hash_set(&mut ce_guard, ce_ref, "walk Parasolid face coedges")? {
+                ring_failure = RingStop::Cycle;
                 break;
             }
             let Some(ce) = t.coedges().get(&ce_ref) else {
+                ring_failure = RingStop::CoedgeAbsent;
                 break;
             };
             if ce.refs[1] != loop_ref {
+                ring_failure = RingStop::ForeignLoop;
                 break;
             }
             ctx.reserve_vec(&mut ring, 1, "walk Parasolid face coedges")?;
@@ -1223,7 +1263,8 @@ fn walk_face(
             ctx.reserve_vec(&mut loops, 1, "walk Parasolid face loops")?;
             loops.push((loop_ref, ring));
         } else if stop == WalkStop::End {
-            stop = WalkStop::RingOpen;
+            stop = WalkStop::Ring(ring_failure);
+            ring_stop = Some((loop_ref, ring.len(), ce_ref));
         }
         loop_ref = lp.refs[3];
     }
@@ -1233,6 +1274,7 @@ fn walk_face(
         sense: bridge.sense,
         loops,
         stop,
+        ring_stop,
     })
 }
 
@@ -1658,8 +1700,7 @@ pub(crate) fn decode_bodies_in(
         }
     }
     let admitted = if hosting.rules {
-        let bodies: Vec<&[u8]> = entity_streams.iter().map(|(body, _)| *body).collect();
-        topology::admit_referenced(ctx, &bodies, &mut tables)?
+        topology::admit_referenced(ctx, &entity_streams, &mut tables)?
     } else {
         topology::Admitted::default()
     };
@@ -1841,7 +1882,14 @@ fn typed_body_records(
     tables: &topology::Tables,
 ) -> Result<Option<Vec<BodyRecord>>, cadmpeg_core::CodecError> {
     let mut bridge_attrs = HashSet::new();
+    // A bridge that was admitted by reference and has no typed face node would
+    // make the typed ownership incomplete and merge every body into one. It
+    // takes no part in the typed hierarchy, so the bodies stay as they are.
+    let typed_faces: HashSet<u16> = facts.faces.iter().map(|face| face.attr).collect();
     for attr in tables.bridges().keys().copied() {
+        if tables.is_admitted_bridge(attr) && !typed_faces.contains(&attr) {
+            continue;
+        }
         ctx.insert_hash_set(&mut bridge_attrs, attr, "index Parasolid body bridges")?;
     }
     let Some(hierarchies) = facts.hierarchies(ctx, &bridge_attrs)? else {
@@ -2135,7 +2183,30 @@ fn decode_graph(
                     }
                 }
                 WalkStop::OtherOwner => out.stats.faces_walked_empty_other_owner += 1,
-                WalkStop::RingOpen => out.stats.faces_walked_empty_ring_open += 1,
+                WalkStop::Ring(why) => {
+                    match why {
+                        RingStop::CoedgeAbsent => {
+                            out.stats.faces_walked_empty_ring_coedge_absent += 1;
+                        }
+                        RingStop::ForeignLoop => {
+                            out.stats.faces_walked_empty_ring_foreign_loop += 1;
+                        }
+                        RingStop::Cycle => out.stats.faces_walked_empty_ring_cycle += 1,
+                        RingStop::NullNext => out.stats.faces_walked_empty_ring_null_next += 1,
+                    }
+                    if hosting.diagnostics {
+                        if let Some((loop_attr, walked, at)) = face.ring_stop {
+                            out.stats.diagnostics.record_ring_stop(
+                                ctx,
+                                face.bridge_attr,
+                                loop_attr,
+                                walked,
+                                at,
+                                why.code(),
+                            )?;
+                        }
+                    }
+                }
             }
         }
     }

@@ -131,9 +131,9 @@ pub fn decode_hosted_brep(
                  \"dropped_loops_unemitted_edge\":{},\"faces_without_loops\":{},\
                  \"findings_over_limit\":{},\"empty_faces_over\":{},\
                  \"admitted_14\":{},\"admitted_15\":{},\"admitted_16\":{},\"admitted_17\":{},\
-                 \"admitted_18\":{},\"admitted_ambiguous\":{},\"admitted_rounds\":{},\"faces_empty_end\":{},\
+                 \"admitted_18\":{},\"admitted_ambiguous\":{},\"admitted_examined\":{},\"admitted_duplicate_owner\":{},\"admitted_wide\":{},\"faces_empty_end\":{},\
                  \"faces_empty_no_head\":{},\"faces_empty_loop_absent\":{},\
-                 \"faces_empty_other_owner\":{},\"faces_empty_ring_open\":{}}}",
+                 \"faces_empty_other_owner\":{},\"faces_empty_ring_coedge_absent\":{},\"faces_empty_ring_foreign_loop\":{},\"faces_empty_ring_cycle\":{},\"faces_empty_ring_null_next\":{}}}",
                 stats.unresolved_edges,
                 stats.unresolved_null_vertex_use,
                 stats.unresolved_absent_vertex_use,
@@ -154,12 +154,17 @@ pub fn decode_hosted_brep(
                 stats.admitted_by_reference.by_type[3],
                 stats.admitted_by_reference.by_type[4],
                 stats.admitted_by_reference.ambiguous,
-                stats.admitted_by_reference.rounds,
+                stats.admitted_by_reference.examined,
+                stats.admitted_by_reference.duplicate_owner,
+                stats.admitted_by_reference.wide,
                 stats.faces_walked_empty_end,
                 stats.faces_walked_empty_no_head,
                 stats.faces_walked_empty_loop_absent,
                 stats.faces_walked_empty_other_owner,
-                stats.faces_walked_empty_ring_open,
+                stats.faces_walked_empty_ring_coedge_absent,
+                stats.faces_walked_empty_ring_foreign_loop,
+                stats.faces_walked_empty_ring_cycle,
+                stats.faces_walked_empty_ring_null_next,
             ),
         );
     }

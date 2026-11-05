@@ -70,6 +70,9 @@ pub(crate) struct Diagnostics {
     pub(crate) empty_faces: Vec<(u16, u16)>,
     /// Such faces that did not fit the limit.
     pub(crate) empty_faces_over: usize,
+    /// `(bridge, loop, coedges walked, reference where the walk stopped, cause)`
+    /// of faces whose first ring did not close.
+    pub(crate) ring_stops: Vec<(u16, u16, usize, u16, u8)>,
     /// JSON lines, filled by [`render`].
     pub(crate) lines: Vec<String>,
 }
@@ -78,6 +81,26 @@ pub(crate) struct Diagnostics {
 const EMPTY_FACE_LIMIT: usize = 2_000;
 
 impl Diagnostics {
+    pub(crate) fn record_ring_stop(
+        &mut self,
+        ctx: &DecodeContext<'_>,
+        bridge: u16,
+        loop_attr: u16,
+        walked: usize,
+        at: u16,
+        cause: u8,
+    ) -> Result<(), CodecError> {
+        if self.ring_stops.len() >= EMPTY_FACE_LIMIT {
+            self.empty_faces_over += 1;
+            return Ok(());
+        }
+        ctx.push_vec(
+            &mut self.ring_stops,
+            (bridge, loop_attr, walked, at, cause),
+            "collect Parasolid ring diagnostics",
+        )
+    }
+
     pub(crate) fn record_empty_face(
         &mut self,
         ctx: &DecodeContext<'_>,
@@ -318,9 +341,14 @@ pub(crate) fn render(
     for item in &refs {
         wanted.extend([item.value, item.value & MASK_15, item.value & MASK_8]);
     }
+    for (_, loop_attr, _, at, _) in &diagnostics.ring_stops {
+        wanted.push(*at);
+        wanted.extend(tables.loops().get(loop_attr).map(|record| record.refs[1]));
+    }
     let targets: HashSet<u16> = wanted.into_iter().filter(|index| *index != 0).collect();
     let hits = probe(ctx, streams, &targets)?;
     let at = |index: u16| hits_json(hits.get(&index));
+    let at_hits = |index: u16| hits_json(hits.get(&index));
     let mut lines = Vec::new();
     for finding in &diagnostics.findings {
         ctx.charge_work(1, "render Parasolid edge diagnostics")?;
@@ -421,6 +449,26 @@ pub(crate) fn render(
     for item in &refs {
         ctx.charge_work(1, "render Parasolid reference diagnostics")?;
         lines.push(ref_line(tables, streams, &hits, &keys, item));
+    }
+    for (bridge, loop_attr, walked, at, cause) in &diagnostics.ring_stops {
+        ctx.charge_work(1, "render Parasolid ring diagnostics")?;
+        let first = tables.loops().get(loop_attr).map(|record| record.refs[1]);
+        let word = match cause {
+            0 => "coedge_absent",
+            1 => "foreign_loop",
+            2 => "cycle",
+            _ => "null_next",
+        };
+        lines.push(format!(
+            "{{\"kind\":\"ring\",\"bridge\":{bridge},\"loop\":{loop_attr},\
+             \"stop\":\"{word}\",\"walked\":{walked},\"at\":{at},\"at_known\":{},\
+             \"at_hits\":{},\"first\":{},\"first_known\":{},\"first_hits\":{}}}",
+            list(known_as(tables, *at)),
+            at_hits(*at),
+            option(first),
+            list(first.map_or_else(Vec::new, |first| known_as(tables, first))),
+            first.map_or_else(|| "[]".to_owned(), at_hits),
+        ));
     }
     census(ctx, tables, streams, &mut lines)?;
     diagnostics.lines = lines;

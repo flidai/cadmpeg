@@ -525,11 +525,18 @@ pub(crate) struct Tables {
     coedges: HashMap<u16, Coedge>,
     vertex_uses: HashMap<u16, VertexUse>,
     points: HashMap<u16, Point>,
+    /// Bridges that a hosted decode admitted by reference.
+    admitted_bridges: HashSet<u16>,
 }
 
 impl Tables {
     pub(super) fn bridges(&self) -> &HashMap<u16, Bridge> {
         &self.bridges
+    }
+
+    /// Whether the bridge was admitted by reference rather than by the scan.
+    pub(super) fn is_admitted_bridge(&self, attr: u16) -> bool {
+        self.admitted_bridges.contains(&attr)
     }
 
     pub(super) fn insert_bridge(
