@@ -581,6 +581,11 @@ pub(crate) struct Stats {
     /// Records that a hosted decode admitted because a record in the tables names
     /// them and the strict scan left them out.
     pub(crate) admitted_by_reference: topology::Admitted,
+    /// Of the unclaimed faces, those of bridges admitted by reference.
+    pub(crate) unclaimed_admitted: usize,
+    /// Faces with loops whose loops were all dropped later, as opposed to faces
+    /// whose loop walk found no loop.
+    pub(crate) faces_loops_all_dropped: usize,
     /// Edges whose canonical coedge is in no ring of a kept face.
     pub(crate) skipped_edges_off_ring: usize,
     /// Structural findings about dropped edges, collected on request.
@@ -1892,8 +1897,25 @@ fn typed_body_records(
         }
         ctx.insert_hash_set(&mut bridge_attrs, attr, "index Parasolid body bridges")?;
     }
-    let Some(hierarchies) = facts.hierarchies(ctx, &bridge_attrs)? else {
-        return Ok(None);
+    let hierarchies = match facts.hierarchies(ctx, &bridge_attrs)? {
+        Some(hierarchies) => hierarchies,
+        None => {
+            // When the admitted bridges that have a typed face break the typed
+            // ownership, the bodies come from the bridges of the scan alone.
+            let mut scanned = HashSet::new();
+            for attr in tables.bridges().keys().copied() {
+                if !tables.is_admitted_bridge(attr) {
+                    ctx.insert_hash_set(&mut scanned, attr, "index Parasolid body bridges")?;
+                }
+            }
+            if scanned.len() == bridge_attrs.len() {
+                return Ok(None);
+            }
+            match facts.hierarchies(ctx, &scanned)? {
+                Some(hierarchies) => hierarchies,
+                None => return Ok(None),
+            }
+        }
     };
     let mut records = Vec::new();
     for hierarchy in hierarchies {
@@ -2921,6 +2943,11 @@ fn decode_graph(
             .iter()
             .filter(|face| !bridge_group.contains_key(&face.bridge_attr))
             .count();
+        out.stats.unclaimed_admitted += faces
+            .iter()
+            .filter(|face| !bridge_group.contains_key(&face.bridge_attr))
+            .filter(|face| t.is_admitted_bridge(face.bridge_attr))
+            .count();
         faces.retain(|face| bridge_group.contains_key(&face.bridge_attr));
     }
     let mut face_edges_by_surface_carrier = HashMap::<u16, Vec<HashSet<u16>>>::new();
@@ -2977,6 +3004,7 @@ fn decode_graph(
         }
         if loops.is_empty() {
             out.stats.faces_without_loops += 1;
+            out.stats.faces_loops_all_dropped += usize::from(!f.loops.is_empty());
             continue;
         }
         // Support surface: a decoded surface carrier, else an opaque carrier.

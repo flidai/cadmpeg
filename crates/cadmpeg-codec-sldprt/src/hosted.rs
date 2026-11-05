@@ -168,6 +168,26 @@ pub fn decode_hosted_brep(
             ),
         );
     }
+    if diagnostics {
+        let stats = &brep.stats;
+        lines.insert(
+            1,
+            format!(
+                "{{\"kind\":\"summary2\",\"admitted_29\":{},\"admitted_unreadable\":{},\
+                 \"admitted_no_header\":{},\"admitted_inconsistent\":{},\
+                 \"admitted_no_point\":{},\"unclaimed_faces\":{},\"unclaimed_admitted\":{},\
+                 \"faces_loops_all_dropped\":{}}}",
+                stats.admitted_by_reference.by_type[5],
+                stats.admitted_by_reference.unreadable,
+                stats.admitted_by_reference.no_header,
+                stats.admitted_by_reference.inconsistent,
+                stats.admitted_by_reference.no_point,
+                stats.unclaimed_faces,
+                stats.unclaimed_admitted,
+                stats.faces_loops_all_dropped,
+            ),
+        );
+    }
     let entities = brep.neutral_entity_count()?;
     model.bodies = brep.bodies;
     model.regions = brep.regions;

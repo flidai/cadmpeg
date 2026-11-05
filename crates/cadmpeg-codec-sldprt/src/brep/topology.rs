@@ -525,8 +525,9 @@ pub(crate) struct Tables {
     coedges: HashMap<u16, Coedge>,
     vertex_uses: HashMap<u16, VertexUse>,
     points: HashMap<u16, Point>,
-    /// Bridges that a hosted decode admitted by reference.
-    admitted_bridges: HashSet<u16>,
+    /// The records that a hosted decode admitted by reference, and why it left
+    /// other indices out.
+    admission: rejection::AdmissionLog,
 }
 
 impl Tables {
@@ -536,7 +537,18 @@ impl Tables {
 
     /// Whether the bridge was admitted by reference rather than by the scan.
     pub(super) fn is_admitted_bridge(&self, attr: u16) -> bool {
-        self.admitted_bridges.contains(&attr)
+        self.admission.is_admitted(0x0e, attr)
+    }
+
+    /// Whether the record was admitted by reference.
+    pub(super) fn is_admitted(&self, code: u8, index: u16) -> bool {
+        self.admission.is_admitted(code, index)
+    }
+
+    /// What the second pass did with an index: `admitted`, the reason it left the
+    /// index out, or `untried`.
+    pub(super) fn admission_word(&self, code: u8, index: u16) -> &'static str {
+        self.admission.word(code, index)
     }
 
     pub(super) fn insert_bridge(

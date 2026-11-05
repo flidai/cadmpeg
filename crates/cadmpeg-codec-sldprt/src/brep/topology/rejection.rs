@@ -14,7 +14,7 @@
 //! pointers. It reads only at an index that a record in the tables names and the
 //! tables do not hold, so the references vouch for the record.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cadmpeg_core::decode::{u64_from_index, DecodeContext, View};
 use cadmpeg_core::CodecError;
@@ -22,12 +22,12 @@ use cadmpeg_ir::topology::Sense;
 
 use super::{
     body_start, parse_bridge, parse_coedge_candidates, parse_edge_use_candidates, parse_loop,
-    parse_point, parse_sense, parse_vertex_use, Bridge, Coedge, EdgeReferences, EdgeUse, Loop,
-    Tables, VertexUse, MAGIC, MAX_VERTEX_TOLERANCE_M, MIN_VERTEX_TOLERANCE_M,
+    parse_sense, parse_vertex_use, Bridge, Coedge, EdgeReferences, EdgeUse, Loop, Point, Tables,
+    VertexUse, MAGIC, MAX_VERTEX_TOLERANCE_M, MIN_VERTEX_TOLERANCE_M,
 };
 
 /// The node types the second pass admits.
-pub(in crate::brep) const ADMITTED_TYPES: [u8; 5] = [0x0e, 0x0f, 0x10, 0x11, 0x12];
+pub(in crate::brep) const ADMITTED_TYPES: [u8; 6] = [0x0e, 0x0f, 0x10, 0x11, 0x12, 0x1d];
 /// The most readings of one index that the pass keeps.
 const READINGS_PER_INDEX: usize = 6;
 /// Pointers above this value take two cells.
@@ -43,7 +43,7 @@ const BYTES_PER_WORK_UNIT: usize = 32;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Admitted {
     /// Records admitted, by position in [`ADMITTED_TYPES`].
-    pub(crate) by_type: [usize; 5],
+    pub(crate) by_type: [usize; 6],
     /// Indices whose readings differ and that the back-references do not settle.
     pub(crate) ambiguous: usize,
     /// Indices examined.
@@ -52,6 +52,14 @@ pub(crate) struct Admitted {
     pub(crate) duplicate_owner: usize,
     /// Admitted records that used at least one wide pointer.
     pub(crate) wide: usize,
+    /// Indices with headers of which none reads under the wide-pointer rule.
+    pub(crate) unreadable: usize,
+    /// Indices with no header of the type.
+    pub(crate) no_header: usize,
+    /// Indices whose readings all disagree with a record that they pair with.
+    pub(crate) inconsistent: usize,
+    /// Vertices whose point could not be admitted.
+    pub(crate) no_point: usize,
 }
 
 /// A reader of big-endian cells that follows wide pointers.
@@ -121,6 +129,7 @@ enum Relaxed {
     Edge(EdgeUse),
     Coedge(Coedge),
     Vertex(VertexUse),
+    Point(Point),
 }
 
 fn read_coedge(buf: &[u8], off: usize) -> Option<(Relaxed, usize)> {
@@ -215,6 +224,7 @@ impl Relaxed {
             (Self::Edge(a), Self::Edge(b)) => a.references == b.references,
             (Self::Coedge(a), Self::Coedge(b)) => a.refs == b.refs && a.sense == b.sense,
             (Self::Vertex(a), Self::Vertex(b)) => a.refs == b.refs,
+            (Self::Point(a), Self::Point(b)) => a.refs == b.refs && a.xyz_m == b.xyz_m,
             _ => false,
         }
     }
@@ -260,6 +270,20 @@ impl Relaxed {
                         .count()
             }
             Self::Vertex(v) => usize::from(tables.points.contains_key(&v.refs[4])),
+            Self::Point(_) => 0,
+        }
+    }
+
+    /// Whether the reading agrees with the record it pairs with. Two coedges that
+    /// name each other as twin lie on one edge and have opposite senses.
+    fn consistent(&self, tables: &Tables) -> bool {
+        match self {
+            Self::Coedge(c) => tables
+                .coedges
+                .get(&c.refs[5])
+                .filter(|twin| twin.refs[5] == c.attr)
+                .is_none_or(|twin| twin.refs[6] == c.refs[6] && twin.sense != c.sense),
+            _ => true,
         }
     }
 }
@@ -319,12 +343,15 @@ pub(in crate::brep) fn rejection_json(buf: &[u8], off: usize, code: u8, tables: 
             let candidates = parse_coedge_candidates(buf, off);
             format!(
                 "{{\"remaining\":{remaining},\"strict\":{},\"m20\":{},\"m29\":{},\
-                 \"marker_from_20\":{},\"marker_from_29\":{},{relaxed}}}",
+                 \"marker_from_20\":{},\"marker_from_29\":{},\"tripled_ones\":{},{relaxed}}}",
                 candidates.len(),
                 byte_or_null(buf, p + 20),
                 byte_or_null(buf, p + 29),
                 marker_within(buf, p + 20, 16),
                 marker_within(buf, p + 29, 16),
+                (0..9)
+                    .filter(|index| buf.get(p + 4 + index * 3) == Some(&1))
+                    .count(),
             )
         }
         0x0f => {
@@ -399,7 +426,8 @@ fn names(record: &Relaxed, out: &mut Vec<(u8, u16)>) {
             out.extend([(0x12, c.refs[4]), (0x10, c.refs[6])]);
         }
         Relaxed::Edge(e) => out.extend(e.references.canonical().map(|named| (0x11, named))),
-        Relaxed::Vertex(_) => {}
+        Relaxed::Vertex(v) => out.push((0x1d, v.refs[4])),
+        Relaxed::Point(_) => {}
     }
 }
 
@@ -409,7 +437,65 @@ fn held(tables: &Tables, code: u8, index: u16) -> bool {
         0x0f => tables.loops.contains_key(&index),
         0x10 => tables.edge_uses.contains_key(&index),
         0x11 => tables.coedges.contains_key(&index),
+        0x1d => tables.points.contains_key(&index),
         _ => tables.vertex_uses.contains_key(&index),
+    }
+}
+
+/// Why an index was not admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::brep) enum Verdict {
+    /// No header of the type sits at the index.
+    NoHeader,
+    /// Headers sit there and none reads under the wide-pointer rule.
+    Unreadable,
+    /// Several different readings that the tables and the streams do not settle.
+    Ambiguous,
+    /// Every reading disagrees with a record that it pairs with.
+    Inconsistent,
+    /// A face-use with this owner is already held.
+    DuplicateOwner,
+    /// A vertex whose point is in no table and has no readable header.
+    NoPoint,
+}
+
+impl Verdict {
+    const fn word(self) -> &'static str {
+        match self {
+            Self::NoHeader => "no_header",
+            Self::Unreadable => "unreadable",
+            Self::Ambiguous => "ambiguous",
+            Self::Inconsistent => "inconsistent",
+            Self::DuplicateOwner => "duplicate_owner",
+            Self::NoPoint => "no_point",
+        }
+    }
+}
+
+/// The most verdicts that one decode keeps.
+const VERDICT_LIMIT: usize = 100_000;
+
+/// What the second pass admitted and why it left other indices out.
+#[derive(Debug, Default)]
+pub(in crate::brep) struct AdmissionLog {
+    admitted: HashSet<(u8, u16)>,
+    verdicts: HashMap<(u8, u16), Verdict>,
+}
+
+impl AdmissionLog {
+    pub(in crate::brep) fn is_admitted(&self, code: u8, index: u16) -> bool {
+        self.admitted.contains(&(code, index))
+    }
+
+    /// `admitted`, the reason the pass left the index out, or `untried`.
+    pub(in crate::brep) fn word(&self, code: u8, index: u16) -> &'static str {
+        if self.is_admitted(code, index) {
+            "admitted"
+        } else {
+            self.verdicts
+                .get(&(code, index))
+                .map_or("untried", |verdict| verdict.word())
+        }
     }
 }
 
@@ -429,6 +515,9 @@ fn dangling(ctx: &DecodeContext<'_>, tables: &Tables) -> Result<Vec<(u8, u16)>, 
     for record in tables.edge_uses.values() {
         names(&Relaxed::Edge(record.clone()), &mut start);
     }
+    for record in tables.vertex_uses.values() {
+        names(&Relaxed::Vertex(record.clone()), &mut start);
+    }
     ctx.charge_work(
         u64_from_index(start.len()),
         "collect dangling Parasolid references",
@@ -444,6 +533,154 @@ fn dangling(ctx: &DecodeContext<'_>, tables: &Tables) -> Result<Vec<(u8, u16)>, 
     Ok(start)
 }
 
+/// The state of one run of the second pass.
+struct Pass<'c, 'a> {
+    ctx: &'c DecodeContext<'a>,
+    bodies: &'c [(&'c [u8], bool)],
+    headers: Vec<Header>,
+    seen: HashSet<(u8, u16)>,
+    owners: HashSet<u16>,
+    admitted: Admitted,
+}
+
+impl Pass<'_, '_> {
+    fn verdict(
+        &mut self,
+        tables: &mut Tables,
+        key: (u8, u16),
+        verdict: Verdict,
+    ) -> Result<(), CodecError> {
+        match verdict {
+            Verdict::NoHeader => self.admitted.no_header += 1,
+            Verdict::Unreadable => self.admitted.unreadable += 1,
+            Verdict::Ambiguous => self.admitted.ambiguous += 1,
+            Verdict::Inconsistent => self.admitted.inconsistent += 1,
+            Verdict::DuplicateOwner => self.admitted.duplicate_owner += 1,
+            Verdict::NoPoint => self.admitted.no_point += 1,
+        }
+        if tables.admission.verdicts.len() < VERDICT_LIMIT {
+            self.ctx.insert_hash_map(
+                &mut tables.admission.verdicts,
+                key,
+                verdict,
+                "record Parasolid admission verdicts",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Admit the record of one index. Returns the indices that it names, or
+    /// nothing when the record is held already, was tried, or is left out.
+    fn admit_one(
+        &mut self,
+        tables: &mut Tables,
+        code: u8,
+        index: u16,
+    ) -> Result<Option<Vec<(u8, u16)>>, CodecError> {
+        let ctx = self.ctx;
+        ctx.charge_work(1, "admit referenced Parasolid records")?;
+        if held(tables, code, index)
+            || !ctx.insert_hash_set(
+                &mut self.seen,
+                (code, index),
+                "track referenced Parasolid records",
+            )?
+        {
+            return Ok(None);
+        }
+        self.admitted.examined += 1;
+        let from = self
+            .headers
+            .partition_point(|header| (header.code, header.index) < (code, index));
+        let mut readings: Vec<(Relaxed, usize, bool)> = Vec::new();
+        let mut present = 0_usize;
+        for header in self.headers[from..]
+            .iter()
+            .take_while(|header| (header.code, header.index) == (code, index))
+        {
+            present += 1;
+            let (buf, delta) = self.bodies[header.stream];
+            let read = if code == 0x1d {
+                read_point(ctx, buf, header.off)?
+            } else {
+                Relaxed::read(buf, header.off, code)
+            };
+            if let Some((record, wide)) = read {
+                if readings.len() < READINGS_PER_INDEX {
+                    ctx.push_vec(
+                        &mut readings,
+                        (record, wide, delta),
+                        "collect referenced Parasolid readings",
+                    )?;
+                }
+            }
+        }
+        let key = (code, index);
+        if present == 0 {
+            self.verdict(tables, key, Verdict::NoHeader)?;
+            return Ok(None);
+        }
+        if readings.is_empty() {
+            self.verdict(tables, key, Verdict::Unreadable)?;
+            return Ok(None);
+        }
+        readings.retain(|(record, _, _)| record.consistent(tables));
+        if readings.is_empty() {
+            self.verdict(tables, key, Verdict::Inconsistent)?;
+            return Ok(None);
+        }
+        let Some((record, wide, _)) = choose(readings, tables) else {
+            self.verdict(tables, key, Verdict::Ambiguous)?;
+            return Ok(None);
+        };
+        if let Relaxed::Bridge(bridge) = &record {
+            if bridge
+                .owner
+                .is_some_and(|owner| self.owners.contains(&owner))
+            {
+                self.verdict(tables, key, Verdict::DuplicateOwner)?;
+                return Ok(None);
+            }
+        }
+        let mut next = Vec::new();
+        names(&record, &mut next);
+        match record {
+            Relaxed::Bridge(record) => {
+                if let Some(owner) = record.owner {
+                    ctx.insert_hash_set(&mut self.owners, owner, "track Parasolid face owners")?;
+                }
+                tables.insert_bridge(ctx, record)?;
+            }
+            Relaxed::Loop(record) => tables.insert_loop(ctx, record)?,
+            Relaxed::Edge(record) => tables.insert_edge_use(ctx, record)?,
+            Relaxed::Coedge(record) => tables.insert_coedge(ctx, record)?,
+            Relaxed::Point(record) => tables.insert_point(ctx, record)?,
+            Relaxed::Vertex(record) => {
+                // The point goes first: a vertex without a point is no vertex.
+                let point = record.refs[4];
+                if !held(tables, 0x1d, point) {
+                    self.admit_one(tables, 0x1d, point)?;
+                }
+                if !held(tables, 0x1d, point) {
+                    self.verdict(tables, key, Verdict::NoPoint)?;
+                    return Ok(None);
+                }
+                tables.insert_vertex_use(ctx, record)?;
+            }
+        }
+        ctx.insert_hash_set(
+            &mut tables.admission.admitted,
+            key,
+            "track admitted Parasolid records",
+        )?;
+        if let Some(slot) = ADMITTED_TYPES.iter().position(|known| *known == code) {
+            self.admitted.by_type[slot] += 1;
+        }
+        self.admitted.wide += usize::from(wide > 0);
+        Ok(Some(next))
+    }
+}
+
 /// Admit the records that the tables name and the strict scan left out.
 ///
 /// `bodies` are the stream bodies the tables came from, each with whether it is
@@ -453,10 +690,9 @@ pub(in crate::brep) fn admit_referenced(
     bodies: &[(&[u8], bool)],
     tables: &mut Tables,
 ) -> Result<Admitted, CodecError> {
-    let mut admitted = Admitted::default();
     let mut queue = dangling(ctx, tables)?;
     if queue.is_empty() {
-        return Ok(admitted);
+        return Ok(Admitted::default());
     }
     // Every header of an admitted type that the tables do not hold, once.
     let mut headers: Vec<Header> = Vec::new();
@@ -491,102 +727,33 @@ pub(in crate::brep) fn admit_referenced(
         }
     }
     ctx.stable_sort_by(&mut headers, Ord::cmp, |_| 0, "order Parasolid headers")?;
-    let mut seen: HashSet<(u8, u16)> = HashSet::new();
-    let mut owners: HashSet<u16> = tables
+    let owners = tables
         .bridges
         .values()
         .filter_map(|bridge| bridge.owner)
         .collect();
+    let mut pass = Pass {
+        ctx,
+        bodies,
+        headers,
+        seen: HashSet::new(),
+        owners,
+        admitted: Admitted::default(),
+    };
     while let Some((code, index)) = queue.pop() {
-        ctx.charge_work(1, "admit referenced Parasolid records")?;
-        if held(tables, code, index)
-            || !ctx.insert_hash_set(
-                &mut seen,
-                (code, index),
-                "track referenced Parasolid records",
-            )?
-        {
-            continue;
-        }
-        admitted.examined += 1;
-        let from = headers.partition_point(|header| (header.code, header.index) < (code, index));
-        let mut readings: Vec<(Relaxed, usize, bool)> = Vec::new();
-        for header in headers[from..]
-            .iter()
-            .take_while(|header| (header.code, header.index) == (code, index))
-        {
-            let (buf, delta) = bodies[header.stream];
-            if let Some((record, wide)) = Relaxed::read(buf, header.off, code) {
-                if readings.len() < READINGS_PER_INDEX {
+        if let Some(next) = pass.admit_one(tables, code, index)? {
+            for (code, index) in next {
+                if index > 1 && !held(tables, code, index) && !pass.seen.contains(&(code, index)) {
                     ctx.push_vec(
-                        &mut readings,
-                        (record, wide, delta),
-                        "collect referenced Parasolid readings",
+                        &mut queue,
+                        (code, index),
+                        "queue referenced Parasolid records",
                     )?;
                 }
             }
         }
-        let Some(chosen) = choose(readings, tables) else {
-            if headers[from..]
-                .first()
-                .is_some_and(|header| (header.code, header.index) == (code, index))
-            {
-                admitted.ambiguous += 1;
-            }
-            continue;
-        };
-        let (record, wide, _) = chosen;
-        if let Relaxed::Bridge(bridge) = &record {
-            if bridge.owner.is_some_and(|owner| owners.contains(&owner)) {
-                admitted.duplicate_owner += 1;
-                continue;
-            }
-            if let Some(owner) = bridge.owner {
-                owners.insert(owner);
-            }
-        }
-        let mut next = Vec::new();
-        names(&record, &mut next);
-        match record {
-            Relaxed::Bridge(record) => {
-                ctx.insert_hash_set(
-                    &mut tables.admitted_bridges,
-                    record.attr,
-                    "track admitted Parasolid bridges",
-                )?;
-                tables.insert_bridge(ctx, record)?;
-            }
-            Relaxed::Loop(record) => tables.insert_loop(ctx, record)?,
-            Relaxed::Edge(record) => tables.insert_edge_use(ctx, record)?,
-            Relaxed::Coedge(record) => tables.insert_coedge(ctx, record)?,
-            Relaxed::Vertex(record) => {
-                // A vertex needs its point: admit the point when only its
-                // header is in the stream.
-                let point = record.refs[4];
-                if !tables.points.contains_key(&point) {
-                    admit_point(ctx, bodies, point, tables)?;
-                }
-                if !tables.points.contains_key(&point) {
-                    continue;
-                }
-                tables.insert_vertex_use(ctx, record)?;
-            }
-        }
-        if let Some(slot) = ADMITTED_TYPES.iter().position(|known| *known == code) {
-            admitted.by_type[slot] += 1;
-        }
-        admitted.wide += usize::from(wide > 0);
-        for (code, index) in next {
-            if index > 1 && !held(tables, code, index) && !seen.contains(&(code, index)) {
-                ctx.push_vec(
-                    &mut queue,
-                    (code, index),
-                    "queue referenced Parasolid records",
-                )?;
-            }
-        }
     }
-    Ok(admitted)
+    Ok(pass.admitted)
 }
 
 /// Pick the reading of an index: the only one, the one that the tables agree
@@ -622,36 +789,53 @@ fn choose(
     }
 }
 
-/// Admit the world point behind a vertex whose point header the strict scan
-/// did not accept.
-fn admit_point(
+/// The world point behind a header, read with the wide-pointer rule.
+fn read_point(
     ctx: &DecodeContext<'_>,
-    bodies: &[(&[u8], bool)],
-    index: u16,
-    tables: &mut Tables,
-) -> Result<(), CodecError> {
-    for (buf, _) in bodies {
-        let Some(last) = buf.len().checked_sub(2) else {
-            continue;
-        };
-        for off in 0..last {
-            if buf[off] != 0 || buf[off + 1] != 0x1d {
-                continue;
-            }
-            let Some(p) = body_start(buf, off, 0x1d) else {
-                continue;
-            };
-            if View::u16_be_at(buf, p) != Some(index) {
-                continue;
-            }
-            if let Some(point) = parse_point(ctx, buf, off, false)? {
-                tables.insert_point(ctx, point)?;
-                return Ok(());
-            }
-        }
+    buf: &[u8],
+    off: usize,
+) -> Result<Option<(Relaxed, usize)>, CodecError> {
+    let Some((attr, mut cells)) = header_cursor(buf, off, 0x1d) else {
+        return Ok(None);
+    };
+    let Some(references) = cells
+        .skip(SEQUENCE_WIDTH)
+        .and_then(|()| cells.pointers::<4>())
+    else {
+        return Ok(None);
+    };
+    if references[0] > 1 {
+        return Ok(None);
     }
-    Ok(())
+    let xyz_at = cells.at;
+    let (Some(x), Some(y), Some(z)) = (
+        View::f64_be_at(buf, xyz_at),
+        View::f64_be_at(buf, xyz_at + 8),
+        View::f64_be_at(buf, xyz_at + 16),
+    ) else {
+        return Ok(None);
+    };
+    if [x, y, z]
+        .iter()
+        .any(|value| !value.is_finite() || value.abs() > MAX_POINT_COORDINATE_M)
+    {
+        return Ok(None);
+    }
+    let mut refs = ctx.collection_vec(references.len(), "copy Parasolid point references")?;
+    refs.extend_from_slice(&references);
+    let point = Point {
+        attr,
+        refs,
+        xyz_m: [x, y, z],
+        xyz_offset: xyz_at,
+        offset: off,
+    };
+    Ok(Some((Relaxed::Point(point), cells.wide)))
 }
+
+/// Largest coordinate of a world point in metres. A larger value is a read of
+/// misaligned bytes.
+const MAX_POINT_COORDINATE_M: f64 = 1e4;
 
 #[cfg(test)]
 mod tests {
@@ -829,5 +1013,88 @@ mod tests {
         assert_eq!(tables.bridges[&40_000].refs[2], 41_000);
         // The same owner a second time is a duplicate use and stays out.
         assert_eq!(admitted.duplicate_owner, 0);
+    }
+
+    #[test]
+    fn a_coedge_that_disagrees_with_the_twin_it_names_is_not_admitted() {
+        use cadmpeg_ir::topology::Sense;
+
+        let twin_of_500 = Coedge {
+            attr: 10,
+            refs: [0, 20, 0, 3, 0, 500, 7, 0, 0],
+            sense: Sense::Forward,
+            offset: 0,
+        };
+        for (marker, admitted) in [(0x2b_u8, 0_usize), (0x2d, 1)] {
+            let mut bytes = coedge_bytes(500, [0, 21, 0, 3, 0, 10, 7, 0, 0], marker);
+            bytes.resize(bytes.len() + 24, 0);
+            let arena = cadmpeg_core::decode::DecodeArena::new();
+            let ctx = context(&bytes, &arena);
+            let mut tables = Tables::default();
+            tables.insert_coedge(&ctx, twin_of_500.clone()).unwrap();
+            tables
+                .insert_loop(
+                    &ctx,
+                    Loop {
+                        attr: 21,
+                        refs: [0, 500, 10, 0],
+                        offset: 0,
+                    },
+                )
+                .unwrap();
+            let log = admit_referenced(&ctx, &[(&bytes, false)], &mut tables).unwrap();
+            assert_eq!(log.by_type[3], admitted);
+            assert_eq!(log.inconsistent, 1 - admitted);
+            assert_eq!(
+                tables.admission_word(0x11, 500),
+                if admitted == 1 {
+                    "admitted"
+                } else {
+                    "inconsistent"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_vertex_is_admitted_with_its_wide_point() {
+        use cadmpeg_ir::topology::Sense;
+
+        let mut bytes = vec![0_u8, 0x1d];
+        push_pointer(&mut bytes, 41_000);
+        bytes.extend(0_u32.to_be_bytes());
+        for value in [0, 0, 0, 0] {
+            push_pointer(&mut bytes, value);
+        }
+        for value in [0.01_f64, 0.02, 0.03] {
+            bytes.extend(value.to_be_bytes());
+        }
+        let vertex_at = bytes.len();
+        bytes.extend([0_u8, 0x12]);
+        push_pointer(&mut bytes, 42_000);
+        bytes.extend(5_u32.to_be_bytes());
+        for value in [0, 0, 0, 0, 41_000] {
+            push_pointer(&mut bytes, value);
+        }
+        bytes.resize(bytes.len() + 24, 0);
+        assert!(vertex_at > 0);
+        let arena = cadmpeg_core::decode::DecodeArena::new();
+        let ctx = context(&bytes, &arena);
+        let mut tables = Tables::default();
+        tables
+            .insert_coedge(
+                &ctx,
+                Coedge {
+                    attr: 10,
+                    refs: [0, 0, 0, 0, 42_000, 0, 0, 0, 0],
+                    sense: Sense::Forward,
+                    offset: 0,
+                },
+            )
+            .unwrap();
+        let log = admit_referenced(&ctx, &[(&bytes, false)], &mut tables).unwrap();
+        assert_eq!((log.by_type[4], log.by_type[5]), (1, 1));
+        assert!(tables.points.contains_key(&41_000));
+        assert_eq!(tables.vertex_uses[&42_000].refs[4], 41_000);
     }
 }

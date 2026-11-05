@@ -344,6 +344,7 @@ pub(crate) fn render(
     for (_, loop_attr, _, at, _) in &diagnostics.ring_stops {
         wanted.push(*at);
         wanted.extend(tables.loops().get(loop_attr).map(|record| record.refs[1]));
+        wanted.extend(tables.coedges().get(at).map(|coedge| coedge.refs[1]));
     }
     let targets: HashSet<u16> = wanted.into_iter().filter(|index| *index != 0).collect();
     let hits = probe(ctx, streams, &targets)?;
@@ -453,6 +454,11 @@ pub(crate) fn render(
     for (bridge, loop_attr, walked, at, cause) in &diagnostics.ring_stops {
         ctx.charge_work(1, "render Parasolid ring diagnostics")?;
         let first = tables.loops().get(loop_attr).map(|record| record.refs[1]);
+        let ce_loop = tables.coedges().get(at).map(|coedge| coedge.refs[1]);
+        let same_owner = ce_loop
+            .and_then(|value| tables.loops().get(&value))
+            .zip(tables.loops().get(loop_attr))
+            .map(|(other, own)| other.refs[2] == own.refs[2]);
         let word = match cause {
             0 => "coedge_absent",
             1 => "foreign_loop",
@@ -462,14 +468,27 @@ pub(crate) fn render(
         lines.push(format!(
             "{{\"kind\":\"ring\",\"bridge\":{bridge},\"loop\":{loop_attr},\
              \"stop\":\"{word}\",\"walked\":{walked},\"at\":{at},\"at_known\":{},\
-             \"at_hits\":{},\"first\":{},\"first_known\":{},\"first_hits\":{}}}",
+             \"at_admit\":\"{}\",\"at_why\":[{}],\"at_hits\":{},\"first\":{},\
+             \"first_known\":{},\"first_admit\":\"{}\",\"first_why\":[{}],\
+             \"first_hits\":{},\"ce_loop\":{},\"ce_loop_known\":{},\
+             \"ce_loop_same_owner\":{}}}",
             list(known_as(tables, *at)),
+            tables.admission_word(0x11, *at),
+            why_json(tables, streams, &hits, *at, 0x11),
             at_hits(*at),
             option(first),
             list(first.map_or_else(Vec::new, |first| known_as(tables, first))),
+            first.map_or("none", |first| tables.admission_word(0x11, first)),
+            first.map_or_else(String::new, |first| why_json(
+                tables, streams, &hits, first, 0x11
+            )),
             first.map_or_else(|| "[]".to_owned(), at_hits),
+            option(ce_loop),
+            list(ce_loop.map_or_else(Vec::new, |value| known_as(tables, value))),
+            option(same_owner),
         ));
     }
+    pair_lines(ctx, tables, &mut lines)?;
     census(ctx, tables, streams, &mut lines)?;
     diagnostics.lines = lines;
     Ok(())
@@ -614,6 +633,32 @@ fn neighbours(keys: &[u16], value: u16) -> (String, String) {
     (pair(below), pair(above))
 }
 
+/// The rejection objects of the headers of the expected type at an index.
+fn why_json(
+    tables: &Tables,
+    streams: &[(&[u8], bool)],
+    hits: &HashMap<u16, Vec<Hit>>,
+    value: u16,
+    expected: u8,
+) -> String {
+    let why: Vec<String> = hits
+        .get(&value)
+        .into_iter()
+        .flatten()
+        .filter(|hit| hit.node_type == expected)
+        .filter_map(|hit| {
+            let (buf, _) = streams.get(hit.stream)?;
+            Some(format!(
+                "{{\"s\":\"{}\",\"n\":{},\"r\":{}}}",
+                if hit.delta { "d" } else { "p" },
+                hit.count,
+                super::topology::rejection_json(buf, hit.at, expected, tables),
+            ))
+        })
+        .collect();
+    why.join(",")
+}
+
 fn ref_line(
     tables: &Tables,
     streams: &[(&[u8], bool)],
@@ -650,32 +695,19 @@ fn ref_line(
                 .is_ok_and(|index| table_has(tables, expected, index))
         })
         .collect();
-    let why: Vec<String> = hits
-        .get(&value)
-        .into_iter()
-        .flatten()
-        .filter(|hit| hit.node_type == expected)
-        .filter_map(|hit| {
-            let (buf, _) = streams.get(hit.stream)?;
-            Some(format!(
-                "{{\"s\":\"{}\",\"n\":{},\"r\":{}}}",
-                if hit.delta { "d" } else { "p" },
-                hit.count,
-                super::topology::rejection_json(buf, hit.at, expected, tables),
-            ))
-        })
-        .collect();
+    let why = why_json(tables, streams, hits, value, expected);
     format!(
         "{{\"kind\":\"ref\",\"what\":\"{what}\",\"value\":{value},\"expected\":{expected},\
          \"known\":{},\"below\":{below},\"above\":{above},\"m7fff\":{},\"low8\":{},\
-         \"plus_k\":{},\"hdr_p\":{},\"hdr_d\":{},\"why\":[{}],\"hits\":{}}}",
+         \"plus_k\":{},\"hdr_p\":{},\"hdr_d\":{},\"admit\":\"{}\",\"why\":[{}],\"hits\":{}}}",
         list(known_as(tables, value)),
         variant(value & MASK_15),
         variant(value & MASK_8),
         list(plus_k),
         header(value, false),
         header(value, true),
-        why.join(","),
+        tables.admission_word(expected, value),
+        why,
         hits_json(hits.get(&value)),
     )
 }
@@ -765,6 +797,75 @@ fn raw_census(
         }
     }
     Ok(census)
+}
+
+/// The most pair lines one decode lists.
+const PAIR_LINE_LIMIT: usize = 200;
+
+/// Counts of coedge pairs that name each other as twin, by how many members
+/// the second pass admitted, and the pairs whose edges differ or whose senses
+/// are equal.
+fn pair_lines(
+    ctx: &DecodeContext<'_>,
+    tables: &Tables,
+    lines: &mut Vec<String>,
+) -> Result<(), CodecError> {
+    let mut keys: Vec<u16> = tables.coedges().keys().copied().collect();
+    ctx.stable_sort_by(&mut keys, Ord::cmp, |_| 0, "order Parasolid coedge pairs")?;
+    let mut total = [0_usize; 3];
+    let mut edge_mismatch = [0_usize; 3];
+    let mut same_sense = [0_usize; 3];
+    let mut listed = 0;
+    for key in keys {
+        ctx.charge_work(1, "pair Parasolid coedges")?;
+        let Some(coedge) = tables.coedges().get(&key) else {
+            continue;
+        };
+        let twin = coedge.refs[5];
+        let Some(other) = tables
+            .coedges()
+            .get(&twin)
+            .filter(|other| other.refs[5] == key && twin > key)
+        else {
+            continue;
+        };
+        let admitted = usize::from(tables.is_admitted(0x11, key))
+            + usize::from(tables.is_admitted(0x11, twin));
+        total[admitted] += 1;
+        let edges_differ = coedge.refs[6] != other.refs[6];
+        let equal_sense = coedge.sense == other.sense;
+        edge_mismatch[admitted] += usize::from(edges_differ);
+        same_sense[admitted] += usize::from(equal_sense);
+        if (edges_differ || equal_sense) && admitted > 0 && listed < PAIR_LINE_LIMIT {
+            listed += 1;
+            lines.push(format!(
+                "{{\"kind\":\"pair\",\"a\":{key},\"b\":{twin},\"adm\":{admitted},\
+                 \"edge_equal\":{},\"sense_a\":\"{}\",\"sense_b\":\"{}\",\
+                 \"loop_equal\":{},\"a_edge_known\":{},\"b_edge_known\":{}}}",
+                !edges_differ,
+                sense_word(coedge.sense),
+                sense_word(other.sense),
+                coedge.refs[1] == other.refs[1],
+                list(known_as(tables, coedge.refs[6])),
+                list(known_as(tables, other.refs[6])),
+            ));
+        }
+    }
+    lines.push(format!(
+        "{{\"kind\":\"pairs\",\"total\":{},\"edge_mismatch\":{},\"same_sense\":{}}}",
+        list(total),
+        list(edge_mismatch),
+        list(same_sense),
+    ));
+    Ok(())
+}
+
+fn sense_word(sense: Sense) -> &'static str {
+    if sense == Sense::Forward {
+        "+"
+    } else {
+        "-"
+    }
 }
 
 /// One line per table type on how the keys of its records relate to the
