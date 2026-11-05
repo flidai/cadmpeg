@@ -713,7 +713,7 @@ fn legacy_parameter_owner_68_uses_parameter_scalar_and_zero_scope() {
 }
 
 #[test]
-fn legacy_parameter_owner_68_requires_its_admitted_class_and_shape() {
+fn legacy_parameter_owner_68_is_selected_by_shape_not_class_tag() {
     assert!(parse_legacy_parameter_owner_68(
         &legacy_parameter_owner_68_frame("291"),
         crate::records::identity::Located {
@@ -722,7 +722,7 @@ fn legacy_parameter_owner_68_requires_its_admitted_class_and_shape() {
         },
         0
     )
-    .is_none());
+    .is_some());
 
     let mut malformed = legacy_parameter_owner_68_frame("284");
     malformed[55] = 0;
@@ -855,6 +855,71 @@ fn tagged_scalar_parameter_owner_can_carry_a_variant_slot() {
     assert_eq!(parsed.owned_ordinal, 73);
     assert_eq!(parsed.variant, Some(0));
     assert_eq!(parsed.companion_record_index, 46);
+}
+
+#[test]
+fn compact_scalar_parameter_owner_with_variant_slot_forms_an_owner_record() {
+    let parsed =
+        parse_parameter_owner(&compact_variant_parameter_owner_frame()).expect("variant owner");
+    let owner = parsed
+        .into_record("Design1/BulkStream.dat", 0)
+        .expect("owner record");
+    assert_eq!(owner.scope_record_index(), 6644);
+}
+
+fn shifted_parameter_record(discriminator: u64, closing_code: u8) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&3u32.to_le_bytes());
+    out.extend_from_slice(b"431");
+    out.extend_from_slice(&50014u32.to_le_bytes());
+    out.extend_from_slice(&[0; 11]);
+    out.extend_from_slice(&discriminator.to_le_bytes());
+    out.extend_from_slice(&110u32.to_le_bytes());
+    out.push(1);
+    out.extend_from_slice(&50015u32.to_le_bytes());
+    out.extend_from_slice(&[0; 6]);
+    lp_utf16(&mut out, "1.24 mm");
+    out.extend_from_slice(&[0; 5]);
+    lp_utf16(&mut out, "Radius");
+    lp_utf16(&mut out, "mm");
+    lp_utf16(&mut out, "d110");
+    out.extend_from_slice(&0.124f64.to_le_bytes());
+    out.extend_from_slice(&[0, 1, closing_code, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    out
+}
+
+#[test]
+fn shifted_discriminated_parameter_stores_its_ordinal_before_the_owner_marker() {
+    for discriminator in 0..=4 {
+        let parameter = parse_design_parameter_record(&shifted_parameter_record(discriminator, 19))
+            .expect("shifted parameter");
+        assert_eq!(parameter.record_index, 50014);
+        assert_eq!(parameter.source_ordinal, 110);
+        assert_eq!(parameter.owner_record_index(), Some(50015));
+        assert_eq!(
+            parameter
+                .family_discriminator()
+                .map(|value| value.value.code()),
+            Some(discriminator)
+        );
+        assert_eq!(parameter.expression(), "1.24 mm");
+        assert_eq!(parameter.name(), "d110");
+    }
+    assert!(parse_design_parameter_record(&shifted_parameter_record(7, 19)).is_none());
+}
+
+#[test]
+fn compact_parameter_accepts_other_closing_codes_but_only_before_the_zero_run() {
+    let mut record = shifted_parameter_record(1, 23);
+    assert!(parse_design_parameter_record(&record).is_some());
+    let compact =
+        compact_owned_parameter_record(6653, 99, "82.00 mm", "Diameter", Some("mm"), "d99", 8.2);
+    let mut other = compact.clone();
+    let tail = other.len() - 10;
+    other[tail] = 23;
+    assert!(parse_design_parameter_record(&other).is_some());
+    *record.last_mut().unwrap() = 1;
+    assert!(parse_design_parameter_record(&record).is_none());
 }
 
 #[test]

@@ -252,6 +252,14 @@ the ordered face-selection groups.
 its payload. The physical thread construction and face selections decode
 without assigning a semantic role to that record.
 
+### DR-74. Parameter closing code and discriminators 1 and 2
+
+**Question.** What do the closing code `X` of the twelve-byte parameter tail and the family discriminators `1` and `2` select?
+
+**Known.** `f3d.md` §3.1 "An indexed parameter record has three fixed header forms" gives the tail `00 01 X` and the discriminated forms. The decoder accepts discriminators `0` through `4` and any `X` for the compact owned form and for those discriminated forms. Neither value identifies `source_kind`.
+
+**Need.** A source-less writer must choose `X` and the discriminator for a new parameter.
+
 ## 2. External references
 
 ### XR-01. `neutronData` with a different GUID

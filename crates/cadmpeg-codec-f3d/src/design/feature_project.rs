@@ -5195,6 +5195,16 @@ fn normalize_parameter_ordinals(
                 |_| 0,
                 "f3d parameter group ordinal sort",
             )?;
+            // A repeated native ordinal rises to one above its predecessor so
+            // the neutral ordinals of one owner group stay distinct.
+            for position in 1..ordinals.len() {
+                let floor = ordinals[position - 1].checked_add(1).ok_or_else(|| {
+                    CodecError::Malformed("Design parameter ordinal exceeds u32".into())
+                })?;
+                if ordinals[position] < floor {
+                    ordinals[position] = floor;
+                }
+            }
             let mut unresolved = HashSet::new();
             for index in indices {
                 // discarded-value: each parameter index occurs once in its owner group.
