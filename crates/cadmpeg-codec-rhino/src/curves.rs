@@ -1312,6 +1312,142 @@ pub(crate) fn join_nurbs_segments(
     })
 }
 
+/// Splits a NURBS curve at its corners into curves that keep its parameter
+/// values.
+///
+/// A corner is an interior knot whose multiplicity is at least the degree, so
+/// the curve there is at most position-continuous. A curve without a corner,
+/// such as a smooth closed curve, yields one copy of itself. Each piece is
+/// endpoint-clamped and non-periodic, and evaluates as the source does over
+/// its own interval.
+pub(crate) fn split_nurbs_at_corners(
+    ctx: &DecodeContext<'_>,
+    curve: &NurbsCurve,
+    offset: usize,
+) -> Result<Vec<NurbsCurve>, GeometryError> {
+    const FAILURE: &str = "curve corner split failed";
+    let degree =
+        usize::try_from(curve.degree()).map_err(|_| error(offset, "curve degree overflow"))?;
+    let order = degree
+        .checked_add(1)
+        .ok_or_else(|| error(offset, "curve degree overflow"))?;
+    let knot_count = curve.knots().len();
+    let domain = match (
+        curve.knots().get(degree).copied(),
+        knot_count
+            .checked_sub(order)
+            .and_then(|index| curve.knots().get(index).copied()),
+    ) {
+        (Some(start), Some(end)) if degree > 0 && start < end => [start, end],
+        _ => return Err(error(offset, FAILURE)),
+    };
+    let mut breaks = ctx.collection_vec(2, "Rhino curve corner knots")?;
+    breaks.push(domain[0]);
+    let mut previous = None;
+    for knot in curve.knots().iter().copied() {
+        if previous == Some(knot) || knot <= domain[0] || knot >= domain[1] {
+            previous = Some(knot);
+            continue;
+        }
+        previous = Some(knot);
+        let multiplicity = curve.knots().iter().filter(|value| **value == knot).count();
+        if multiplicity >= degree {
+            ctx.reserve_vec(&mut breaks, 1, "Rhino curve corner knots")?;
+            breaks.push(knot);
+        }
+    }
+    breaks.push(domain[1]);
+    if breaks.len() == 2 {
+        return Ok(vec![
+            curve.try_clone_for_decode(ctx, "Rhino curve corner split copy")?
+        ]);
+    }
+
+    let rational = matches!(
+        curve.pole_rows(),
+        cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { .. }
+    );
+    let mut points = ctx.collection_vec(curve.pole_count(), "Rhino curve corner split poles")?;
+    for index in 0..curve.pole_count() {
+        let point = curve
+            .pole_rows()
+            .point_at(index)
+            .ok_or_else(|| error(offset, FAILURE))?
+            .get();
+        let weight = match curve.pole_rows() {
+            cadmpeg_ir::geometry::nurbs::NurbsPoles3::Polynomial { .. } => 1.0,
+            cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { points } => {
+                points[index].weight.get()
+            }
+        };
+        points.push(Homogeneous([
+            point.x * weight,
+            point.y * weight,
+            point.z * weight,
+            weight,
+        ]));
+    }
+    let mut knots = ctx.collection_vec(knot_count, "Rhino curve corner split knots")?;
+    knots.extend_from_slice(curve.knots());
+    for value in breaks.iter().copied() {
+        while knots.iter().filter(|knot| **knot == value).count() < order {
+            insert_knot_once(ctx, &mut knots, &mut points, degree, value, offset, FAILURE)?;
+        }
+    }
+
+    let mut pieces = ctx.collection_vec(breaks.len() - 1, "Rhino curve corner split pieces")?;
+    for window in breaks.windows(2) {
+        let first = knots
+            .iter()
+            .position(|knot| *knot == window[0])
+            .ok_or_else(|| error(offset, FAILURE))?;
+        let last = knots
+            .iter()
+            .position(|knot| *knot == window[1])
+            .ok_or_else(|| error(offset, FAILURE))?;
+        let knot_end = last
+            .checked_add(order)
+            .ok_or_else(|| error(offset, FAILURE))?;
+        if first >= last || knot_end > knots.len() || last > points.len() {
+            return Err(error(offset, FAILURE));
+        }
+        let mut piece_knots = ctx.collection_vec(knot_end - first, "Rhino curve corner knots")?;
+        piece_knots.extend_from_slice(&knots[first..knot_end]);
+        let mut piece_points = ctx.collection_vec(last - first, "Rhino curve corner poles")?;
+        let mut piece_weights = ctx.collection_vec(
+            if rational { last - first } else { 0 },
+            "Rhino curve corner weights",
+        )?;
+        for pole in &points[first..last] {
+            let weight = NonZeroReal::new(pole.0[3]).ok_or_else(|| error(offset, FAILURE))?;
+            if rational {
+                piece_points.push(Point3::new(
+                    pole.0[0] / weight.get(),
+                    pole.0[1] / weight.get(),
+                    pole.0[2] / weight.get(),
+                ));
+                piece_weights.push(weight);
+            } else {
+                // A polynomial curve carries unit weights, so the blended
+                // homogeneous coordinates are the positions.
+                piece_points.push(Point3::new(pole.0[0], pole.0[1], pole.0[2]));
+            }
+        }
+        pieces.push(
+            NurbsCurve::from_checked_lanes(
+                ctx,
+                curve.degree(),
+                piece_knots,
+                piece_points,
+                rational.then_some(piece_weights),
+                false,
+            )?
+            .map_err(|failure| GeometryError::malformed(offset, failure.to_string()))?,
+        );
+    }
+    Ok(pieces)
+}
+
 pub(crate) fn decode_inner_2d(
     ctx: &DecodeContext<'_>,
     data: &[u8],
@@ -3464,5 +3600,174 @@ mod tests {
             println!("Rhino remap{domain:?}: {r:?}");
             assert_eq!(r.unwrap().knots().as_slice(), &[0., 0., 1., 1.]);
         }
+    }
+
+    fn evaluate_curve(curve: &NurbsCurve, parameter: f64) -> Point3 {
+        let mut basis = vec![0.0; usize::try_from(curve.degree()).unwrap() + 1];
+        with_test_context(|ctx| {
+            cadmpeg_ir::eval::nurbs_curve_point_at_with_basis(ctx, curve, parameter, &mut basis)
+        })
+        .expect("evaluable curve")
+        .get()
+    }
+
+    fn corner_fixture(
+        degree: u32,
+        knots: Vec<f64>,
+        points: Vec<Point3>,
+        weights: Option<Vec<f64>>,
+        periodic: bool,
+    ) -> NurbsCurve {
+        NurbsCurve::from_lanes(
+            &cadmpeg_test_support::service_decode_context(),
+            degree,
+            knots,
+            points,
+            weights,
+            periodic,
+        )
+        .expect("fixture constructor admission")
+        .expect("valid corner fixture")
+    }
+
+    fn assert_pieces_follow_curve(curve: &NurbsCurve, pieces: &[NurbsCurve]) {
+        let degree = usize::try_from(curve.degree()).unwrap();
+        for piece in pieces {
+            let knots = piece.knots().as_slice();
+            let domain = [knots[degree], knots[knots.len() - degree - 1]];
+            assert!(domain[0] < domain[1]);
+            assert!(!piece.periodic());
+            for fraction in [0.0, 0.25, 0.5, 0.8, 1.0] {
+                let parameter = domain[0] + fraction * (domain[1] - domain[0]);
+                let expected = evaluate_curve(curve, parameter);
+                let found = evaluate_curve(piece, parameter);
+                assert!(
+                    expected.distance(found) <= 1.0e-9,
+                    "parameter {parameter}: {expected:?} != {found:?}"
+                );
+            }
+        }
+        for pair in pieces.windows(2) {
+            let first = pair[0].knots().as_slice();
+            let second = pair[1].knots().as_slice();
+            assert_eq!(first[first.len() - 1], second[0]);
+        }
+    }
+
+    #[test]
+    fn corner_split_cuts_a_polyline_into_its_segments() {
+        let points = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(4.0, 0.0, 0.0),
+            Point3::new(4.0, 4.0, 0.0),
+            Point3::new(0.0, 4.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
+        ];
+        let curve = corner_fixture(
+            1,
+            vec![0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 4.0],
+            points.clone(),
+            None,
+            false,
+        );
+        let pieces = with_test_context(|ctx| super::split_nurbs_at_corners(ctx, &curve, 0))
+            .expect("polyline splits");
+        assert_eq!(pieces.len(), 4);
+        for (index, piece) in pieces.iter().enumerate() {
+            let start = f64::from(u8::try_from(index).unwrap());
+            assert_eq!(
+                piece.knots().as_slice(),
+                &[start, start, start + 1.0, start + 1.0]
+            );
+            let poles: Vec<_> = piece.control_points().iter().map(|p| p.get()).collect();
+            assert_eq!(poles, vec![points[index], points[index + 1]]);
+        }
+        assert_pieces_follow_curve(&curve, &pieces);
+    }
+
+    #[test]
+    fn corner_split_cuts_a_rational_circle_at_its_double_knots() {
+        let weight = std::f64::consts::FRAC_1_SQRT_2;
+        let curve = corner_fixture(
+            2,
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0],
+            vec![
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+                Point3::new(-1.0, 1.0, 0.0),
+                Point3::new(-1.0, 0.0, 0.0),
+                Point3::new(-1.0, -1.0, 0.0),
+                Point3::new(0.0, -1.0, 0.0),
+                Point3::new(1.0, -1.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+            ],
+            Some(vec![
+                1.0, weight, 1.0, weight, 1.0, weight, 1.0, weight, 1.0,
+            ]),
+            false,
+        );
+        let pieces = with_test_context(|ctx| super::split_nurbs_at_corners(ctx, &curve, 0))
+            .expect("circle splits");
+        assert_eq!(pieces.len(), 4);
+        for piece in &pieces {
+            assert_eq!(piece.pole_count(), 3);
+            assert!(matches!(
+                piece.pole_rows(),
+                cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { .. }
+            ));
+        }
+        assert_pieces_follow_curve(&curve, &pieces);
+    }
+
+    #[test]
+    fn corner_split_keeps_a_smooth_curve_whole() {
+        let curve = corner_fixture(
+            3,
+            vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 2.0, 0.0),
+                Point3::new(2.0, 2.0, 0.0),
+                Point3::new(3.0, 0.0, 0.0),
+            ],
+            None,
+            false,
+        );
+        let pieces = with_test_context(|ctx| super::split_nurbs_at_corners(ctx, &curve, 0))
+            .expect("smooth curve stays whole");
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].knots().as_slice(), curve.knots().as_slice());
+        assert_eq!(pieces[0].control_points(), curve.control_points());
+    }
+
+    #[test]
+    fn corner_split_clamps_an_unclamped_curve_before_cutting() {
+        let curve = corner_fixture(
+            2,
+            vec![0.0, 1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 2.0, 0.0),
+                Point3::new(2.0, 0.0, 1.0),
+                Point3::new(3.0, 2.0, 0.0),
+                Point3::new(4.0, 0.0, 2.0),
+                Point3::new(5.0, 3.0, 0.0),
+            ],
+            None,
+            false,
+        );
+        let pieces = with_test_context(|ctx| super::split_nurbs_at_corners(ctx, &curve, 0))
+            .expect("unclamped curve splits");
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(
+            pieces[0].knots().as_slice(),
+            &[2.0, 2.0, 2.0, 3.0, 3.0, 3.0]
+        );
+        assert_eq!(
+            pieces[1].knots().as_slice(),
+            &[3.0, 3.0, 3.0, 4.0, 5.0, 5.0, 5.0]
+        );
+        assert_pieces_follow_curve(&curve, &pieces);
     }
 }
