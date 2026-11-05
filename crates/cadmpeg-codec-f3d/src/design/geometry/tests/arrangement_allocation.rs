@@ -98,10 +98,12 @@ fn node_refuses_limit() {
 
 #[test]
 fn pending_node_refuses_limit() {
-    let (arena, policy) = context_with_collection_limit(1);
+    // One node and no edges admit five fixed arrays; the first stack frame is
+    // the sixth item.
+    let (arena, policy) = context_with_collection_limit(5);
     let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
     assert!(matches!(
-        super::super::arrangement_has_alternate_path(&[], 0, 0, 0, 1, &ctx),
+        super::super::arrangement_non_bridge_marks(&[], 1, &ctx),
         Err(CodecError::ResourceLimit(failure))
             if failure.operation == "f3d arrangement pending nodes"
     ));

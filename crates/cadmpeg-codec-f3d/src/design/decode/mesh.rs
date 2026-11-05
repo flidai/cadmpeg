@@ -29,6 +29,7 @@ use crate::layout::paramesh_feature_scope_prefix as feature_scope;
 use crate::layout::paramesh_guid_join_prefix as guid_join;
 use crate::layout::paramesh_mesh_body_join_prefix as mesh_body;
 use crate::layout::paramesh_mesh_collection_base_prefix as mesh_collection_base;
+use crate::layout::paramesh_mesh_collection_extended_prefix as mesh_collection_extended;
 use crate::layout::paramesh_mesh_collection_prefix as mesh_collection;
 use crate::layout::paramesh_scene_node as scene_node;
 use crate::layout::paramesh_scene_node_placed as placed_scene_node;
@@ -678,12 +679,132 @@ fn parse_mesh_body_record(
     parsed.ok_or_else(|| malformed_frame(ctx, "mesh-body", frame.entity_id))
 }
 
-fn parse_mesh_collection_record(
+/// Fixed prefix of a mesh-collection record. The extended form inserts a form
+/// byte, a zero u32, and a second u32 count before the constant bytes.
+#[derive(Clone, Copy)]
+struct MeshCollectionPrefix {
+    extended: bool,
+    count_at: usize,
+    constant_at: usize,
+    texture_table_at: usize,
+    nested_at: usize,
+}
+
+impl MeshCollectionPrefix {
+    const BASE: Self = Self {
+        extended: false,
+        count_at: mesh_collection::BODY_COUNT,
+        constant_at: mesh_collection::CONSTANT_01_01,
+        texture_table_at: mesh_collection::TEXTURE_TABLE_REFERENCE,
+        nested_at: mesh_collection::LEN,
+    };
+    const EXTENDED: Self = Self {
+        extended: true,
+        count_at: mesh_collection_extended::BODY_COUNT,
+        constant_at: mesh_collection_extended::CONSTANT_01_01,
+        texture_table_at: mesh_collection_extended::TEXTURE_TABLE_REFERENCE,
+        nested_at: mesh_collection_extended::LEN,
+    };
+
+    fn detect(record: &[u8]) -> Option<Self> {
+        if record.get(mesh_collection::ZERO_RUN_10..mesh_collection::BODY_COUNT) == Some(&[0; 10]) {
+            return Some(Self::BASE);
+        }
+        (record.get(mesh_collection_extended::ZERO_RUN_9..mesh_collection_extended::FORM_MARKER)
+            == Some(&[0; 9])
+            && record.get(mesh_collection_extended::FORM_MARKER) == Some(&1)
+            && View::u32_le_at(record, mesh_collection_extended::ZERO_COUNT) == Some(0))
+        .then_some(Self::EXTENDED)
+    }
+}
+
+/// Structure shared by every mesh-collection layout.
+struct MeshCollectionShape {
+    prefix: MeshCollectionPrefix,
+    identity: DesignMeshRecordIdentity,
+    base_record: DesignMeshRecordIdentity,
+    texture_table_record_index: u32,
+    body_records: Vec<u32>,
+    entries_listed: bool,
+    owner_record_index: u32,
+}
+
+impl MeshCollectionShape {
+    /// Whether the native collection model represents this layout.
+    fn is_base_layout(&self) -> bool {
+        !self.prefix.extended && !self.entries_listed
+    }
+}
+
+/// Locate the owner reference after the nested body references.
+///
+/// The owner reference either follows the body references directly or follows
+/// a u32 entry count and that many `(body reference, u32 1)` entries. The
+/// entries name the nested bodies once each, in any order.
+fn mesh_collection_owner_position(
+    ctx: &DecodeContext<'_>,
+    record: &[u8],
+    bodies: &[u32],
+    list_at: usize,
+) -> Result<Option<(bool, usize)>, CodecError> {
+    const ENTRY_BYTES: usize = SAME_SEGMENT_REFERENCE_BYTES + 4;
+
+    let Some(remaining) = record.len().checked_sub(list_at) else {
+        return Ok(None);
+    };
+    if remaining == SAME_SEGMENT_REFERENCE_BYTES {
+        return Ok(Some((false, list_at)));
+    }
+    let Some(count) =
+        View::u32_le_at(record, list_at).and_then(|count| usize::try_from(count).ok())
+    else {
+        return Ok(None);
+    };
+    if count != 0 && count != bodies.len() {
+        return Ok(None);
+    }
+    let Some(entries_at) = list_at.checked_add(4) else {
+        return Ok(None);
+    };
+    let Some(owner_at) = count
+        .checked_mul(ENTRY_BYTES)
+        .and_then(|bytes| entries_at.checked_add(bytes))
+    else {
+        return Ok(None);
+    };
+    if owner_at.checked_add(SAME_SEGMENT_REFERENCE_BYTES) != Some(record.len()) {
+        return Ok(None);
+    }
+    let mut unlisted = HashSet::new();
+    if count != 0 {
+        for body in bodies {
+            ctx.insert_hash_set(&mut unlisted, *body, "f3d mesh collection entry bodies")?;
+        }
+    }
+    for ordinal in 0..count {
+        let Some(at) = ordinal
+            .checked_mul(ENTRY_BYTES)
+            .and_then(|bytes| entries_at.checked_add(bytes))
+        else {
+            return Ok(None);
+        };
+        let Some(target) = exact_local_record_index(record, at) else {
+            return Ok(None);
+        };
+        let value_at = at + SAME_SEGMENT_REFERENCE_BYTES;
+        if View::u32_le_at(record, value_at) != Some(1) || !unlisted.remove(&target) {
+            return Ok(None);
+        }
+    }
+    Ok(Some((true, owner_at)))
+}
+
+fn read_mesh_collection_shape(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
     meta: &crate::metastream::MetaStream,
     frame: TypedPrimaryFrame<'_>,
-) -> Result<MeshCollectionRecord, CodecError> {
+) -> Result<MeshCollectionShape, CodecError> {
     validate_mesh_registration(
         ctx,
         frame,
@@ -694,26 +815,30 @@ fn parse_mesh_collection_record(
     )?;
     let record = &bytes[frame.start..frame.end];
     let identity = record_identity(ctx, record, frame, "mesh-collection")?;
-    let counted_bodies = counted_local_record_indices(
-        ctx,
-        record,
-        mesh_collection::LEN + mesh_collection_base::BODY_COUNT,
-    )?;
+    let prefix = MeshCollectionPrefix::detect(record);
+    let counted_bodies = match prefix {
+        Some(prefix) => counted_local_record_indices(
+            ctx,
+            record,
+            prefix.nested_at + mesh_collection_base::BODY_COUNT,
+        )?,
+        None => None,
+    };
+    let owner_position = match &counted_bodies {
+        Some((bodies, list_at)) => mesh_collection_owner_position(ctx, record, bodies, *list_at)?,
+        None => None,
+    };
     let parsed = (|| {
-        (record.get(mesh_collection::ZERO_RUN_10..mesh_collection::BODY_COUNT) == Some(&[0; 10]))
+        let prefix = prefix?;
+        (record.get(prefix.constant_at..prefix.constant_at.checked_add(2)?) == Some(&[1, 1]))
             .then_some(())?;
-        (record.get(mesh_collection::CONSTANT_01_01..mesh_collection::TEXTURE_TABLE_REFERENCE)
-            == Some(&[1, 1]))
-        .then_some(())?;
-        let first_count =
-            usize::try_from(View::u32_le_at(record, mesh_collection::BODY_COUNT)?).ok()?;
-        let texture_table_record_index =
-            exact_local_record_index(record, mesh_collection::TEXTURE_TABLE_REFERENCE)?;
+        let first_count = usize::try_from(View::u32_le_at(record, prefix.count_at)?).ok()?;
+        let texture_table_record_index = exact_local_record_index(record, prefix.texture_table_at)?;
         let base_record = nested_record_identity(
             record,
             crate::design::decode::mesh::NestedMeshRecordFrame {
                 frame_start: frame.start,
-                at: mesh_collection::LEN,
+                at: prefix.nested_at,
                 end: record.len(),
                 record_index: identity.record_index(),
             },
@@ -726,22 +851,69 @@ fn parse_mesh_collection_record(
             },
         )?;
         (record.get(
-            mesh_collection::LEN + mesh_collection_base::ZERO_RUN_9
-                ..mesh_collection::LEN + mesh_collection_base::BODY_COUNT,
+            prefix.nested_at + mesh_collection_base::ZERO_RUN_9
+                ..prefix.nested_at + mesh_collection_base::BODY_COUNT,
         ) == Some(&[0; 9]))
         .then_some(())?;
-        let (body_records, owner_at) = counted_bodies?;
-        (first_count == body_records.len()).then_some(())?;
+        let (body_records, _) = counted_bodies?;
+        // The extended form can retain a count for bodies its nested list no
+        // longer names.
+        (first_count == body_records.len() || (prefix.extended && body_records.is_empty()))
+            .then_some(())?;
+        let (entries_listed, owner_at) = owner_position?;
         let owner_record_index = exact_local_record_index(record, owner_at)?;
-        (owner_at.checked_add(SAME_SEGMENT_REFERENCE_BYTES)? == record.len()).then_some(())?;
-        Some(MeshCollectionRecord {
-            collection: DesignMeshCollection::new(identity, base_record).ok()?,
+        Some(MeshCollectionShape {
+            prefix,
+            identity,
+            base_record,
             texture_table_record_index,
             body_records,
+            entries_listed,
             owner_record_index,
         })
     })();
     parsed.ok_or_else(|| malformed_frame(ctx, "mesh-collection", frame.entity_id))
+}
+
+fn mesh_collection_record_from_shape(
+    ctx: &DecodeContext<'_>,
+    shape: MeshCollectionShape,
+    entity_id: u64,
+) -> Result<MeshCollectionRecord, CodecError> {
+    Ok(MeshCollectionRecord {
+        collection: DesignMeshCollection::new(shape.identity, shape.base_record)
+            .map_err(|_| malformed_frame(ctx, "mesh-collection", entity_id))?,
+        texture_table_record_index: shape.texture_table_record_index,
+        body_records: shape.body_records,
+        owner_record_index: shape.owner_record_index,
+    })
+}
+
+/// Read one mesh collection for the feature graph.
+///
+/// A collection without bodies in the extended or entry-listed layout is an
+/// empty registry and yields no record. The native collection model does not
+/// represent those layouts with bodies.
+fn read_mesh_collection(
+    ctx: &DecodeContext<'_>,
+    bytes: &[u8],
+    meta: &crate::metastream::MetaStream,
+    frame: TypedPrimaryFrame<'_>,
+) -> Result<Option<MeshCollectionRecord>, CodecError> {
+    let shape = read_mesh_collection_shape(ctx, bytes, meta, frame)?;
+    if shape.is_base_layout() {
+        return mesh_collection_record_from_shape(ctx, shape, frame.entity_id).map(Some);
+    }
+    if shape.body_records.is_empty() {
+        return Ok(None);
+    }
+    Err(CodecError::NotImplemented(ctx.format_retained(
+        format_args!(
+            "F3D Design mesh-collection entity {} lists bodies in an unsupported layout",
+            frame.entity_id
+        ),
+        "f3d Design unsupported diagnostic",
+    )?))
 }
 
 fn parse_mesh_texture_table_record(
@@ -1386,10 +1558,14 @@ where
     if collection_frames.is_empty() {
         return Ok(Vec::new());
     }
-    let mut collections = ctx.try_collect_vec(
+    let collections = ctx.try_collect_vec(
         collection_frames
             .into_iter()
-            .map(|frame| parse_mesh_collection_record(ctx, bytes, meta, frame)),
+            .map(|frame| read_mesh_collection(ctx, bytes, meta, frame)),
+        "f3d mesh collection records",
+    )?;
+    let mut collections = ctx.collect_vec(
+        collections.into_iter().flatten(),
         "f3d mesh collection records",
     )?;
     collections.retain(|collection| !collection.body_records.is_empty());
@@ -2020,6 +2196,7 @@ mod tests {
         paramesh_collection_owner_v17 as collection_owner_v17,
         paramesh_mesh_body_join_prefix as mesh_body,
         paramesh_mesh_collection_base_prefix as mesh_collection_base,
+        paramesh_mesh_collection_extended_prefix as mesh_collection_extended,
         paramesh_mesh_collection_prefix as mesh_collection, paramesh_scene_node as scene_node,
         paramesh_scene_node_placed as placed_scene_node,
         paramesh_texture_table_prefix as texture_table,
@@ -2117,7 +2294,7 @@ mod tests {
         let (ctx, _) =
             cadmpeg_core::decode::DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
         assert!(matches!(
-            super::parse_mesh_collection_record(&ctx, &graph.bytes, &graph.meta, *frame),
+            super::read_mesh_collection(&ctx, &graph.bytes, &graph.meta, *frame),
             Err(CodecError::ResourceLimit(limit))
                 if limit.dimension == cadmpeg_core::decode::ResourceDimension::CollectionItems
         ));
@@ -2303,7 +2480,26 @@ mod tests {
         }
     }
 
-    fn mesh_collection_record(
+    /// Serialized layouts of a mesh-collection record.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum CollectionLayout {
+        Base,
+        BaseListed,
+        Extended,
+        ExtendedListed,
+    }
+
+    impl CollectionLayout {
+        fn extended(self) -> bool {
+            matches!(self, Self::Extended | Self::ExtendedListed)
+        }
+        fn listed(self) -> bool {
+            matches!(self, Self::BaseListed | Self::ExtendedListed)
+        }
+    }
+
+    fn mesh_collection_record_in_layout(
+        layout: CollectionLayout,
         class_tag: u32,
         base_class_tag: u32,
         record_index: u32,
@@ -2311,23 +2507,32 @@ mod tests {
         body_record_indices: &[u32],
         owner_record_index: u32,
     ) -> Vec<u8> {
+        let count = (u32::try_from(body_record_indices.len()).expect("fixture value fits u32"))
+            .to_le_bytes();
         let mut bytes = Vec::new();
         push_indexed_header(&mut bytes, class_tag, record_index);
-        bytes.extend_from_slice(&[0; 10]);
-        bytes.extend_from_slice(
-            &(u32::try_from(body_record_indices.len()).expect("fixture value fits u32"))
-                .to_le_bytes(),
-        );
+        if layout.extended() {
+            bytes.extend_from_slice(&[0; 9]);
+            bytes.push(1);
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+        } else {
+            bytes.extend_from_slice(&[0; 10]);
+        }
+        bytes.extend_from_slice(&count);
         bytes.extend_from_slice(&[1, 1]);
         push_reference(&mut bytes, texture_table_record_index);
         push_indexed_header(&mut bytes, base_class_tag, record_index);
         bytes.extend_from_slice(&[0; 9]);
-        bytes.extend_from_slice(
-            &(u32::try_from(body_record_indices.len()).expect("fixture value fits u32"))
-                .to_le_bytes(),
-        );
+        bytes.extend_from_slice(&count);
         for body in body_record_indices {
             push_reference(&mut bytes, *body);
+        }
+        if layout.listed() {
+            bytes.extend_from_slice(&count);
+            for body in body_record_indices.iter().rev() {
+                push_reference(&mut bytes, *body);
+                bytes.extend_from_slice(&1u32.to_le_bytes());
+            }
         }
         push_reference(&mut bytes, owner_record_index);
         bytes
@@ -2504,6 +2709,14 @@ mod tests {
     fn synthetic_mesh_graph_with_body_count(
         with_textures: bool,
         body_count: usize,
+    ) -> SyntheticMeshGraph {
+        synthetic_mesh_graph_in_layout(with_textures, body_count, CollectionLayout::Base)
+    }
+
+    fn synthetic_mesh_graph_in_layout(
+        with_textures: bool,
+        body_count: usize,
+        layout: CollectionLayout,
     ) -> SyntheticMeshGraph {
         const ENTRY: u32 = 102;
         const GUID: u32 = 103;
@@ -2690,7 +2903,8 @@ mod tests {
             &mut bytes,
             &mut records,
             COLLECTION,
-            mesh_collection_record(
+            mesh_collection_record_in_layout(
+                layout,
                 TAG_COLLECTION,
                 TAG_COLLECTION_BASE,
                 COLLECTION,
@@ -2905,6 +3119,139 @@ mod tests {
         )
         .expect("empty mesh registry");
         assert!(design.is_empty());
+    }
+
+    #[test]
+    fn empty_extended_and_listed_mesh_collections_do_not_enter_feature_graph() {
+        for layout in [
+            CollectionLayout::BaseListed,
+            CollectionLayout::Extended,
+            CollectionLayout::ExtendedListed,
+        ] {
+            let graph = synthetic_mesh_graph_in_layout(false, 0, layout);
+            let mut no_asset = no_texture_asset;
+            let design = parse_mesh_design_records(
+                &graph.bytes,
+                &graph.meta,
+                "Synthetic/BulkStream.dat",
+                &mut no_asset,
+            )
+            .expect("empty mesh registry");
+            assert!(design.is_empty());
+        }
+    }
+
+    #[test]
+    fn mesh_collection_layouts_share_one_structure() {
+        for (layout, extended, listed, length) in [
+            (CollectionLayout::Base, false, false, 73 + 11 * 2),
+            (
+                CollectionLayout::BaseListed,
+                false,
+                true,
+                73 + 11 * 2 + 4 + 15 * 2,
+            ),
+            (CollectionLayout::Extended, true, false, 77 + 11 * 2),
+            (
+                CollectionLayout::ExtendedListed,
+                true,
+                true,
+                77 + 11 * 2 + 4 + 15 * 2,
+            ),
+        ] {
+            let graph = synthetic_mesh_graph_in_layout(false, 2, layout);
+            let frame = sole_typed_frame(&graph, MESH_COLLECTION_TYPE_GUID);
+            assert_eq!(frame.end - frame.start, length);
+            let shape = crate::design::test_support::with_test_decode_context(|ctx| {
+                super::read_mesh_collection_shape(ctx, &graph.bytes, &graph.meta, frame)
+            })
+            .expect("collection layout");
+            assert_eq!(shape.prefix.extended, extended);
+            assert_eq!(shape.entries_listed, listed);
+            assert_eq!(shape.body_records, [104, 117]);
+            assert_eq!(shape.texture_table_record_index, 101);
+            assert_eq!(shape.owner_record_index, 110);
+        }
+    }
+
+    #[test]
+    fn nonempty_extended_or_listed_mesh_collection_is_unsupported() {
+        for layout in [
+            CollectionLayout::BaseListed,
+            CollectionLayout::Extended,
+            CollectionLayout::ExtendedListed,
+        ] {
+            let graph = synthetic_mesh_graph_in_layout(false, 1, layout);
+            let mut no_asset = no_texture_asset;
+            let error = parse_mesh_design_records(
+                &graph.bytes,
+                &graph.meta,
+                "Synthetic/BulkStream.dat",
+                &mut no_asset,
+            )
+            .expect_err("the native collection model does not represent this layout");
+            assert!(matches!(error, CodecError::NotImplemented(_)), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn extended_mesh_collection_count_must_match_nested_bodies() {
+        let graph = synthetic_mesh_graph_in_layout(false, 0, CollectionLayout::Extended);
+        let frame = sole_typed_frame(&graph, MESH_COLLECTION_TYPE_GUID);
+        let read = |graph: &SyntheticMeshGraph| {
+            crate::design::test_support::with_test_decode_context(|ctx| {
+                super::read_mesh_collection_shape(ctx, &graph.bytes, &graph.meta, frame)
+            })
+        };
+        // A retained count is admitted when the nested list is empty.
+        let mut retained = synthetic_mesh_graph_in_layout(false, 0, CollectionLayout::Extended);
+        let count_at = frame.start + mesh_collection_extended::BODY_COUNT;
+        retained.bytes[count_at..count_at + 4].copy_from_slice(&6u32.to_le_bytes());
+        assert!(read(&retained).is_ok());
+        // It is refused when the nested list names bodies.
+        let reference = synthetic_mesh_graph_in_layout(false, 2, CollectionLayout::Extended);
+        let frame = sole_typed_frame(&reference, MESH_COLLECTION_TYPE_GUID);
+        let mut nonempty = synthetic_mesh_graph_in_layout(false, 2, CollectionLayout::Extended);
+        let count_at = frame.start + mesh_collection_extended::BODY_COUNT;
+        nonempty.bytes[count_at..count_at + 4].copy_from_slice(&3u32.to_le_bytes());
+        assert!(
+            crate::design::test_support::with_test_decode_context(|ctx| {
+                super::read_mesh_collection_shape(ctx, &nonempty.bytes, &nonempty.meta, frame)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mesh_collection_second_list_must_name_each_body_once() {
+        let graph = synthetic_mesh_graph_in_layout(false, 2, CollectionLayout::ExtendedListed);
+        let frame = sole_typed_frame(&graph, MESH_COLLECTION_TYPE_GUID);
+        let owner_at = frame.end - 11;
+        let first_entry = owner_at - 2 * 15;
+        for (offset, replacement) in [
+            // An entry names a body twice.
+            (first_entry + 15 + 1, 117u64.to_le_bytes().to_vec()),
+            // An entry names a record outside the nested list.
+            (first_entry + 1, 999u64.to_le_bytes().to_vec()),
+            // An entry value other than 1.
+            (first_entry + 11, 2u32.to_le_bytes().to_vec()),
+            // An entry count other than zero or the nested body count.
+            (first_entry - 4, 1u32.to_le_bytes().to_vec()),
+        ] {
+            let mut corrupt =
+                synthetic_mesh_graph_in_layout(false, 2, CollectionLayout::ExtendedListed);
+            let at = frame.start + (offset - frame.start);
+            corrupt.bytes[at..at + replacement.len()].copy_from_slice(&replacement);
+            let error = crate::design::test_support::with_test_decode_context(|ctx| {
+                super::read_mesh_collection_shape(ctx, &corrupt.bytes, &corrupt.meta, frame)
+            })
+            .err()
+            .expect("corrupt second list");
+            assert!(
+                error.to_string().contains("invalid primary frame"),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
@@ -3206,13 +3553,14 @@ mod tests {
     fn mesh_graph_collection_builders_refuse_caller_limits() {
         let graph = synthetic_mesh_graph(true);
         let collection = crate::design::test_support::with_test_decode_context(|ctx| {
-            super::parse_mesh_collection_record(
+            super::read_mesh_collection(
                 ctx,
                 &graph.bytes,
                 &graph.meta,
                 sole_typed_frame(&graph, MESH_COLLECTION_TYPE_GUID),
             )
             .unwrap()
+            .expect("base-layout collection")
         });
         let texture_table = crate::design::test_support::with_test_decode_context(|ctx| {
             parse_mesh_texture_table_record(

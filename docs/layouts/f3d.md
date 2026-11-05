@@ -811,6 +811,22 @@ Offsets are relative to the mesh-collection indexed header. The nested CommonDat
 | 25 | 2 | `constant_01_01` | `bytes[2]` | little | spec | bytes `01 01` at offset 25 |
 | 27 | 11 | `texture_table_reference` | `bytes[11]` | little | spec | a marked same-segment texture-table reference at offset 27 |
 
+## `paramesh_mesh_collection_extended_prefix`
+
+Spec §3.1 · layout: byte offsets · size: 42 B
+
+Offsets are relative to the mesh-collection indexed header. The nested CommonData record starts at the end of this prefix.
+
+| Offset | Size | Field | Type | Endian | Src | Meaning |
+| -----: | ---: | ----- | ---- | ------ | --- | ------- |
+| 0 | 11 | `indexed_header` | `bytes[11]` | little | spec | The extended form has nine zero bytes |
+| 11 | 9 | `zero_run_9` | `bytes[9]` | little | spec | nine zero bytes at offsets 11 through 19 |
+| 20 | 1 | `form_marker` | `u8` | little | spec | byte `01` at offset 20 |
+| 21 | 4 | `zero_count` | `u32` | little | spec | a zero u32 at offset 21 |
+| 25 | 4 | `body_count` | `u32` | little | spec | a u32 body count at offset 25 |
+| 29 | 2 | `constant_01_01` | `bytes[2]` | little | spec | bytes `01 01` at offset 29 |
+| 31 | 11 | `texture_table_reference` | `bytes[11]` | little | spec | a marked same-segment texture-table reference at offset 31 |
+
 ## `paramesh_mesh_collection_base_prefix`
 
 Spec §3.1 · layout: byte offsets · size: 24 B

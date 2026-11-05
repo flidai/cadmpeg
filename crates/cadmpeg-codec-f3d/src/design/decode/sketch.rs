@@ -1151,11 +1151,22 @@ pub(super) struct NamedEntityHeader {
     pub(super) end: usize,
 }
 
+/// Property types of an `EntityGenesis` entity-header property block and the
+/// byte width of their values.
+const GENESIS_UINT64_TYPE: &[u8] = b"IntrinsicMetaTypeuint64";
+const GENESIS_HSTRING_TYPE: &[u8] = b"IntrinsicMetaTypeHString";
+const GENESIS_HSTRING_VALUE_BYTES: usize = 4;
+const GENESIS_UINT64_VALUE_BYTES: usize = 8;
+/// Most properties the header property block admits.
+const MAX_GENESIS_PROPERTIES: usize = 16;
+
 /// Parse the `EntityGenesis` entity-header layout at `start`: the u32 record
 /// index doubles as the entity suffix and is followed by a zero run, a
-/// `0x01`-marked u32 1, the `EntityGenesis` and `IntrinsicMetaTypeuint64`
-/// key strings, the u64 origin bitfield, and the UTF-16LE entity id whose
-/// numeric suffix equals the record index.
+/// `0x01`-marked u32 property count, the property block, and the UTF-16LE
+/// entity id whose numeric suffix equals the record index. The block holds
+/// `IntrinsicMetaTypeHString` properties (u32 values) and ends with the
+/// `EntityGenesis` property of type `IntrinsicMetaTypeuint64` (u64 origin
+/// bitfield).
 pub(super) fn parse_genesis_entity_header(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
@@ -1171,25 +1182,42 @@ pub(super) fn parse_genesis_entity_header(
     while bytes.get(cursor) == Some(&0) && cursor < start + 35 {
         cursor += 1;
     }
-    if cursor == start + 11
-        || bytes.get(cursor) != Some(&1)
-        || View::u32_le_at(bytes, cursor + 1) != Some(1)
-    {
+    let property_count = View::u32_le_at(bytes, cursor + 1)
+        .and_then(|count| usize::try_from(count).ok())
+        .filter(|count| (1..=MAX_GENESIS_PROPERTIES).contains(count));
+    if cursor == start + 11 || bytes.get(cursor) != Some(&1) {
         return Ok(None);
     }
-    let Some(after_key) = lp_ascii_matches(bytes, cursor + 5, b"EntityGenesis") else {
+    let Some(property_count) = property_count else {
         return Ok(None);
     };
-    let Some(after_type) = lp_ascii_matches(bytes, after_key, b"IntrinsicMetaTypeuint64") else {
-        return Ok(None);
-    };
-    let Some((entity_id, end)) = lp_utf16_bounded_charged(
-        ctx,
-        bytes,
-        after_type + 8,
-        1..=256,
-        "f3d Design UTF-16 text",
-    )?
+    let mut at = cursor + 5;
+    for ordinal in 0..property_count {
+        let Some((key, after_key)) =
+            lp_ascii_filtered_view(bytes, at, 1..=256, u8::is_ascii_graphic)
+        else {
+            return Ok(None);
+        };
+        let Some((type_name, after_type)) =
+            lp_ascii_filtered_view(bytes, after_key, 1..=256, u8::is_ascii_graphic)
+        else {
+            return Ok(None);
+        };
+        let last = ordinal + 1 == property_count;
+        let value_bytes = match (last, key, type_name.as_bytes()) {
+            (true, "EntityGenesis", GENESIS_UINT64_TYPE) => GENESIS_UINT64_VALUE_BYTES,
+            (false, key, GENESIS_HSTRING_TYPE) if key != "EntityGenesis" => {
+                GENESIS_HSTRING_VALUE_BYTES
+            }
+            _ => return Ok(None),
+        };
+        let Some(next) = after_type.checked_add(value_bytes) else {
+            return Ok(None);
+        };
+        at = next;
+    }
+    let Some((entity_id, end)) =
+        lp_utf16_bounded_charged(ctx, bytes, at, 1..=256, "f3d Design UTF-16 text")?
     else {
         return Ok(None);
     };
@@ -1199,21 +1227,11 @@ pub(super) fn parse_genesis_entity_header(
     Ok(
         (entity_id.suffix() == entity_suffix).then_some(NamedEntityHeader {
             entity_id,
-            entity_id_offset: after_type + 12,
+            entity_id_offset: at + 4,
             optional_slot_present: false,
             end,
         }),
     )
-}
-
-fn lp_ascii_matches(bytes: &[u8], at: usize, expected: &[u8]) -> Option<usize> {
-    let count = usize::try_from(View::u32_le_at(bytes, at)?).ok()?;
-    if count != expected.len() {
-        return None;
-    }
-    let start = at.checked_add(4)?;
-    let end = start.checked_add(count)?;
-    (bytes.get(start..end) == Some(expected)).then_some(end)
 }
 
 /// Parse the counted member-record run of the paired same-index container
