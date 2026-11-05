@@ -7,10 +7,9 @@ use super::{
     hatch_loop_ids, hatch_plane_transform, hatch_source_links, region_shell_groups,
     region_shell_groups_without_records, scaled_tolerance, seal_for_test, set_exactness,
     snapshot_instance_links, snapshot_instance_statuses, stage_brep, stage_curve_tree,
-    stage_extrusion_caps, transform_decoded_curve, transform_surface, with_expand,
-    with_expand_bytes, BrepDraft, BrepTransferInput, BrepTransferKind, CandidateError,
-    CommittedExtrusionBoundary, CurveCommitSource, DecodeContext, GeometryOutcome,
-    ReferenceFailure, ReportBuckets,
+    transform_decoded_curve, transform_surface, with_expand, with_expand_bytes, BrepDraft,
+    BrepTransferInput, BrepTransferKind, CandidateError, CurveCommitSource, DecodeContext,
+    GeometryOutcome, ReferenceFailure, ReportBuckets,
 };
 use crate::chunks::ArchiveVersion;
 use crate::loss::Diagnostics;
@@ -35,6 +34,7 @@ use cadmpeg_ir::{Exactness, SourceObjectAssociation};
 
 mod candidate_annotations;
 mod carrier_copy;
+mod extrusion_body;
 mod local_limits;
 
 fn line_nurbs(start: f64, end: f64, rational: bool) -> NurbsCurve {
@@ -1154,7 +1154,7 @@ fn cap_boundary(points: &[Point3]) -> crate::extrusion::ExtrusionBoundary {
         weights: None,
         periodic: false,
     };
-    crate::extrusion::ExtrusionBoundary {
+    let mut boundary = crate::extrusion::ExtrusionBoundary {
         start_curve: decoded_nurbs(start.clone()),
         start_nurbs: start.clone(),
         end_nurbs: end.clone(),
@@ -1169,7 +1169,21 @@ fn cap_boundary(points: &[Point3]) -> crate::extrusion::ExtrusionBoundary {
             0,
         )
         .expect("valid cap lateral"),
-    }
+        pieces: Vec::new(),
+    };
+    boundary.pieces = crate::extrusion::boundary_pieces(
+        &cadmpeg_test_support::service_decode_context(),
+        &boundary,
+        [Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 0.0, 5.0)],
+        [(
+            cadmpeg_ir::units::UnitVector3::X_AXIS,
+            cadmpeg_ir::units::UnitVector3::Y_AXIS,
+            cadmpeg_ir::units::UnitVector3::Z_AXIS,
+        ); 2],
+        0,
+    )
+    .expect("cap boundary pieces");
+    boundary
 }
 
 fn cap_extrusion(caps: [bool; 2]) -> crate::extrusion::DecodedExtrusion {
@@ -1194,6 +1208,8 @@ fn cap_extrusion(caps: [bool; 2]) -> crate::extrusion::DecodedExtrusion {
         cap_normals: [cadmpeg_ir::units::UnitVector3::Z_AXIS; 2],
         cap_u_axes: [cadmpeg_ir::units::UnitVector3::X_AXIS; 2],
         caps,
+        path_domain: cadmpeg_ir::units::FiniteVector::new([0.0, 5.0]).expect("finite path domain"),
+        transposed: false,
         meshes: Vec::new(),
         warnings: Diagnostics::new(),
     }
@@ -1431,35 +1447,38 @@ fn successful_candidate_keeps_preceding_arena_order_for_instance_checkpoints() {
     });
 }
 
+fn stage_cap_extrusion(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    ir: &mut CadIr,
+    extrusion: &crate::extrusion::DecodedExtrusion,
+) -> Result<String, CandidateError> {
+    super::extrusion_body::stage_extrusion_body(
+        ctx,
+        ir,
+        &mut cadmpeg_ir::Annotations::default(),
+        "caps",
+        &test_association(),
+        extrusion,
+    )
+}
+
 #[test]
 fn extrusion_cap_staging_preserves_pcurve_rejection_details() {
     for (knots, weights, expected) in [
         (Vec::new(), None, "pcurve knot count 0"),
         (vec![0.0, 0.0], None, "knots"),
         (
-            vec![0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 4.0],
-            Some(vec![0.0; 5]),
+            vec![0.0, 0.0, 1.0, 1.0],
+            Some(vec![0.0; 2]),
             "weight 0 at index 0",
         ),
     ] {
         let mut extrusion = cap_extrusion([true, false]);
-        extrusion.boundaries[0].start_pcurve.knots = knots;
-        extrusion.boundaries[0].start_pcurve.weights = weights;
-        let boundaries = vec![CommittedExtrusionBoundary {
-            boundary: &extrusion.boundaries[0],
-            directrix: "rhino:test:curve#cap".try_into().expect("curve identity"),
-        }];
+        extrusion.boundaries[0].pieces[0].start_pcurve.knots = knots;
+        extrusion.boundaries[0].pieces[0].start_pcurve.weights = weights;
         let error = with_collection_limit(u64::MAX, |ctx| {
-            stage_extrusion_caps(
-                ctx,
-                &mut CadIr::empty(),
-                &mut cadmpeg_ir::Annotations::default(),
-                "caps",
-                &test_association(),
-                &extrusion,
-                &boundaries,
-            )
-            .expect_err("invalid cap pcurve")
+            stage_cap_extrusion(ctx, &mut CadIr::empty(), &extrusion)
+                .expect_err("invalid cap pcurve")
         });
         assert!(
             error.to_string().starts_with("extrusion cap staging: "),
@@ -1470,87 +1489,17 @@ fn extrusion_cap_staging_preserves_pcurve_rejection_details() {
 }
 
 #[test]
-fn extrusion_cap_loop_ids_refuse_collection_limit() {
+fn extrusion_staging_refuses_collection_limit() {
     let extrusion = cap_extrusion([true, false]);
-    let boundaries = [CommittedExtrusionBoundary {
-        boundary: &extrusion.boundaries[0],
-        directrix: "rhino:test:curve#cap".try_into().expect("curve identity"),
-    }];
     let error = with_collection_limit(0, |ctx| {
-        stage_extrusion_caps(
-            ctx,
-            &mut CadIr::empty(),
-            &mut cadmpeg_ir::Annotations::default(),
-            "caps",
-            &test_association(),
-            &extrusion,
-            &boundaries,
-        )
-        .expect_err("cap loop ID exceeds collection limit")
+        stage_cap_extrusion(ctx, &mut CadIr::empty(), &extrusion)
+            .expect_err("edge lists exceed collection limit")
     });
     assert!(matches!(
         error,
         super::CandidateError::Codec(cadmpeg_core::CodecError::ResourceLimit(refusal))
-            if refusal.operation == "Rhino extrusion cap loop IDs"
+            if refusal.operation == "Rhino extrusion edges"
     ));
-}
-
-#[test]
-fn extrusion_caps_build_outer_and_hole_loops_with_opposite_face_senses() {
-    for (caps, expected_faces) in [([true, false], 1), ([false, true], 1), ([true, true], 2)] {
-        let mut ir = CadIr::empty();
-        let association = test_association();
-        let extrusion = cap_extrusion(caps);
-        let boundaries = extrusion
-            .boundaries
-            .iter()
-            .enumerate()
-            .map(|(index, boundary)| {
-                let id: cadmpeg_ir::ids::CurveId = format!("rhino:object:curve#cap-{index}")
-                    .try_into()
-                    .expect("valid identity");
-                ir.model.curves.push(Curve {
-                    parameter_range: None,
-                    id: id.clone(),
-                    geometry: CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(
-                        boundary.start_nurbs.clone(),
-                    )),
-                    source_object: Some(association.clone()),
-                });
-                CommittedExtrusionBoundary {
-                    boundary,
-                    directrix: id,
-                }
-            })
-            .collect::<Vec<_>>();
-        with_collection_limit(u64::MAX, |ctx| {
-            assert!(stage_extrusion_caps(
-                ctx,
-                &mut ir,
-                &mut cadmpeg_ir::Annotations::default(),
-                "caps",
-                &association,
-                &extrusion,
-                &boundaries,
-            )
-            .is_ok());
-        });
-        assert_eq!(ir.model.faces.len(), expected_faces);
-        assert_eq!(ir.model.regions.len(), expected_faces);
-        assert_eq!(ir.model.shells.len(), expected_faces);
-        assert_eq!(ir.model.loops.len(), expected_faces * 2);
-        assert_eq!(ir.model.pcurves.len(), expected_faces * 2);
-        if expected_faces == 2 {
-            assert_eq!(ir.model.faces[0].sense, Sense::Reversed);
-            assert_eq!(ir.model.faces[1].sense, Sense::Forward);
-        }
-        assert_eq!(
-            cadmpeg_ir::validate_neutral(&ir, Vec::new())
-                .expect("resource allocation did not fail")
-                .error_count(),
-            0
-        );
-    }
 }
 
 /// Phase 5 freeze: draft/instance admit predicates vs shared accept/reject builders.

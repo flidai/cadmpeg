@@ -53,6 +53,23 @@ pub(crate) struct ExtrusionBoundary {
     pub(crate) end_pcurve: CapPcurve,
     /// Solved lateral tensor surface for this boundary.
     pub(crate) lateral: NurbsSurface,
+    /// The boundary cut at its corners, in curve order. A capped extrusion
+    /// stages one lateral face on each piece; the list is empty for an uncapped
+    /// extrusion.
+    pub(crate) pieces: Vec<ExtrusionPiece>,
+}
+
+/// One corner-free stretch of a profile boundary at both effective path ends.
+#[derive(Debug, Clone)]
+pub(crate) struct ExtrusionPiece {
+    /// Exact start-plane NURBS.
+    pub(crate) start_nurbs: NurbsCurve,
+    /// Exact end-plane NURBS over the same knots and weights.
+    pub(crate) end_nurbs: NurbsCurve,
+    /// Exact cap pcurve at the start.
+    pub(crate) start_pcurve: CapPcurve,
+    /// Exact cap pcurve at the end.
+    pub(crate) end_pcurve: CapPcurve,
 }
 
 /// Exact parameter-space curve for one planar cap.
@@ -85,6 +102,10 @@ pub(crate) struct DecodedExtrusion {
     pub(crate) cap_u_axes: [UnitVector3; 2],
     /// Independent cap flags.
     pub(crate) caps: [bool; 2],
+    /// Parameter interval of the lateral surfaces along the path.
+    pub(crate) path_domain: FiniteVector<2>,
+    /// Whether the lateral surfaces swap their parameter axes.
+    pub(crate) transposed: bool,
     /// Valid optional display meshes.
     pub(crate) meshes: Vec<crate::mesh::DecodedMesh>,
     /// Recoverable mesh-cache warnings.
@@ -372,6 +393,7 @@ pub(crate) fn decode(
             start_pcurve,
             end_pcurve,
             lateral,
+            pieces: Vec::new(),
         });
     }
     if (orientations.len() > 1
@@ -402,6 +424,17 @@ pub(crate) fn decode(
         cap_frame(xaxis.into(), up, tangent, active_miters[0], version_offset)?,
         cap_frame(xaxis.into(), up, tangent, active_miters[1], version_offset)?,
     ];
+    if caps[0] || caps[1] {
+        for boundary in &mut boundaries {
+            boundary.pieces = boundary_pieces(
+                expand.ctx(),
+                boundary,
+                cap_origins,
+                cap_frames,
+                version_offset,
+            )?;
+        }
+    }
     Ok(DecodedExtrusion {
         boundaries,
         direction,
@@ -409,9 +442,63 @@ pub(crate) fn decode(
         cap_normals: [cap_frames[0].2, cap_frames[1].2],
         cap_u_axes: [cap_frames[0].0, cap_frames[1].0],
         caps,
+        path_domain,
+        transposed,
         meshes,
         warnings,
     })
+}
+
+/// Cuts one boundary at its corners and builds the cap pcurves of each piece.
+///
+/// A boundary that cannot be cut stays one piece, which is the whole closed
+/// boundary.
+pub(crate) fn boundary_pieces(
+    ctx: &DecodeContext<'_>,
+    boundary: &ExtrusionBoundary,
+    origins: [Point3; 2],
+    frames: [(UnitVector3, UnitVector3, UnitVector3); 2],
+    offset: usize,
+) -> Result<Vec<ExtrusionPiece>, GeometryError> {
+    let split = crate::curves::split_nurbs_at_corners(ctx, &boundary.start_nurbs, offset).and_then(
+        |starts| {
+            crate::curves::split_nurbs_at_corners(ctx, &boundary.end_nurbs, offset)
+                .map(|ends| (starts, ends))
+        },
+    );
+    let (starts, ends) = match split {
+        Ok((starts, ends)) if starts.len() == ends.len() => (starts, ends),
+        Err(error @ GeometryError::Codec(cadmpeg_core::CodecError::ResourceLimit(_))) => {
+            return Err(error);
+        }
+        _ => {
+            let mut starts = ctx.collection_vec(1, "Rhino extrusion boundary piece")?;
+            starts.push(
+                boundary
+                    .start_nurbs
+                    .try_clone_for_decode(ctx, "Rhino extrusion boundary piece")?,
+            );
+            let mut ends = ctx.collection_vec(1, "Rhino extrusion boundary piece")?;
+            ends.push(
+                boundary
+                    .end_nurbs
+                    .try_clone_for_decode(ctx, "Rhino extrusion boundary piece")?,
+            );
+            (starts, ends)
+        }
+    };
+    let mut pieces = ctx.collection_vec(starts.len(), "Rhino extrusion boundary pieces")?;
+    for (start_nurbs, end_nurbs) in starts.into_iter().zip(ends) {
+        let start_pcurve = cap_pcurve(ctx, &start_nurbs, origins[0], frames[0], offset)?;
+        let end_pcurve = cap_pcurve(ctx, &end_nurbs, origins[1], frames[1], offset)?;
+        pieces.push(ExtrusionPiece {
+            start_nurbs,
+            end_nurbs,
+            start_pcurve,
+            end_pcurve,
+        });
+    }
+    Ok(pieces)
 }
 
 fn split_profiles(
