@@ -1136,8 +1136,19 @@ pub(super) fn classify_body_kinds(
             ctx.insert_hash_map(&mut coedge_bodies, coedge, body, "ASM coedge bodies")?;
         }
     }
+    // A degenerate edge collapses a surface pole or apex to one vertex. It has
+    // no curve and one use, so it says nothing about whether a shell is closed.
+    let mut degenerate_edges = HashSet::new();
+    for edge in &out.edges {
+        if edge.curve().is_none() && edge.start == edge.end {
+            ctx.insert_hash_set(&mut degenerate_edges, &edge.id, "ASM degenerate edges")?;
+        }
+    }
     let mut edge_use_counts = HashMap::<_, HashMap<&EdgeId, usize>>::new();
     for coedge in &out.coedges {
+        if degenerate_edges.contains(&coedge.edge) {
+            continue;
+        }
         if let Some(body) = coedge_bodies.get(&coedge.id).copied() {
             ctx.admit_hash_map_entry(&mut edge_use_counts, &body, "ASM body edge use counts")?;
             let counts = edge_use_counts.entry(body).or_default();
