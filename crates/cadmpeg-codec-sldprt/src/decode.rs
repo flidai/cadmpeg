@@ -2429,7 +2429,12 @@ fn try_decode_brep(
         for index in indices {
             bodies.push((streams[*index].payload, streams[*index].header));
         }
-        let decoded = decode_bodies(ctx, &bodies, streams[first].source_stream())?;
+        let decoded = decode_bodies(
+            ctx,
+            &bodies,
+            streams[first].source_stream(),
+            crate::brep::CurveMarkers::SolidWorks,
+        )?;
         ctx.reserve_vec(&mut decoded_sites, 1, "collect decoded SLDPRT sites")?;
         decoded_sites.push((site.clone(), first, decoded));
     }

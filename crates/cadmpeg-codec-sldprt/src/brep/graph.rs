@@ -45,6 +45,7 @@ use super::offset::OffsetCarrier;
 use super::sweep::{self, SweepKind};
 use super::topology;
 use super::typed;
+use super::CurveMarkers;
 use super::{CurveCarrier, LEN_TO_MM};
 use crate::parasolid::StreamHeader;
 
@@ -1394,6 +1395,7 @@ fn header_body<'a>(
 /// Decode one parsed Parasolid stream into B-rep arenas.
 ///
 /// `stream` names the provenance stream recorded in [`Brep::annotations`].
+/// The stream is a `SolidWorks` stream.
 pub(crate) fn decode(
     ctx: &DecodeContext<'_>,
     payload: &[u8],
@@ -1473,10 +1475,12 @@ fn append_entity_facts(
 /// Partition records are the base set. Deltas records fill missing subordinate
 /// records and point updates, but do not replace a same-identity partition
 /// topology or carrier record. `stream` names the combined provenance source.
+/// `markers` selects how the curve orientation markers read.
 pub(crate) fn decode_bodies(
     ctx: &DecodeContext<'_>,
     bodies: &[(&[u8], &StreamHeader)],
     stream: &cadmpeg_ir::StreamName,
+    markers: CurveMarkers,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
     let mut carriers = CarrierIndex::default();
     let mut tables = topology::Tables::default();
@@ -1523,7 +1527,7 @@ pub(crate) fn decode_bodies(
         let is_deltas = is_deltas_stream(header);
         let typed_face_offsets =
             selected_typed_face_offsets(ctx, &stream_typed_facts, typed_bridge_attrs.as_ref())?;
-        carriers.merge_missing(ctx, scan_carriers(ctx, body)?)?;
+        carriers.merge_missing(ctx, scan_carriers(ctx, body, markers)?)?;
         let curve_attrs = carriers.curve_attrs(ctx)?;
         let scanned_tables = if is_deltas {
             topology::scan_deltas_with_curve_attrs_excluding(
@@ -1564,7 +1568,7 @@ fn decode_body(
     body: &[u8],
     stream: &cadmpeg_ir::StreamName,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
-    let mut carriers = scan_carriers(ctx, body)?;
+    let mut carriers = scan_carriers(ctx, body, CurveMarkers::SolidWorks)?;
     let curve_attrs = carriers.curve_attrs(ctx)?;
     let typed_facts = typed::scan(body, ctx)?;
     let typed_face_attrs = typed_facts.valid_ownership_face_attrs(ctx)?;
@@ -7960,39 +7964,6 @@ fn emit_curve(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_ring_edge_on_a_closed_ellipse_has_a_seam_point() {
-        use crate::brep::CurveCarrier;
-        use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
-        use cadmpeg_ir::math::{Point3, Vector3};
-        let geometry = CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(
-            cadmpeg_ir::geometry::analytic::EllipseCurve::try_new(
-                Point3::new(3.0, -2.0, 7.0),
-                Vector3::new(0.0, 0.0, 1.0),
-                Vector3::new(1.0, 0.0, 0.0),
-                5.0,
-                2.0,
-            )
-            .unwrap(),
-        ));
-        let carrier = CurveCarrier {
-            reversed: false,
-            attr: 1,
-            offset: 0,
-            end: 0,
-            geometry,
-            parameter_range: None,
-        };
-        let ctx = cadmpeg_test_support::service_decode_context();
-        let seam = super::closed_seam_point(&ctx, &carrier).unwrap().unwrap();
-        assert!((seam.x - 8.0).abs() < 1e-9 && (seam.y + 2.0).abs() < 1e-9);
-        let open = CurveCarrier {
-            parameter_range: cadmpeg_ir::units::FiniteVector::new([0.0, 1.0]),
-            ..carrier
-        };
-        assert!(super::closed_seam_point(&ctx, &open).unwrap().is_none());
-    }
-
-    #[test]
     fn incomplete_brep_marker_does_not_consume_collection_slots() {
         let arena = cadmpeg_core::decode::DecodeArena::new();
         let mut policy = cadmpeg_core::decode::DecodePolicy::service();
@@ -8000,7 +7971,7 @@ mod tests {
         let body = [0x00, 0x1e, 0x00];
         let (ctx, _) =
             cadmpeg_core::decode::DecodeContext::from_root_bytes(&body, &arena, &policy).unwrap();
-        let carriers = super::scan_carriers(&ctx, &body).unwrap();
+        let carriers = super::scan_carriers(&ctx, &body, super::CurveMarkers::SolidWorks).unwrap();
         assert!(carriers.curve_attrs(&ctx).unwrap().is_empty());
         let tables = super::topology::scan(&ctx, &body).unwrap();
         assert!(tables.points().is_empty());
@@ -8242,22 +8213,9 @@ mod tests {
     }
 
     #[test]
-    fn angular_edge_range_starts_within_one_turn_from_zero() {
-        use std::f64::consts::TAU;
-        // A start a rounding error below zero is read as zero.
-        assert_eq!(super::canonical_angular_range([-5.0e-15, 1.5]), [0.0, 1.5]);
-        // A start inside the turn stays as stored.
-        assert_eq!(super::canonical_angular_range([0.5, 1.5]), [0.5, 1.5]);
-        // A start further below zero moves up by whole turns with its sweep.
-        let [start, end] = super::canonical_angular_range([-1.0, 0.5]);
-        assert!((start - (TAU - 1.0)).abs() < 1.0e-12);
-        assert!((end - (TAU + 0.5)).abs() < 1.0e-12);
-    }
-
-    #[test]
     fn line_edge_parameters_convert_from_metres_to_millimetres() {
         let carrier = crate::brep::CurveCarrier {
-            reversed: false,
+            marker: None,
             attr: 1,
             offset: 0,
             end: 0,
@@ -9963,3 +9921,6 @@ mod numerical_range_tests;
 
 #[cfg(test)]
 mod evaluation_admission_tests;
+
+#[cfg(test)]
+mod seam_range_tests;

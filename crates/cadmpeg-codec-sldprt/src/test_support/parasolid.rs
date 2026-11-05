@@ -119,7 +119,7 @@ pub(crate) fn line_carrier(attr: u16, point: [f64; 3], dir: [f64; 3]) -> Vec<u8>
     for _ in 0..5 {
         be16(&mut b, 0);
     }
-    b.push(0x2b);
+    b.push(0x2d);
     for v in point.into_iter().chain(dir) {
         bef64(&mut b, v);
     }
@@ -134,7 +134,7 @@ fn prefixed_line_carrier(attr: u16, point: [f64; 3], dir: [f64; 3]) -> Vec<u8> {
         be16(&mut b, reference);
         b.push(1);
     }
-    b.push(0x2b);
+    b.push(0x2d);
     for value in point.into_iter().chain(dir) {
         bef64(&mut b, value);
     }
@@ -243,7 +243,7 @@ pub(crate) fn circle_carrier(attr: u16, center: [f64; 3], axis: [f64; 3], radius
     for _ in 0..5 {
         be16(&mut b, 0);
     }
-    b.push(0x2b);
+    b.push(0x2d);
     let reference = if axis[0].abs() > 0.9 {
         [0.0, 1.0, 0.0]
     } else {
@@ -274,7 +274,7 @@ pub(crate) fn ellipse_carrier(
     for _ in 0..5 {
         be16(&mut bytes, 0);
     }
-    bytes.push(0x2b);
+    bytes.push(0x2d);
     for value in center
         .into_iter()
         .chain(axis)
