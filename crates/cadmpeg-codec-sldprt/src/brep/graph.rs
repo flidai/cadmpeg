@@ -2013,10 +2013,20 @@ fn decode_graph(
             continue;
         };
         let end_vuse = edge_end_vuse(canonical, *ring_end_vuse, t.coedges());
-        let curve_attr = t
+        let mut curve_attr = t
             .edge_uses()
             .get(&edge_attr)
             .map_or(0, |edge_use| edge_use.references.curve());
+        if curve_attr <= 1 {
+            // A tolerant edge states no support curve. Its coedges carry the
+            // curve in the eighth reference cell.
+            curve_attr = incidences
+                .iter()
+                .filter_map(|(coedge_attr, _, _)| t.coedges().get(coedge_attr))
+                .map(|coedge| coedge.refs[7])
+                .find(|curve| *curve > 1 && carriers.curve(*curve).is_some())
+                .unwrap_or(curve_attr);
+        }
         ctx.admit_hash_map_entry(&mut edge_ends, &edge_attr, "index Parasolid edge endpoints")?;
         edge_ends.insert(edge_attr, (*start_vuse, end_vuse, curve_attr));
         for vuse in [*start_vuse, end_vuse] {

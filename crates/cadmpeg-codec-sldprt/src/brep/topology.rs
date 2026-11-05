@@ -374,6 +374,55 @@ fn parse_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
     })
 }
 
+/// Largest local tolerance, in metres, that a vertex-use or an edge-use states
+/// in place of the unset sentinel.
+const MAX_LOCAL_TOLERANCE_M: f64 = 1.0e-2;
+
+/// Read the tolerance cell of a record that states a local tolerance.
+fn local_tolerance_at(buf: &[u8], at: usize) -> Option<f64> {
+    let tolerance = View::f64_be_at(buf, at)?;
+    (tolerance.is_finite() && tolerance > 0.0 && tolerance <= MAX_LOCAL_TOLERANCE_M)
+        .then_some(tolerance)
+}
+
+/// Vertex-use `00 12` whose body +16 cell holds a local tolerance in metres and
+/// not the unset sentinel. The cell layout is otherwise the bare layout.
+fn parse_toleranced_vertex_use(buf: &[u8], off: usize) -> Option<VertexUse> {
+    let p = body_start(buf, off, 0x12)?;
+    if p + 24 > buf.len() {
+        return None;
+    }
+    let attr = attr_at(buf, p).filter(|attr| *attr > 1)?;
+    let sequence = View::u32_be_at(buf, p + 2)?;
+    local_tolerance_at(buf, p + 16)?;
+    let refs = refs_be::<5>(buf, p + 6)?;
+    Some(VertexUse {
+        attr,
+        refs,
+        sequence,
+        offset: off,
+    })
+}
+
+/// Edge-use `00 10` whose body +8 cell holds a local tolerance in metres and
+/// not the unset sentinel. The cell layout is otherwise the bare layout.
+fn parse_toleranced_edge_use(buf: &[u8], off: usize) -> Option<EdgeUse> {
+    let p = body_start(buf, off, 0x10)?;
+    if p + 28 > buf.len() {
+        return None;
+    }
+    let attr = attr_at(buf, p).filter(|attr| *attr > 1)?;
+    let sequence = View::u32_be_at(buf, p + 2)?;
+    local_tolerance_at(buf, p + 8)?;
+    let refs = refs_be::<6>(buf, p + 16)?;
+    Some(EdgeUse {
+        attr,
+        sequence,
+        references: EdgeReferences::Bare(refs),
+        offset: off,
+    })
+}
+
 /// World point `00 1d`: 38-byte body, no magic, `refs[4]` at body+6, xyz as
 /// three big-endian f64 (metres) at body+14.
 fn parse_point(
@@ -994,6 +1043,8 @@ fn scan_with_point_framing(
     let mut loop_candidates = Vec::new();
     let mut edge_candidates = CandidateMap::new();
     let mut coedge_candidates = CandidateMap::new();
+    let mut toleranced_vertex_uses = Vec::new();
+    let mut toleranced_edge_uses = Vec::new();
     let scan_len = u64::try_from(body.len()).map_err(|_| {
         ctx.refuse_codec_limit("scan Parasolid typed topology", u64::MAX - 1, u64::MAX)
     })?;
@@ -1025,11 +1076,21 @@ fn scan_with_point_framing(
                     loop_candidates.push(record);
                 }
             }
-            0x10 => insert_candidates(
-                ctx,
-                &mut edge_candidates,
-                parse_edge_use_candidates(body, i),
-            )?,
+            0x10 => {
+                let candidates = parse_edge_use_candidates(body, i);
+                if candidates.is_empty() {
+                    if let Some(record) = parse_toleranced_edge_use(body, i) {
+                        ctx.reserve_vec(
+                            &mut toleranced_edge_uses,
+                            1,
+                            "collect Parasolid toleranced edge-use candidates",
+                        )?;
+                        toleranced_edge_uses.push(record);
+                    }
+                } else {
+                    insert_candidates(ctx, &mut edge_candidates, candidates)?;
+                }
+            }
             0x11 => insert_candidates(
                 ctx,
                 &mut coedge_candidates,
@@ -1038,6 +1099,13 @@ fn scan_with_point_framing(
             0x12 => {
                 if let Some(record) = parse_vertex_use(body, i) {
                     t.insert_vertex_use(ctx, record)?;
+                } else if let Some(record) = parse_toleranced_vertex_use(body, i) {
+                    ctx.reserve_vec(
+                        &mut toleranced_vertex_uses,
+                        1,
+                        "collect Parasolid toleranced vertex-use candidates",
+                    )?;
+                    toleranced_vertex_uses.push(record);
                 }
             }
             0x1d => {
@@ -1058,6 +1126,14 @@ fn scan_with_point_framing(
         i += 1;
     }
 
+    admit_toleranced_records(
+        ctx,
+        &mut t,
+        &mut edge_candidates,
+        &coedge_candidates,
+        toleranced_vertex_uses,
+        toleranced_edge_uses,
+    )?;
     for candidates in coedge_candidates.values() {
         if let Some(record) = select_coedge(
             ctx,
@@ -1088,6 +1164,55 @@ fn scan_with_point_framing(
         }
     }
     Ok(t)
+}
+
+/// Admit the vertex-use and edge-use candidates that state a local tolerance.
+/// A candidate has no sentinel to anchor it, so it is admitted only when a
+/// coedge names its attribute and, for a vertex-use, its point reference names a
+/// world point of the stream. A record with the unset sentinel at the same
+/// attribute stays.
+fn admit_toleranced_records(
+    ctx: &DecodeContext<'_>,
+    t: &mut Tables,
+    edge_candidates: &mut CandidateMap<EdgeUse>,
+    coedge_candidates: &CandidateMap<Coedge>,
+    vertex_uses: Vec<VertexUse>,
+    edge_uses: Vec<EdgeUse>,
+) -> Result<(), CodecError> {
+    if vertex_uses.is_empty() && edge_uses.is_empty() {
+        return Ok(());
+    }
+    let mut start_vertices = HashSet::new();
+    let mut edges = HashSet::new();
+    for coedge in coedge_candidates.values().flatten() {
+        ctx.charge_work(1, "index Parasolid coedge references")?;
+        ctx.insert_hash_set(
+            &mut start_vertices,
+            coedge.refs[4],
+            "index Parasolid coedge start vertex-uses",
+        )?;
+        ctx.insert_hash_set(
+            &mut edges,
+            coedge.refs[6],
+            "index Parasolid coedge edge-uses",
+        )?;
+    }
+    for record in vertex_uses {
+        ctx.charge_work(1, "admit Parasolid toleranced vertex-uses")?;
+        if start_vertices.contains(&record.attr)
+            && !t.vertex_uses.contains_key(&record.attr)
+            && t.points.contains_key(&record.refs[4])
+        {
+            t.insert_vertex_use(ctx, record)?;
+        }
+    }
+    for record in edge_uses {
+        ctx.charge_work(1, "admit Parasolid toleranced edge-uses")?;
+        if edges.contains(&record.attr) && !edge_candidates.contains_key(&record.attr) {
+            insert_candidates(ctx, edge_candidates, vec![record])?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1492,4 +1617,113 @@ mod tests {
         assert_eq!(point.xyz_m, [4.0, 5.0, 6.0]);
         assert_eq!(point.xyz_offset, 16);
     }
+    const TOLERANCE_M: f64 = 1.0e-6;
+
+    fn scan_bytes(bytes: &[u8]) -> super::Tables {
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(bytes, &arena, &DecodePolicy::service()).expect("root");
+        scan(&ctx, bytes).expect("topology scan")
+    }
+
+    fn point_record(attr: u16) -> Vec<u8> {
+        let mut bytes = vec![0, 0x1d];
+        bytes.extend(attr.to_be_bytes());
+        bytes.extend(0_u32.to_be_bytes());
+        for reference in [0_u16, 0, 0, 0] {
+            bytes.extend(reference.to_be_bytes());
+        }
+        for value in [1.0_f64, 2.0, 3.0] {
+            bytes.extend(value.to_be_bytes());
+        }
+        bytes
+    }
+
+    fn vertex_use_record(attr: u16, point: u16, cell: [u8; 8]) -> Vec<u8> {
+        let mut bytes = vec![0, 0x12];
+        bytes.extend(attr.to_be_bytes());
+        bytes.extend(1_u32.to_be_bytes());
+        for reference in [0_u16, 0, 0, 0, point] {
+            bytes.extend(reference.to_be_bytes());
+        }
+        bytes.extend(cell);
+        bytes
+    }
+
+    fn edge_use_record(attr: u16, cell: [u8; 8], refs: [u16; 6]) -> Vec<u8> {
+        let mut bytes = vec![0, 0x10];
+        bytes.extend(attr.to_be_bytes());
+        bytes.extend(1_u32.to_be_bytes());
+        bytes.extend(0_u16.to_be_bytes());
+        bytes.extend(cell);
+        for reference in refs {
+            bytes.extend(reference.to_be_bytes());
+        }
+        bytes
+    }
+
+    fn coedge_record(attr: u16, owner: u16, start: u16, edge: u16, marker: u8) -> Vec<u8> {
+        let mut bytes = vec![0, 0x11];
+        bytes.extend(attr.to_be_bytes());
+        for reference in [0, owner, attr, attr, start, 0, edge, 0, 0] {
+            bytes.extend(u16::to_be_bytes(reference));
+        }
+        bytes.push(marker);
+        bytes
+    }
+
+    #[test]
+    fn toleranced_vertex_use_is_admitted_when_a_coedge_starts_at_it() {
+        let tolerance = TOLERANCE_M.to_be_bytes();
+        let mut bytes = point_record(60);
+        bytes.extend(vertex_use_record(50, 60, tolerance));
+        bytes.extend(coedge_record(70, 80, 50, 90, 0x2b));
+        bytes.extend([0; 16]);
+        let tables = scan_bytes(&bytes);
+        assert_eq!(tables.vertex_uses.get(&50).map(|v| v.refs[4]), Some(60));
+
+        // No coedge starts at the vertex-use, so no sentinel or reference
+        // anchors the cell and the candidate is not a record.
+        let mut bytes = point_record(60);
+        bytes.extend(vertex_use_record(50, 60, tolerance));
+        bytes.extend([0; 16]);
+        assert!(scan_bytes(&bytes).vertex_uses.is_empty());
+
+        // A tolerance that is not a plausible length is not a tolerance.
+        let mut bytes = point_record(60);
+        bytes.extend(vertex_use_record(50, 60, 1.0e3_f64.to_be_bytes()));
+        bytes.extend(coedge_record(70, 80, 50, 90, 0x2b));
+        bytes.extend([0; 16]);
+        assert!(scan_bytes(&bytes).vertex_uses.is_empty());
+
+        // The null reference is not a vertex-use attribute, even when coedges
+        // start at it.
+        let mut bytes = point_record(60);
+        bytes.extend(vertex_use_record(1, 60, tolerance));
+        bytes.extend(coedge_record(70, 80, 1, 90, 0x2b));
+        bytes.extend([0; 16]);
+        assert!(scan_bytes(&bytes).vertex_uses.is_empty());
+    }
+
+    #[test]
+    fn toleranced_edge_use_is_admitted_when_a_coedge_names_it() {
+        let refs = [70, 91, 92, 1, 1, 1];
+        let mut bytes = edge_use_record(90, TOLERANCE_M.to_be_bytes(), refs);
+        bytes.extend(coedge_record(70, 80, 50, 90, 0x2b));
+        bytes.extend([0; 16]);
+        let tables = scan_bytes(&bytes);
+        let edge = tables.edge_uses.get(&90).expect("toleranced edge-use");
+        assert_eq!(edge.references, EdgeReferences::Bare(refs));
+        assert_eq!(edge.references.curve(), 1);
+
+        let mut bytes = edge_use_record(90, TOLERANCE_M.to_be_bytes(), refs);
+        bytes.extend(coedge_record(70, 80, 50, 91, 0x2b));
+        bytes.extend([0; 16]);
+        assert!(scan_bytes(&bytes).edge_uses.is_empty());
+
+        let mut bytes = edge_use_record(90, MAGIC, refs);
+        bytes.extend([0; 16]);
+        assert!(scan_bytes(&bytes).edge_uses.contains_key(&90));
+    }
+
 }
