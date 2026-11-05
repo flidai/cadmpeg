@@ -2406,6 +2406,65 @@ pub(crate) fn decode_fillet_radius_groups(
     Ok(out)
 }
 
+/// Drop an owner frame that repeats the local ordinal of a listed owner.
+///
+/// A parameter scope lists its owner frames in its reference run. A superseded
+/// copy of an owner can retain the scope index and local ordinal without being
+/// listed. Keeping both would give one scope two owners at the same local
+/// ordinal. An unlisted owner is kept unless a listed owner of the same scope
+/// holds its ordinal.
+pub(crate) fn retain_scope_listed_parameter_owners(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    owners: &mut Vec<DesignParameterOwner>,
+    scopes: &[DesignParameterScope],
+) -> Result<(), CodecError> {
+    let members = ctx.collect_hash_set(
+        scopes.iter().flat_map(|scope| {
+            let stream = native_stream(&scope.id);
+            scope
+                .reference_members()
+                .values()
+                .filter_map(move |record| Some((stream?, scope.record_index, *record)))
+        }),
+        "index F3D scope reference members",
+    )?;
+    let is_listed = |owner: &DesignParameterOwner| {
+        native_stream(owner.id()).is_some_and(|stream| {
+            members.contains(&(stream, owner.scope_record_index(), owner.record_index()))
+        })
+    };
+    let listed_ordinals = ctx.collect_hash_set(
+        owners
+            .iter()
+            .filter(|owner| is_listed(owner))
+            .filter_map(|owner| {
+                Some((
+                    native_stream(owner.id())?,
+                    owner.scope_record_index(),
+                    owner.local_ordinal(),
+                ))
+            }),
+        "index F3D listed owner ordinals",
+    )?;
+    let keep = owners
+        .iter()
+        .map(|owner| {
+            is_listed(owner)
+                || owner.scope_record_index() == 0
+                || native_stream(owner.id()).is_none_or(|stream| {
+                    !listed_ordinals.contains(&(
+                        stream,
+                        owner.scope_record_index(),
+                        owner.local_ordinal(),
+                    ))
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut keep = keep.into_iter();
+    owners.retain(|_| keep.next().unwrap_or(true));
+    Ok(())
+}
+
 /// Remove fixed Fillet interpretations of frames that are indexed parameter owners.
 pub(crate) fn disambiguate_fixed_fillet_parameters(
     scopes: &mut [DesignParameterScope],
