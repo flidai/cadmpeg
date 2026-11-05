@@ -775,19 +775,19 @@ fn sketch_arrangement_faces_propagates_session_work_refusal() {
 }
 
 #[test]
-fn arrangement_visit_marks_refuse_collection_limit() {
+fn arrangement_adjacency_refuses_collection_limit() {
     let arena = DecodeArena::new();
     let mut policy = DecodePolicy::default();
     policy.limits.max_collection_items = 1;
     let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
-    let error = super::arrangement_has_alternate_path(&[], 0, 0, 0, 2, &ctx)
-        .expect_err("two visit marks exceed one admitted item");
+    let error = super::arrangement_non_bridge_marks(&[], 2, &ctx)
+        .expect_err("three adjacency starts exceed one admitted item");
     assert!(matches!(
         error,
         cadmpeg_core::CodecError::ResourceLimit(limit)
             if limit.dimension == cadmpeg_core::decode::ResourceDimension::CollectionItems
                 && limit.used == 0
-                && limit.additional == 2
+                && limit.additional == 3
     ));
 }
 
@@ -1857,30 +1857,6 @@ mod sort_limits;
 mod profile_limits;
 
 #[test]
-fn arrangement_cycle_work_rejects_unrepresentable_traversal_bound() {
-    let edge_count = 1usize << (usize::BITS / 2);
-    let error = crate::test_support::with_decode_context(|ctx| {
-        super::arrangement_cycle_work(edge_count, 1, ctx)
-    })
-    .expect_err("the squared work count cannot be represented");
-    assert!(
-        matches!(error, cadmpeg_core::CodecError::ResourceLimit(limit)
-        if limit.operation == "F3D arrangement cycle work")
-    );
-}
-
-#[test]
-fn arrangement_cycle_work_admits_cubic_ring_bound() {
-    assert_eq!(
-        crate::test_support::with_decode_context(|ctx| {
-            super::arrangement_cycle_work(1_000, 1_000, ctx)
-        })
-        .unwrap(),
-        1_002_001_000
-    );
-}
-
-#[test]
 fn sketch_arrangement_faces_propagates_local_work_refusal() {
     let (sketch, entities, _, _) = coincident_circle_arc_arrangement();
     crate::test_support::with_decode_context(|ctx| {
@@ -1896,32 +1872,107 @@ fn sketch_arrangement_faces_propagates_local_work_refusal() {
     });
 }
 
+fn arrangement_test_edge(nodes: [usize; 2]) -> super::SketchArrangementEdge {
+    super::SketchArrangementEdge {
+        nodes,
+        boundary: cadmpeg_ir::features::SketchProfileBoundaryUse {
+            entity: SketchEntityId::mint("synthetic:test:id#ring").unwrap(),
+            parameter_range: cadmpeg_ir::geometry::DirectedParameterRange::new([0.0, 1.0]).unwrap(),
+            reversed: false,
+        },
+        polyline: Vec::new(),
+    }
+}
+
 #[test]
-fn arrangement_ring_refuses_unadmitted_cubic_scan() {
-    let entity = SketchEntityId::mint("synthetic:test:id#ring").unwrap();
-    let boundary = cadmpeg_ir::features::SketchProfileBoundaryUse {
-        entity,
-        parameter_range: cadmpeg_ir::geometry::DirectedParameterRange::new([0.0, 1.0]).unwrap(),
-        reversed: false,
-    };
-    let mut edges: Vec<_> = (0..500)
-        .map(|index| super::SketchArrangementEdge {
-            nodes: [index, (index + 1) % 500],
-            boundary: boundary.clone(),
-            polyline: Vec::new(),
-        })
+fn arrangement_ring_is_retained_within_linear_work() {
+    let mut edges: Vec<_> = (0..20_000)
+        .map(|index| arrangement_test_edge([index, (index + 1) % 20_000]))
         .collect();
-    let mut policy = DecodePolicy::service();
-    policy.limits.max_work_units = 250_000;
-    crate::test_support::with_decode_policy(&policy, |ctx| {
-        let budget = ctx.work_budget(1_000_000_000);
-        let error =
-            super::arrangement_retain_cycle_edges(&mut edges, 500, &budget, ctx).unwrap_err();
-        assert!(
-            matches!(error, cadmpeg_core::CodecError::ResourceLimit(limit)
-            if limit.dimension == cadmpeg_core::decode::ResourceDimension::WorkUnits
-                && ctx.resource_refusal() == Some(limit))
-        );
-        assert_eq!(edges.len(), 500);
+    crate::test_support::with_decode_context(|ctx| {
+        let budget = ctx.work_budget(u64_from_index(MAX_ARRANGEMENT_WALK_WORK));
+        super::arrangement_retain_cycle_edges(&mut edges, 20_000, &budget, ctx).unwrap();
+        assert!(!budget.exhausted());
     });
+    assert_eq!(edges.len(), 20_000);
+}
+
+#[test]
+fn arrangement_retain_cycle_edges_drops_bridges_and_keeps_order() {
+    // Triangle 0-1-2 with a pendant edge 2-3, a bridge path 3-4-5, a digon 6=7,
+    // and an isolated bridge 8-9 joining nothing else.
+    let pairs = [
+        [0, 1],
+        [2, 3],
+        [1, 2],
+        [3, 4],
+        [4, 5],
+        [2, 0],
+        [6, 7],
+        [8, 9],
+        [7, 6],
+    ];
+    let mut edges: Vec<_> = pairs.into_iter().map(arrangement_test_edge).collect();
+    crate::test_support::with_decode_context(|ctx| {
+        let budget = ctx.work_budget(u64_from_index(MAX_ARRANGEMENT_WALK_WORK));
+        super::arrangement_retain_cycle_edges(&mut edges, 10, &budget, ctx).unwrap();
+    });
+    let kept: Vec<_> = edges.iter().map(|edge| edge.nodes).collect();
+    assert_eq!(kept, [[0, 1], [1, 2], [2, 0], [6, 7], [7, 6]]);
+}
+
+#[test]
+fn arrangement_non_bridge_marks_match_alternate_path_definition() {
+    // An edge is retained exactly when removing it leaves its endpoints connected.
+    fn connected(edges: &[[usize; 2]], skip: usize, from: usize, to: usize, nodes: usize) -> bool {
+        let mut seen = vec![false; nodes];
+        let mut pending = vec![from];
+        seen[from] = true;
+        while let Some(node) = pending.pop() {
+            if node == to {
+                return true;
+            }
+            for (index, edge) in edges.iter().enumerate() {
+                if index == skip {
+                    continue;
+                }
+                let next = if edge[0] == node {
+                    edge[1]
+                } else if edge[1] == node {
+                    edge[0]
+                } else {
+                    continue;
+                };
+                if !seen[next] {
+                    seen[next] = true;
+                    pending.push(next);
+                }
+            }
+        }
+        false
+    }
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut next = |bound: usize| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        usize::try_from(state >> 33).unwrap() % bound
+    };
+    for _ in 0..200 {
+        let nodes = 2 + next(9);
+        let count = next(14);
+        let pairs: Vec<[usize; 2]> = (0..count).map(|_| [next(nodes), next(nodes)]).collect();
+        let edges: Vec<_> = pairs.iter().copied().map(arrangement_test_edge).collect();
+        let marks = crate::test_support::with_decode_context(|ctx| {
+            super::arrangement_non_bridge_marks(&edges, nodes, ctx)
+        })
+        .unwrap();
+        for (index, pair) in pairs.iter().enumerate() {
+            assert_eq!(
+                marks[index],
+                connected(&pairs, index, pair[0], pair[1], nodes),
+                "edge {index} of {pairs:?} over {nodes} nodes"
+            );
+        }
+    }
 }

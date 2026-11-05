@@ -1041,111 +1041,144 @@ fn arrangement_node(
     Ok(nodes.len() - 1)
 }
 
-fn arrangement_cycle_work(
-    edge_count: usize,
-    node_count: usize,
-    ctx: &DecodeContext<'_>,
-) -> Result<usize, CodecError> {
-    edge_count
-        .checked_add(1)
-        .and_then(|count| count.checked_mul(edge_count))
-        .and_then(|count| {
-            node_count
-                .checked_add(1)
-                .and_then(|nodes| count.checked_mul(nodes))
-        })
-        .ok_or_else(|| ctx.refuse_codec_limit("F3D arrangement cycle work", 0, u64::MAX))
-}
-
 /// Remove curve fragments that cannot bound a planar face.
 ///
 /// A sketch can contain construction-like open branches in the solved entity
 /// stream even when the source profile table is empty. Such branches are graph
-/// bridges, not profile boundaries. Retaining only edges with an alternate
-/// path between their endpoints leaves the bounded-face arrangement intact
-/// while preserving intersections and nested loops.
+/// bridges, not profile boundaries. Retaining only edges that lie on a cycle
+/// leaves the bounded-face arrangement intact while preserving intersections
+/// and nested loops. Removing a bridge changes no cycle, so one pass reaches
+/// the fixed point.
 fn arrangement_retain_cycle_edges(
     edges: &mut Vec<SketchArrangementEdge>,
     node_count: usize,
     budget: &WorkBudget<'_>,
     ctx: &DecodeContext<'_>,
 ) -> Result<(), CodecError> {
-    loop {
-        // One BFS per edge scans all edges at each visited node: O(E² V).
-        // The bound also admits visit initialization and retention scans.
-        let work = arrangement_cycle_work(edges.len(), node_count, ctx)?;
-        let remaining = budget.remaining();
-        if !budget.charge_by(work) {
-            return Err(ctx.resource_refusal().map_or_else(
-                || {
-                    ctx.refuse_codec_limit(
-                        "F3D arrangement cycle work",
-                        cadmpeg_core::decode::u64_from_index(remaining),
-                        cadmpeg_core::decode::u64_from_index(work),
-                    )
-                },
-                CodecError::ResourceLimit,
-            ));
-        }
-        let mut keep = Vec::new();
-        for (index, edge) in edges.iter().enumerate() {
-            let has_cycle = arrangement_has_alternate_path(
-                edges,
-                index,
-                edge.nodes[0],
-                edge.nodes[1],
-                node_count,
-                ctx,
-            )?;
-            ctx.push_vec(&mut keep, has_cycle, "f3d arrangement retained edge mark")?;
-        }
-        if keep.iter().all(|keep| *keep) {
-            break;
-        }
-        let mut retained = Vec::new();
-        for (edge, keep) in std::mem::take(edges).into_iter().zip(keep) {
-            if keep {
-                ctx.push_vec(&mut retained, edge, "f3d arrangement retained edge")?;
-            }
-        }
-        *edges = retained;
+    // The bridge search visits every node once and every edge twice; the
+    // bound also admits the adjacency build and the retention scan.
+    let work = edges
+        .len()
+        .checked_mul(4)
+        .and_then(|work| work.checked_add(node_count.checked_mul(2)?))
+        .and_then(|work| work.checked_add(1))
+        .ok_or_else(|| ctx.refuse_codec_limit("F3D arrangement cycle work", 0, u64::MAX))?;
+    let remaining = budget.remaining();
+    if !budget.charge_by(work) {
+        return Err(ctx.resource_refusal().map_or_else(
+            || {
+                ctx.refuse_codec_limit(
+                    "F3D arrangement cycle work",
+                    cadmpeg_core::decode::u64_from_index(remaining),
+                    cadmpeg_core::decode::u64_from_index(work),
+                )
+            },
+            CodecError::ResourceLimit,
+        ));
     }
+    let keep = arrangement_non_bridge_marks(edges, node_count, ctx)?;
+    if keep.iter().all(|keep| *keep) {
+        return Ok(());
+    }
+    let mut retained = Vec::new();
+    for (edge, keep) in std::mem::take(edges).into_iter().zip(keep) {
+        if keep {
+            ctx.push_vec(&mut retained, edge, "f3d arrangement retained edge")?;
+        }
+    }
+    *edges = retained;
     Ok(())
 }
 
-fn arrangement_has_alternate_path(
+/// Marks each edge that has an alternate path between its endpoints.
+///
+/// An edge without an alternate path is a bridge. Self-loops and parallel
+/// edges always have one. The search is an iterative depth-first low-link
+/// pass over a compressed adjacency list: `O(edges + nodes)`.
+fn arrangement_non_bridge_marks(
     edges: &[SketchArrangementEdge],
-    excluded_edge: usize,
-    start: usize,
-    destination: usize,
     node_count: usize,
     ctx: &DecodeContext<'_>,
-) -> Result<bool, CodecError> {
-    let mut visited = ctx.alloc_filled(node_count, false, "f3d arrangement visit marks")?;
-    let mut pending = Vec::new();
-    ctx.push_vec(&mut pending, start, "f3d arrangement pending nodes")?;
-    visited[start] = true;
-    while let Some(node) = pending.pop() {
-        if node == destination {
-            return Ok(true);
+) -> Result<Vec<bool>, CodecError> {
+    const UNVISITED: usize = usize::MAX;
+
+    let overflow = || ctx.refuse_codec_limit("F3D arrangement cycle work", 0, u64::MAX);
+    let mut first = ctx.alloc_filled(
+        node_count.checked_add(1).ok_or_else(overflow)?,
+        0usize,
+        "f3d arrangement adjacency starts",
+    )?;
+    for edge in edges {
+        for node in edge.nodes {
+            first[node + 1] += 1;
         }
-        for (index, edge) in edges.iter().enumerate() {
-            if index == excluded_edge {
+    }
+    for node in 0..node_count {
+        first[node + 1] += first[node];
+    }
+    let mut fill = ctx.alloc_filled(node_count, 0usize, "f3d arrangement adjacency fill")?;
+    let mut incident = ctx.alloc_filled(
+        edges.len().checked_mul(2).ok_or_else(overflow)?,
+        (0usize, 0usize),
+        "f3d arrangement adjacency",
+    )?;
+    for (index, edge) in edges.iter().enumerate() {
+        let [left, right] = edge.nodes;
+        incident[first[left] + fill[left]] = (right, index);
+        fill[left] += 1;
+        incident[first[right] + fill[right]] = (left, index);
+        fill[right] += 1;
+    }
+    let mut discovery = ctx.alloc_filled(node_count, UNVISITED, "f3d arrangement discovery")?;
+    let mut low = ctx.alloc_filled(node_count, UNVISITED, "f3d arrangement low links")?;
+    let mut keep = ctx.alloc_filled(edges.len(), true, "f3d arrangement retained edge mark")?;
+    // Frames are (node, edge used to enter the node, next incident slot).
+    let mut stack = Vec::new();
+    let mut clock = 0usize;
+    for root in 0..node_count {
+        if discovery[root] != UNVISITED {
+            continue;
+        }
+        discovery[root] = clock;
+        low[root] = clock;
+        clock += 1;
+        ctx.push_vec(
+            &mut stack,
+            (root, UNVISITED, first[root]),
+            "f3d arrangement pending nodes",
+        )?;
+        while let Some(frame) = stack.last_mut() {
+            let (node, entry_edge, slot) = *frame;
+            if slot < first[node + 1] {
+                frame.2 += 1;
+                let (next, edge) = incident[slot];
+                if edge == entry_edge {
+                    continue;
+                }
+                if discovery[next] == UNVISITED {
+                    discovery[next] = clock;
+                    low[next] = clock;
+                    clock += 1;
+                    ctx.push_vec(
+                        &mut stack,
+                        (next, edge, first[next]),
+                        "f3d arrangement pending nodes",
+                    )?;
+                } else {
+                    low[node] = low[node].min(discovery[next]);
+                }
                 continue;
             }
-            let Some(next) = (edge.nodes[0] == node)
-                .then_some(edge.nodes[1])
-                .or_else(|| (edge.nodes[1] == node).then_some(edge.nodes[0]))
-            else {
-                continue;
-            };
-            if !visited[next] {
-                visited[next] = true;
-                ctx.push_vec(&mut pending, next, "f3d arrangement pending nodes")?;
+            stack.pop();
+            if let Some(&(parent, _, _)) = stack.last() {
+                low[parent] = low[parent].min(low[node]);
+                if low[node] > discovery[parent] {
+                    keep[entry_edge] = false;
+                }
             }
         }
     }
-    Ok(false)
+    Ok(keep)
 }
 
 fn arrangement_edges_coincident(
