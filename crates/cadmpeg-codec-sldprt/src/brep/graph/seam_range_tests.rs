@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Seam points of ring edges and edges defined by one reversed coedge.
+
+use super::topology::Coedge;
+use cadmpeg_ir::topology::Sense;
+
+#[test]
+fn a_sole_reversed_coedge_defines_an_edge_without_a_forward_one() {
+    use std::collections::HashMap;
+
+    let record = |attr, sense| Coedge {
+        attr,
+        refs: [0, 0, 0, 0, 101, 10, 7, 0, 0],
+        sense,
+        offset: 0,
+    };
+    let reversed = HashMap::from([(10, record(10, Sense::Reversed))]);
+    let forward = HashMap::from([(10, record(10, Sense::Forward))]);
+    let one = HashMap::from([(7, 1_usize)]);
+    let two = HashMap::from([(7, 2_usize)]);
+    let incidences = [(10_u16, 0_u16, 0_u16)];
+    let pick = |counts, coedges| super::sole_reversed_coedge(7, None, &incidences, counts, coedges);
+    assert_eq!(pick(&one, &reversed), Some(10));
+    assert_eq!(pick(&one, &forward), None);
+    assert_eq!(pick(&two, &reversed), None);
+}
+
+#[test]
+fn a_ring_edge_on_a_circle_starts_at_the_start_of_its_range() {
+    use crate::brep::CurveCarrier;
+    use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+    use cadmpeg_ir::math::{Point3, Vector3};
+    let geometry = CurveGeometry::Solved(SolvedCurveGeometry::Circle(
+        cadmpeg_ir::geometry::analytic::CircleCurve::try_new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            5.0,
+        )
+        .unwrap(),
+    ));
+    let ctx = cadmpeg_test_support::service_decode_context();
+    let carrier = |range| CurveCarrier {
+        attr: 1,
+        offset: 0,
+        end: 0,
+        geometry: geometry.clone(),
+        parameter_range: cadmpeg_ir::units::FiniteVector::new(range),
+    };
+    let at_zero = super::closed_seam_point(&ctx, &carrier([0.0, std::f64::consts::TAU]))
+        .unwrap()
+        .unwrap();
+    assert!((at_zero.x - 5.0).abs() < 1e-9 && at_zero.y.abs() < 1e-9);
+    let quarter = std::f64::consts::FRAC_PI_2;
+    let shifted =
+        super::closed_seam_point(&ctx, &carrier([quarter, quarter + std::f64::consts::TAU]))
+            .unwrap()
+            .unwrap();
+    assert!(shifted.x.abs() < 1e-9 && (shifted.y - 5.0).abs() < 1e-9);
+}

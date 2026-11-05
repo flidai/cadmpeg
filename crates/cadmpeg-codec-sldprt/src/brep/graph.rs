@@ -556,6 +556,10 @@ pub(crate) struct Stats {
     /// Edges that the coedges name and that no edge record or coedge fixes as
     /// the canonical coedge, so no edge was emitted for them.
     pub(crate) skipped_edges_no_canonical: usize,
+    /// Of those edges, the ones that no coedge of a kept face uses forward.
+    pub(crate) skipped_edges_no_forward: usize,
+    /// Of those edges, the ones that several coedges use forward.
+    pub(crate) skipped_edges_several_forward: usize,
     /// Of the dropped loops, those with a coedge that the tables do not hold.
     pub(crate) dropped_loops_missing_coedge: usize,
     /// Of the dropped loops, those with a coedge whose edge was not emitted.
@@ -1211,11 +1215,32 @@ fn closed_seam_point(
             let center = circle_curve.center().get();
             let ref_direction = circle_curve.frame().reference().as_raw();
             let radius = circle_curve.radius().get();
-            return Ok(Some(cadmpeg_ir::math::Point3::new(
+            let at_reference = cadmpeg_ir::math::Point3::new(
                 center.x + ref_direction.x * radius,
                 center.y + ref_direction.y * radius,
                 center.z + ref_direction.z * radius,
-            )));
+            );
+            // A ring edge starts at the start of its range. A range that does
+            // not start at the reference direction puts the vertex there.
+            if let Some(range) = carrier
+                .parameter_range
+                .map(cadmpeg_ir::units::FiniteVector::get)
+            {
+                if range[0].abs() > f64::EPSILON {
+                    let first = super::evaluation::curve_point(ctx, &carrier.geometry, range[0])?;
+                    let last = super::evaluation::curve_point(ctx, &carrier.geometry, range[1])?;
+                    if let (Some(first), Some(last)) = (first, last) {
+                        let (first, last) = (first.get(), last.get());
+                        let gap = (first.x - last.x)
+                            .hypot(first.y - last.y)
+                            .hypot(first.z - last.z);
+                        if gap <= RING_CLOSURE_TOLERANCE_MM {
+                            return Ok(Some(first));
+                        }
+                    }
+                }
+            }
+            return Ok(Some(at_reference));
         }
         CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(_)) => [0.0, std::f64::consts::TAU],
         CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(nurbs)) => {
@@ -1323,6 +1348,34 @@ fn canonical_coedge_attr(
         .filter(|(_, coedge)| coedge.refs[6] == edge_attr && coedge.sense == Sense::Forward);
     let (&attr, _) = candidates.next()?;
     candidates.next().is_none().then_some(attr)
+}
+
+/// The coedge that defines the direction of an edge with no forward coedge.
+///
+/// A boundary edge of a sheet has one coedge. When that coedge is reversed, the
+/// edge runs against it, so no forward coedge exists. The sole coedge then
+/// defines the edge, and the edge starts where the coedge ends. An edge with
+/// two or more coedges, or with an explicit canonical reference, is left to
+/// [`canonical_coedge_attr`].
+fn sole_reversed_coedge(
+    edge_attr: u16,
+    edge_use: Option<&topology::EdgeUse>,
+    incidences: &[(u16, u16, u16)],
+    coedge_counts: &HashMap<u16, usize>,
+    coedges: &HashMap<u16, topology::Coedge>,
+) -> Option<u16> {
+    let explicit = edge_use
+        .and_then(|record| record.references.canonical())
+        .is_some_and(|attr| attr > 1);
+    let [(attr, _, _)] = incidences else {
+        return None;
+    };
+    (!explicit
+        && coedge_counts.get(&edge_attr) == Some(&1)
+        && coedges
+            .get(attr)
+            .is_some_and(|coedge| coedge.sense == Sense::Reversed))
+    .then_some(*attr)
 }
 
 fn edge_end_vuse(canonical: u16, ring_end: u16, coedges: &HashMap<u16, topology::Coedge>) -> u16 {
@@ -1457,6 +1510,19 @@ pub(crate) fn decode_bodies(
     bodies: &[(&[u8], &StreamHeader)],
     stream: &cadmpeg_ir::StreamName,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
+    decode_bodies_in(ctx, bodies, stream, false)
+}
+
+/// [`decode_bodies`] with the rules of a hosting codec.
+///
+/// `hosted` admits the rules that no `SolidWorks` fixture has verified: an edge
+/// that only one reversed coedge names takes that coedge as its definition.
+pub(crate) fn decode_bodies_in(
+    ctx: &DecodeContext<'_>,
+    bodies: &[(&[u8], &StreamHeader)],
+    stream: &cadmpeg_ir::StreamName,
+    hosted: bool,
+) -> Result<Brep, cadmpeg_core::CodecError> {
     let mut carriers = CarrierIndex::default();
     let mut tables = topology::Tables::default();
     let mut facts = entity::Facts::default();
@@ -1535,7 +1601,14 @@ pub(crate) fn decode_bodies(
             append_entity_facts(ctx, &mut facts, scanned_facts)?;
         }
     }
-    decode_graph(ctx, &mut carriers, &tables, facts, &typed_facts, stream)
+    decode_graph(
+        ctx,
+        &mut carriers,
+        &tables,
+        facts,
+        &typed_facts,
+        (stream, hosted),
+    )
 }
 
 fn decode_body(
@@ -1552,7 +1625,14 @@ fn decode_body(
     let t =
         topology::scan_with_curve_attrs_excluding(ctx, body, &curve_attrs, &typed_face_offsets)?;
     let entity_facts = entity::scan_metadata(ctx, body, false)?;
-    decode_graph(ctx, &mut carriers, &t, entity_facts, &typed_facts, stream)
+    decode_graph(
+        ctx,
+        &mut carriers,
+        &t,
+        entity_facts,
+        &typed_facts,
+        (stream, false),
+    )
 }
 
 fn admit_brep_entity(ctx: &DecodeContext<'_>) -> Result<(), cadmpeg_core::CodecError> {
@@ -1844,7 +1924,7 @@ fn decode_graph(
     t: &topology::Tables,
     entity_facts: entity::Facts,
     typed_facts: &typed::Facts,
-    stream: &cadmpeg_ir::StreamName,
+    (stream, hosted): (&cadmpeg_ir::StreamName, bool),
 ) -> Result<Brep, cadmpeg_core::CodecError> {
     let typed_records = typed_body_records(ctx, typed_facts, t)?;
     let body_records = typed_records.unwrap_or_default();
@@ -2006,13 +2086,57 @@ fn decode_graph(
     // Edge attr -> (canonical start vuse, canonical end vuse, curve carrier attr).
     let mut edge_ends: HashMap<u16, (u16, u16, u16)> = HashMap::new();
 
+    let mut coedge_counts = HashMap::<u16, usize>::new();
+    for coedge in t.coedges().values().filter(|_| hosted) {
+        ctx.charge_work(1, "count Parasolid coedges per edge")?;
+        if let Some(count) = coedge_counts.get_mut(&coedge.refs[6]) {
+            *count += 1;
+        } else {
+            ctx.admit_hash_map_entry(
+                &mut coedge_counts,
+                &coedge.refs[6],
+                "count Parasolid coedges per edge",
+            )?;
+            coedge_counts.insert(coedge.refs[6], 1);
+        }
+    }
     for (edge_attr, incidences) in edge_incidence {
         ctx.charge_work(1, "resolve Parasolid edge incidences")?;
         let canonical =
             canonical_coedge_attr(edge_attr, t.edge_uses().get(&edge_attr), t.coedges());
-        let Some(canonical) = canonical else {
-            out.stats.skipped_edges_no_canonical += 1;
-            continue;
+        let (canonical, against_edge) = match canonical {
+            Some(canonical) => (canonical, false),
+            None => match hosted
+                .then(|| {
+                    sole_reversed_coedge(
+                        edge_attr,
+                        t.edge_uses().get(&edge_attr),
+                        &incidences,
+                        &coedge_counts,
+                        t.coedges(),
+                    )
+                })
+                .flatten()
+            {
+                Some(canonical) => (canonical, true),
+                None => {
+                    out.stats.skipped_edges_no_canonical += 1;
+                    let forward = incidences
+                        .iter()
+                        .filter(|(attr, _, _)| {
+                            t.coedges()
+                                .get(attr)
+                                .is_some_and(|coedge| coedge.sense == Sense::Forward)
+                        })
+                        .count();
+                    if forward == 0 {
+                        out.stats.skipped_edges_no_forward += 1;
+                    } else if forward > 1 {
+                        out.stats.skipped_edges_several_forward += 1;
+                    }
+                    continue;
+                }
+            },
         };
         let Some((_, start_vuse, ring_end_vuse)) = incidences
             .iter()
@@ -2026,8 +2150,14 @@ fn decode_graph(
             .get(&edge_attr)
             .map_or(0, |edge_use| edge_use.references.curve());
         ctx.admit_hash_map_entry(&mut edge_ends, &edge_attr, "index Parasolid edge endpoints")?;
-        edge_ends.insert(edge_attr, (*start_vuse, end_vuse, curve_attr));
-        for vuse in [*start_vuse, end_vuse] {
+        // The edge of a reversed sole coedge starts where that coedge ends.
+        let ends = if against_edge {
+            (end_vuse, *start_vuse)
+        } else {
+            (*start_vuse, end_vuse)
+        };
+        edge_ends.insert(edge_attr, (ends.0, ends.1, curve_attr));
+        for vuse in [ends.0, ends.1] {
             if vuse == 0 {
                 continue;
             }
@@ -9165,7 +9295,7 @@ mod tests {
                 ..Default::default()
             },
             &super::typed::Facts::default(),
-            &cadmpeg_ir::stream_name!("empty"),
+            (&cadmpeg_ir::stream_name!("empty"), false),
         )
         .expect("valid exactness fields");
 
@@ -9880,3 +10010,6 @@ mod numerical_range_tests;
 
 #[cfg(test)]
 mod evaluation_admission_tests;
+
+#[cfg(test)]
+mod seam_range_tests;

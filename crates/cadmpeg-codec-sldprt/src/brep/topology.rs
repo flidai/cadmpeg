@@ -367,6 +367,9 @@ fn tolerance_field_at(buf: &[u8], at: usize, tolerant: bool) -> bool {
     }
 }
 
+/// Reference cells that a vertex-use may hold after its point cell.
+const EXTRA_VERTEX_CELLS: usize = 3;
+
 /// Smallest tolerance, in metres, that the scan accepts for a tolerant vertex.
 const MIN_VERTEX_TOLERANCE_M: f64 = 1e-12;
 
@@ -406,9 +409,15 @@ fn vertex_use_with(buf: &[u8], off: usize, tolerant: bool) -> Option<VertexUse> 
     let attr = attr_at(buf, p)?;
     let sequence = View::u32_be_at(buf, p + 2)?;
     let tolerance_at = |at: usize| tolerance_field_at(buf, at, tolerant);
+    // A later schema can add reference cells after the point cell, which moves
+    // the tolerance field by two bytes per cell. The tolerance field is a
+    // fixed eight-byte pattern, so the null reading finds it unambiguously.
+    let plain_tolerance = (0..=EXTRA_VERTEX_CELLS)
+        .map(|extra| p + 16 + 2 * extra)
+        .find(|at| tolerance_at(*at));
     let tolerance_m;
-    let refs = if tolerance_at(p + 16) {
-        tolerance_m = View::f64_be_at(buf, p + 16).filter(|_| tolerant);
+    let refs = if let Some(at) = plain_tolerance {
+        tolerance_m = View::f64_be_at(buf, at).filter(|_| tolerant);
         refs_be::<5>(buf, p + 6)?
     } else {
         let magic = (p + 21
@@ -1398,6 +1407,24 @@ mod tests {
         let mut implausible = bytes;
         implausible[18..26].copy_from_slice(&1.0e9_f64.to_be_bytes());
         assert!(super::parse_tolerant_vertex_use(&implausible, 0).is_none());
+    }
+
+    #[test]
+    fn a_vertex_with_extra_reference_cells_keeps_its_point_reference() {
+        let mut bytes = vec![0, 0x12];
+        bytes.extend(50_u16.to_be_bytes());
+        bytes.extend(7_u32.to_be_bytes());
+        for reference in [0_u16, 0, 0, 0, 60, 0] {
+            bytes.extend(reference.to_be_bytes());
+        }
+        bytes.extend(MAGIC);
+        let vertex = parse_vertex_use(&bytes, 0).expect("extra cell");
+        assert_eq!((vertex.attr, vertex.refs[4]), (50, 60));
+        let mut tolerant = bytes;
+        tolerant[20..28].copy_from_slice(&1.0e-6_f64.to_be_bytes());
+        let vertex = super::parse_tolerant_vertex_use(&tolerant, 0).expect("tolerant");
+        assert_eq!(vertex.refs[4], 60);
+        assert_eq!(vertex.tolerance_m, Some(1.0e-6));
     }
 
     #[test]
