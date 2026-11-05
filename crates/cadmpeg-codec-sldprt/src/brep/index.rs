@@ -206,6 +206,21 @@ pub(super) fn scan_carriers(
     ctx: &DecodeContext<'_>,
     body: &[u8],
 ) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
+    let mut stored = scan_carriers_stored(ctx, body)?;
+    for curve in stored.curves.values_mut() {
+        if let IndexedCurve::Exact(carrier) = curve {
+            *carrier = carrier.clone().into_edge_oriented();
+        }
+    }
+    Ok(stored)
+}
+
+/// Scan the carriers with the stored parameter direction of every curve.
+/// Patching rewrites stored values, so it reads the stored form.
+pub(super) fn scan_carriers_stored(
+    ctx: &DecodeContext<'_>,
+    body: &[u8],
+) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
     ctx.charge_work(
         cadmpeg_core::decode::u64_from_index(body.len()),
         "scan SLDPRT analytic carriers",

@@ -117,29 +117,44 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
         return decode_result(ctx, ir, report, annotations, unknowns);
     }
 
-    let streams = active_body_streams(ctx, &scan)?;
-    if !streams.is_empty() {
-        ctx.charge_entities(u64_from_index(streams.len()), "admit SLDPRT body streams")?;
-        if let Some((decoded, mut report)) = try_decode_brep(ctx, &scan, &streams, &classification)?
-        {
-            let (ir, annotations, unknowns, mut pmi_losses) = build_geometry_ir(
-                ctx,
-                &mut scan,
-                &classification,
-                decoded,
-                form_padding,
-                &mut admitted_entities,
-            )?;
-            ctx.reserve_vec(
-                &mut report.losses,
-                pmi_losses.len(),
-                "append SLDPRT PMI losses",
-            )?;
-            report.losses.append(&mut pmi_losses);
-            append_tessellation_losses(ctx, &ir, &mut report)?;
-            append_design_losses(ctx, &ir, &mut report)?;
-            return decode_result(ctx, ir, report, annotations, unknowns);
+    let mut decoded_brep = None;
+    for source in [BodyStreamSource::Partitions, BodyStreamSource::LocalBodies] {
+        let streams = active_body_streams(ctx, &scan, source)?;
+        if streams.is_empty() {
+            continue;
         }
+        ctx.charge_entities(u64_from_index(streams.len()), "admit SLDPRT body streams")?;
+        let attempt = try_decode_brep(ctx, &scan, &streams, &classification)?;
+        let has_geometry = attempt.as_ref().is_some_and(|(decoded, _)| {
+            let brep = &decoded.brep;
+            !brep.faces.is_empty() || !brep.surfaces.is_empty() || !brep.points.is_empty()
+        });
+        // An empty partition model stands only until another source has geometry.
+        if has_geometry || decoded_brep.is_none() {
+            decoded_brep = attempt;
+        }
+        if has_geometry {
+            break;
+        }
+    }
+    if let Some((decoded, mut report)) = decoded_brep {
+        let (ir, annotations, unknowns, mut pmi_losses) = build_geometry_ir(
+            ctx,
+            &mut scan,
+            &classification,
+            decoded,
+            form_padding,
+            &mut admitted_entities,
+        )?;
+        ctx.reserve_vec(
+            &mut report.losses,
+            pmi_losses.len(),
+            "append SLDPRT PMI losses",
+        )?;
+        report.losses.append(&mut pmi_losses);
+        append_tessellation_losses(ctx, &ir, &mut report)?;
+        append_design_losses(ctx, &ir, &mut report)?;
+        return decode_result(ctx, ir, report, annotations, unknowns);
     }
 
     let (ir, annotations, unknowns, mut pmi_losses) = build_metadata_ir(
@@ -2314,12 +2329,25 @@ fn appearance_assignment_loss_message(
     Ok(Some(message))
 }
 
+/// Where the Parasolid body streams of a part come from.
+#[derive(Clone, Copy)]
+enum BodyStreamSource {
+    /// Partition and deltas streams.
+    Partitions,
+    /// Whole transmit files of the `FeatureBodies/LocalBodies` section of the
+    /// active configuration. A part whose partition stream states no body
+    /// stores its body there.
+    LocalBodies,
+}
+
 /// Collect the available Parasolid body streams, excluding auxiliary sites.
 fn active_body_streams<'a>(
     ctx: &DecodeContext<'_>,
     scan: &'a ContainerScan<'_>,
+    source: BodyStreamSource,
 ) -> Result<Vec<ActiveParasolidSite<'a>>, CodecError> {
     let mut streams = Vec::new();
+    let active_configuration = container::active_configuration_index(scan);
     for section in scan.sections() {
         let name = section.name().unwrap_or("");
         if contains_ascii_case_insensitive(name, "ghost")
@@ -2327,8 +2355,18 @@ fn active_body_streams<'a>(
         {
             continue;
         }
+        let local_bodies = contains_ascii_case_insensitive(name, "localbodies");
+        if local_bodies != matches!(source, BodyStreamSource::LocalBodies) {
+            continue;
+        }
+        if local_bodies
+            && active_configuration
+                .is_some_and(|active| container::configuration_index(name) != Some(active))
+        {
+            continue;
+        }
         for stream in section.ps_streams() {
-            if !crate::parasolid::is_body_stream(&stream.header) {
+            if !local_bodies && !crate::parasolid::is_body_stream(&stream.header) {
                 continue;
             }
             ctx.reserve_vec(&mut streams, 1, "collect SLDPRT body streams")?;
