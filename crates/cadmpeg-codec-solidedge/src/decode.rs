@@ -14,6 +14,7 @@ use cadmpeg_core::dialect::DialectLayers;
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::codec::{DecodeBody, Decoded};
 use cadmpeg_ir::document::{CadIr, SourceMeta};
+use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
 use cadmpeg_ir::ids::UnknownId;
 use cadmpeg_ir::report::loss::LossNote;
 use cadmpeg_ir::topology::EdgeCarrier;
@@ -415,17 +416,69 @@ pub(crate) fn inspect(
     ))
 }
 
-/// Withhold every edge range and coedge pcurve range that the model range
-/// checks reject, and count them. A range that fails the checks is wrong or not
-/// provable from the stream. The vertices bound the edge without it, and a
-/// wrong range would make the exported curve wrong.
+/// What the range pass did to a model.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct RangeOutcome {
+    /// Edge ranges moved to an equivalent range that passes the checks.
+    pub(crate) repaired: usize,
+    /// Edge ranges withheld.
+    pub(crate) edges: usize,
+    /// Coedge pcurve ranges withheld.
+    pub(crate) pcurves: usize,
+}
+
+/// Slack of a repaired range at the ends of a bounded domain, relative to the
+/// width of the domain. It covers roundoff and no more.
+const DOMAIN_OVERSHOOT: f64 = 1.0e-6;
+
+/// The equivalent range of an edge on a carrier, when the evidence supports one.
+///
+/// A circle and an ellipse repeat every turn, so a range that starts outside one
+/// turn moves by whole turns to start inside it. The points of the curve do not
+/// change. A range that runs past the end of a bounded B-spline domain by
+/// roundoff moves into the domain.
+pub(crate) fn equivalent_range(geometry: &CurveGeometry, [start, end]: [f64; 2]) -> [f64; 2] {
+    let turn = std::f64::consts::TAU;
+    match geometry {
+        CurveGeometry::Solved(SolvedCurveGeometry::Circle(_) | SolvedCurveGeometry::Ellipse(_)) => {
+            let shift = (start / turn).floor() * turn;
+            [start - shift, end - shift]
+        }
+        CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(nurbs)) if !nurbs.periodic() => {
+            let Some(domain) = cadmpeg_ir::eval::nurbs_curve_parameter_domain(nurbs) else {
+                return [start, end];
+            };
+            let [lower, upper] = domain.endpoints();
+            let slack = (upper - lower) * DOMAIN_OVERSHOOT;
+            let clamp = |value: f64| {
+                if value < lower && value >= lower - slack {
+                    lower
+                } else if value > upper && value <= upper + slack {
+                    upper
+                } else {
+                    value
+                }
+            };
+            [clamp(start), clamp(end)]
+        }
+        _ => [start, end],
+    }
+}
+
+/// Repair or withhold every edge range and coedge pcurve range that the model
+/// range checks reject.
+///
+/// A range that has an equivalent form is repaired. Another rejected range is
+/// wrong or not provable from the stream: it is withheld, the vertices still
+/// bound the edge, and a wrong range would make the exported curve wrong.
 pub(crate) fn withhold_rejected_ranges(
     ctx: &DecodeContext<'_>,
     ir: &mut CadIr,
-) -> Result<(usize, usize), CodecError> {
+) -> Result<RangeOutcome, CodecError> {
+    let mut outcome = RangeOutcome::default();
     let findings = cadmpeg_ir::validate::range_findings(ctx, ir)?;
     if findings.is_empty() {
-        return Ok((0, 0));
+        return Ok(outcome);
     }
     let mut rejected = std::collections::HashSet::new();
     for finding in &findings {
@@ -433,32 +486,72 @@ pub(crate) fn withhold_rejected_ranges(
             ctx.insert_hash_set(&mut rejected, id, "index rejected Solid Edge ranges")?;
         }
     }
-    let mut edges = 0;
+    {
+        let mut curves = std::collections::HashMap::new();
+        for curve in &ir.model.curves {
+            ctx.insert_hash_map(
+                &mut curves,
+                curve.id.as_str(),
+                &curve.geometry,
+                "index Solid Edge curves",
+            )?;
+        }
+        for edge in &mut ir.model.edges {
+            if !rejected.contains(edge.id.as_str()) {
+                continue;
+            }
+            let (Some(curve), Some(range)) = (
+                edge.curve().cloned(),
+                edge.param_range().map(cadmpeg_ir::units::FiniteVector::get),
+            ) else {
+                continue;
+            };
+            let Some(geometry) = curves.get(curve.as_str()) else {
+                continue;
+            };
+            let moved = equivalent_range(geometry, range);
+            if moved != range {
+                if let Ok(carrier) = EdgeCarrier::new(Some(curve), Some(moved)) {
+                    edge.carrier = carrier;
+                }
+            }
+        }
+    }
+    let remaining = cadmpeg_ir::validate::range_findings(ctx, ir)?;
+    let mut still_rejected = std::collections::HashSet::new();
+    for finding in &remaining {
+        if let Some(id) = finding.entity.as_deref() {
+            ctx.insert_hash_set(&mut still_rejected, id, "index rejected Solid Edge ranges")?;
+        }
+    }
     for edge in &mut ir.model.edges {
         if !rejected.contains(edge.id.as_str()) {
+            continue;
+        }
+        if !still_rejected.contains(edge.id.as_str()) {
+            outcome.repaired += 1;
             continue;
         }
         let carrier = std::mem::replace(&mut edge.carrier, EdgeCarrier::Free);
         edge.carrier = match carrier {
             EdgeCarrier::Bounded(curve, _) => {
-                edges += 1;
+                outcome.edges += 1;
                 EdgeCarrier::Curve(curve)
             }
             other => other,
         };
     }
-    let mut pcurves = 0;
     for coedge in &mut ir.model.coedges {
-        if !rejected.contains(coedge.id.as_str()) {
+        if !still_rejected.contains(coedge.id.as_str()) {
             continue;
         }
         for use_ in &mut coedge.pcurves {
             if use_.parameter_range.take().is_some() {
-                pcurves += 1;
+                outcome.pcurves += 1;
             }
         }
     }
-    Ok((edges, pcurves))
+    Ok(outcome)
 }
 
 /// Decode the Parasolid body groups into the neutral B-rep.
@@ -619,12 +712,14 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
             decoded_groups += 1;
         }
-        let (edges, pcurves) = withhold_rejected_ranges(ctx, &mut ir)?;
-        if edges + pcurves > 0 {
+        let ranges = withhold_rejected_ranges(ctx, &mut ir)?;
+        if ranges.repaired + ranges.edges + ranges.pcurves > 0 {
             let message = ctx.format_retained(
                 format_args!(
-                    "{edges} edge parameter range(s) and {pcurves} coedge pcurve range(s) failed \
-                     the model range checks and are withheld; the vertices still bound each edge"
+                    "{} edge parameter range(s) failed the model range checks and moved to an \
+                     equivalent range; {} edge range(s) and {} coedge pcurve range(s) failed \
+                     them and are withheld, and the vertices still bound each edge",
+                    ranges.repaired, ranges.edges, ranges.pcurves
                 ),
                 "retain Solid Edge range loss",
             )?;

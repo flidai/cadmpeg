@@ -645,6 +645,30 @@ fn a_model_whose_ranges_pass_the_checks_keeps_every_range() {
     let withheld = with_decode_context(&[], |ctx| {
         crate::decode::withhold_rejected_ranges(ctx, &mut ir).unwrap()
     });
-    assert_eq!(withheld, (0, 0));
+    assert_eq!(withheld, crate::decode::RangeOutcome::default());
     assert_eq!(ir, before);
+}
+
+#[test]
+fn a_circle_range_that_starts_past_one_turn_moves_to_the_same_points() {
+    use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+    use cadmpeg_ir::math::{Point3, Vector3};
+    let circle = CurveGeometry::Solved(SolvedCurveGeometry::Circle(
+        cadmpeg_ir::geometry::analytic::CircleCurve::try_new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            5.0,
+        )
+        .unwrap(),
+    ));
+    let turn = std::f64::consts::TAU;
+    let moved = crate::decode::equivalent_range(&circle, [turn + 0.5, turn + 1.5]);
+    assert!((moved[0] - 0.5).abs() < 1e-12 && (moved[1] - 1.5).abs() < 1e-12);
+    let negative = crate::decode::equivalent_range(&circle, [-0.5, 0.5]);
+    assert!((negative[0] - (turn - 0.5)).abs() < 1e-12);
+    assert_eq!(
+        crate::decode::equivalent_range(&circle, [0.5, 1.5]),
+        [0.5, 1.5]
+    );
 }
