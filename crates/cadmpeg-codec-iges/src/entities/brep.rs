@@ -112,6 +112,13 @@ impl From<CodecError> for PcurveProjectionError {
     }
 }
 
+/// A closed shell pairs every use of an edge with a use in the opposite
+/// sense. Two faces share an edge once; faces of solids that touch along it
+/// share it twice.
+fn radial_ring_is_balanced(forward: usize, reversed: usize) -> bool {
+    forward != 0 && forward == reversed
+}
+
 fn compose_sense(left: Sense, right: Sense) -> Sense {
     if left == right {
         Sense::Forward
@@ -1704,21 +1711,25 @@ pub(super) fn project(
         }
         if definition.closed
             && radial.values().any(|ring| {
-                if ring.len() != 2 {
-                    return true;
-                }
-                let mut senses = ring.iter().filter_map(|id| {
-                    candidate
+                // Faces that touch along an edge share it in pairs, so a
+                // closed shell uses an edge once in each sense per pair.
+                let mut forward = 0_usize;
+                let mut reversed = 0_usize;
+                for id in ring {
+                    let Some(coedge) = candidate
                         .model()
                         .coedges
                         .iter()
                         .find(|coedge| coedge.id == *id)
-                        .map(|coedge| coedge.sense)
-                });
-                match (senses.next(), senses.next()) {
-                    (Some(first), Some(second)) => first == second,
-                    _ => true,
+                    else {
+                        return true;
+                    };
+                    match coedge.sense {
+                        Sense::Forward => forward += 1,
+                        Sense::Reversed => reversed += 1,
+                    }
                 }
+                !radial_ring_is_balanced(forward, reversed)
             })
         {
             super::push_geometry_loss(
@@ -1727,7 +1738,7 @@ pub(super) fn project(
                 entry,
                 format_args!(
                     "{}",
-                    "closed shell does not use every edge exactly twice with opposite senses"
+                    "closed shell does not use every edge in equal numbers of both senses"
                 ),
             )?;
             continue;

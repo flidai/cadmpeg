@@ -668,6 +668,8 @@ The third line holds exactly three kernel doubles in the binary order: `scale`, 
 
 **Unit rule.** In the text encoding, a finite positive `scale` is the stream's length unit in millimetres per unit. The value `-1` declares the unit unset. A model-space length equals its stored value multiplied by `scale` millimetres. A stream with no units line or an unset unit declares no length unit. This differs from the binary encoding, whose lengths are centimetres and whose `scale` word is not a coordinate multiplier (§4). Dimensionless values — unit vectors, ratios, angles, knots, parameters, and pcurve coordinates — do not take the unit.
 
+**ASM position rule.** In a text stream of the ASM branch (save-format major version 100 or later), a model-space position is stored in millimetres whatever the value of `scale`. Positions are point coordinates, plane, cone, sphere, and torus root points, ellipse centres, and 3D control points. Every other model-space length, including a major-axis vector and a radius, equals its stored value multiplied by `scale` millimetres. For a `scale` of `10`, a position of `5` and a major-axis vector of length `0.5` describe the same 5 mm circle radius.
+
 ### 7.2 Record grammar
 
 Each record is a record name, its fields, and the terminator field `#`. Record names, bare fields, and counted strings are valid UTF-8. Whitespace — spaces, tabs, and newlines — separates fields, and a record continues across lines until its terminator. Outside counted string payloads, `#`, `{`, and `}` delimit tokens without a whitespace separator. Delimiters within a counted payload are data. The record name is the `-`-joined chain the binary name tokens assemble (§2.2).

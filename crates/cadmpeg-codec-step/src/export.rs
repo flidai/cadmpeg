@@ -1639,12 +1639,12 @@ impl<'a> Builder<'a> {
                 }
                 continue;
             }
-            let closed = body_kind == BodyKind::Solid;
+            let solid_body = body_kind == BodyKind::Solid;
             let Some((outer_id, void_ids)) = region.shells.split_first() else {
                 self.empty_regions.insert(region.id.as_str().to_owned());
                 continue;
             };
-            let Some(outer) = self.emit_shell(outer_id.as_str(), closed) else {
+            let Some((outer, mut closed)) = self.emit_shell(outer_id.as_str(), solid_body) else {
                 self.topology_relation_loss(
                     format!("region:{}:outer-shell:{}", region.id, outer_id),
                     StepLossCode::RegionNoWritableOuterShell,
@@ -1654,7 +1654,8 @@ impl<'a> Builder<'a> {
             };
             let mut voids = Vec::new();
             for sid in void_ids {
-                if let Some(void) = self.emit_shell(sid.as_str(), closed) {
+                if let Some((void, void_closed)) = self.emit_shell(sid.as_str(), solid_body) {
+                    closed &= void_closed;
                     voids.push(void);
                 } else {
                     self.topology_relation_loss(
@@ -2357,7 +2358,10 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn emit_shell(&mut self, shell_id: &str, closed: bool) -> Option<Ref> {
+    /// Write one shell and report whether it was written as closed. A shell
+    /// that lost a face to an unwritable carrier or boundary no longer
+    /// encloses volume, so a requested closed shell is written open.
+    fn emit_shell(&mut self, shell_id: &str, closed: bool) -> Option<(Ref, bool)> {
         let shell = self.shells.get(shell_id).copied()?;
         let face_ids: Vec<String> = shell
             .faces()
@@ -2387,10 +2391,12 @@ impl<'a> Builder<'a> {
         if face_refs.is_empty() {
             return None;
         }
-        Some(self.emitter.emit(
+        let closed = closed && face_refs.len() == face_ids.len();
+        let shell = self.emitter.emit(
             if closed { "CLOSED_SHELL" } else { "OPEN_SHELL" },
             &format!("'',{}", refs(&face_refs)),
-        ))
+        );
+        Some((shell, closed))
     }
 
     fn emit_face(&mut self, face_id: &str) -> Option<Ref> {
