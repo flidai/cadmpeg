@@ -64,8 +64,8 @@ fn mesh_body_projection_refuses_identifier_and_collection_limits() {
         ));
     }
     crate::design::test_support::with_test_decode_context(|ctx| {
-        let body = MeshBody::from_container(ctx, "mesh.paramesh", 100, transform, container())
-            .unwrap();
+        let body =
+            MeshBody::from_container(ctx, "mesh.paramesh", 100, transform, container()).unwrap();
         assert_eq!(
             body.id,
             crate::ids::native_mesh_body_id("mesh.paramesh", 100)
@@ -152,14 +152,15 @@ fn mesh_frame_diagnostic_refuses_retained_limit() {
     policy.limits.max_retained_bytes = u64::try_from(expected.len() - 1).unwrap();
     let (ctx, _) =
         cadmpeg_core::decode::DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
-    assert!(matches!(super::super::malformed_frame(&ctx, "mesh-wrapper", 108),
-        CodecError::ResourceLimit(failure) if failure.operation == "f3d Design diagnostic"));
+    assert!(
+        matches!(super::super::malformed_frame(&ctx, "mesh-wrapper", 108),
+        CodecError::ResourceLimit(failure) if failure.operation == "f3d Design diagnostic")
+    );
 }
 
 #[test]
 fn mesh_graph_invariant_diagnostic_refuses_retained_limit() {
-    let expected =
-        "F3D Design mesh feature graph violates `member` in Synthetic/BulkStream.dat";
+    let expected = "F3D Design mesh feature graph violates `member` in Synthetic/BulkStream.dat";
     let arena = cadmpeg_core::decode::DecodeArena::new();
     let mut policy = cadmpeg_core::decode::DecodePolicy::default();
     policy.limits.max_retained_bytes = u64::try_from(expected.len() - 1).unwrap();
