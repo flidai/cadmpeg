@@ -189,7 +189,8 @@ fn project_brep(
         };
         let v_axis = normal.cross(*u_axis);
         let first_entity = entities.len();
-        let mut edge_entities = HashMap::<&cadmpeg_ir::ids::EdgeId, SketchEntityId>::new();
+        // The entity of each edge, and whether it runs against the edge.
+        let mut edge_entities = HashMap::<&cadmpeg_ir::ids::EdgeId, (SketchEntityId, bool)>::new();
         let mut used_vertices = HashSet::<&cadmpeg_ir::ids::VertexId>::new();
         let mut profiles = Vec::new();
         for loop_id in &face.loops {
@@ -211,9 +212,14 @@ fn project_brep(
                         "collect SLDPRT sketch used vertices",
                     )?;
                 }
-                let entity_id = if let Some(id) = edge_entities.get(&edge.id) {
+                let (entity_id, against_edge) = if let Some((id, against_edge)) =
+                    edge_entities.get(&edge.id)
+                {
                     let id = retained_text(ctx, id.as_str(), "retain SLDPRT sketch entity ID")?;
-                    SketchEntityId::mint(id).map_err(cadmpeg_core::CodecError::malformed)?
+                    (
+                        SketchEntityId::mint(id).map_err(cadmpeg_core::CodecError::malformed)?,
+                        *against_edge,
+                    )
                 } else {
                     let Ok(id) = SketchEntityId::mint(format!(
                         "sldprt:model:sketch-entity#{block_offset}:{stream_ordinal}:{face_ordinal}:{}",
@@ -257,9 +263,11 @@ fn project_brep(
                         }
                         return Err(cadmpeg_core::CodecError::Malformed(message));
                     }
-                    let Some(geometry) = projected else {
+                    let Some(projected) = projected else {
                         continue;
                     };
+                    let geometry = projected.geometry;
+                    let against_edge = projected.reversed_endpoints;
                     let Some(start_point) = vertices.get(&edge.start) else {
                         continue;
                     };
@@ -296,7 +304,12 @@ fn project_brep(
                         2,
                         "collect SLDPRT sketch edge endpoints",
                     )?;
-                    for point in [start_point, end_point] {
+                    let endpoints = if against_edge {
+                        [end_point, start_point]
+                    } else {
+                        [start_point, end_point]
+                    };
+                    for point in endpoints {
                         endpoint_refs.push(retained_format(
                             ctx,
                             format_args!("{stream_ordinal}:{}", point.as_str()),
@@ -329,14 +342,14 @@ fn project_brep(
                         "retain SLDPRT indexed sketch entity ID",
                     )?)
                     .map_err(cadmpeg_core::CodecError::malformed)?;
-                    edge_entities.insert(&edge.id, index_id);
-                    id
+                    edge_entities.insert(&edge.id, (index_id, against_edge));
+                    (id, against_edge)
                 };
                 if edge.curve().is_some() || edge.start != edge.end {
                     ctx.reserve_vec(&mut profile, 1, "collect SLDPRT sketch profile uses")?;
                     profile.push(SketchEntityUse {
                         entity: entity_id,
-                        reversed: coedge.sense == Sense::Reversed,
+                        reversed: (coedge.sense == Sense::Reversed) != against_edge,
                     });
                 }
             }

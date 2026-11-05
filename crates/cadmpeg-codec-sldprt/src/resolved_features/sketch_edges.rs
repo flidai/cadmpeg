@@ -48,6 +48,9 @@ fn retained_id_text(
 }
 
 const EPS_SKETCH_EDGES_PROJECT_EDGE_E9: f64 = 1.0e-9;
+/// Largest distance, in millimetres, between a B-spline end pole and the
+/// projected edge vertex for the carrier to end at the vertex.
+const EPS_SKETCH_EDGES_NURBS_ENDPOINT_MM: f64 = 1.0e-6;
 const EPS_SKETCH_EDGES_CIRCLE_CONTAINS_POINT_E9: f64 = 1.0e-9;
 const EPS_SKETCH_EDGES_ELLIPSE_CONTAINS_POINT_E9: f64 = 1.0e-9;
 
@@ -248,6 +251,68 @@ pub(super) struct SketchPlaneFrame {
     pub(super) v_axis: Vector3,
 }
 
+/// Knots, projected poles and weights of a projected NURBS edge.
+type ProjectedNurbsLanes = (Vec<f64>, Vec<Point2>, Option<Vec<f64>>);
+
+/// One edge projected onto a sketch plane.
+#[derive(Debug)]
+pub(super) struct ProjectedEdge {
+    pub(super) geometry: SketchGeometry,
+    /// The sketch entity runs from the end vertex of the edge to its start
+    /// vertex. A sketch arc runs counter-clockwise, and a circle or ellipse
+    /// whose axis opposes the plane normal runs clockwise in the plane.
+    pub(super) reversed_endpoints: bool,
+}
+
+impl ProjectedEdge {
+    fn forward(geometry: SketchGeometry) -> Self {
+        Self {
+            geometry,
+            reversed_endpoints: false,
+        }
+    }
+}
+
+/// Largest distance, in millimetres, of a chart pole from the chord for the
+/// chart to count as straight.
+const STRAIGHT_CHART_TOLERANCE_MM: f64 = 1.0e-3;
+
+/// Whether every pole of a degree-1 chart lies on the chord through `start` and
+/// `end`, and the chart spans both end points along that chord. The vertices of
+/// an intersection edge lie within the chart error of the polyline, so the
+/// end points are compared with the extent of the chart, not with its poles.
+fn straight_chart_contains(poles: &[Point2], start: Point2, end: Point2) -> bool {
+    let (du, dv) = (end.u - start.u, end.v - start.v);
+    let length = du.hypot(dv);
+    if length <= EPS_SKETCH_EDGES_NURBS_ENDPOINT_MM || poles.len() < 2 {
+        return false;
+    }
+    let along = |point: Point2| ((point.u - start.u) * du + (point.v - start.v) * dv) / length;
+    let across =
+        |point: Point2| ((point.u - start.u) * dv - (point.v - start.v) * du).abs() / length;
+    if poles
+        .iter()
+        .any(|pole| across(*pole) > STRAIGHT_CHART_TOLERANCE_MM)
+    {
+        return false;
+    }
+    let lower = poles
+        .iter()
+        .map(|pole| along(*pole))
+        .fold(f64::INFINITY, f64::min);
+    let upper = poles
+        .iter()
+        .map(|pole| along(*pole))
+        .fold(f64::NEG_INFINITY, f64::max);
+    lower <= STRAIGHT_CHART_TOLERANCE_MM && upper >= length - STRAIGHT_CHART_TOLERANCE_MM
+}
+
+/// Project an edge onto a sketch plane.
+///
+/// A sketch arc and a sketch ellipse run counter-clockwise in the plane. The
+/// stored curve runs counter-clockwise about its own axis, so a curve whose
+/// axis opposes the plane normal projects to the same arc with the parameter
+/// sign negated and the endpoints exchanged.
 pub(super) fn project_edge(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     edge: &cadmpeg_ir::topology::Edge,
@@ -256,7 +321,7 @@ pub(super) fn project_edge(
     curves: &HashMap<&cadmpeg_ir::ids::CurveId, &CurveGeometry>,
     frame: SketchPlaneFrame,
     refusal: &mut crate::lane_refusal::LaneRefusals,
-) -> Result<Option<SketchGeometry>, cadmpeg_core::CodecError> {
+) -> Result<Option<ProjectedEdge>, cadmpeg_core::CodecError> {
     let SketchPlaneFrame {
         origin,
         u_axis,
@@ -284,37 +349,76 @@ pub(super) fn project_edge(
     if let Some(CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(nurbs))) =
         edge.curve().and_then(|id| curves.get(id).copied())
     {
-        let count = nurbs.pole_count();
         let operation = "project SLDPRT sketch NURBS edge";
-        let knots = nurbs.knots().try_clone_for_decode(ctx, operation)?;
-        let mut projected = Vec::new();
-        ctx.reserve_vec(&mut projected, count, operation)?;
-        match nurbs.pole_rows() {
-            cadmpeg_ir::geometry::nurbs::NurbsPoles3::Polynomial { points } => {
-                projected.extend(
-                    points
-                        .iter()
-                        .map(|point| project_point(point.get(), origin, u_axis, v_axis)),
-                );
-            }
-            cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { points } => {
-                projected.extend(
-                    points
-                        .iter()
-                        .map(|point| project_point(point.point.get(), origin, u_axis, v_axis)),
-                );
+        let project = |point: Point3| project_point(point, origin, u_axis, v_axis);
+        // A carrier that runs past the edge is cut to the span between the end
+        // points of the edge. A carrier that already ends at them stays whole.
+        let whole_lanes = |ctx: &cadmpeg_core::decode::DecodeContext<'_>| -> Result<
+            ProjectedNurbsLanes,
+            cadmpeg_core::CodecError,
+        > {
+            let count = nurbs.pole_count();
+            let mut knots = Vec::new();
+            ctx.reserve_vec(&mut knots, nurbs.knots().len(), operation)?;
+            knots.extend_from_slice(nurbs.knots());
+            let mut projected = Vec::new();
+            ctx.reserve_vec(&mut projected, count, operation)?;
+            let weights = match nurbs.pole_rows() {
+                cadmpeg_ir::geometry::nurbs::NurbsPoles3::Polynomial { points } => {
+                    projected.extend(points.iter().map(|point| project(point.get())));
+                    None
+                }
+                cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { points } => {
+                    projected.extend(points.iter().map(|point| project(point.point.get())));
+                    let mut weights = Vec::new();
+                    ctx.reserve_vec(&mut weights, count, operation)?;
+                    weights.extend(points.iter().map(|point| point.weight.get()));
+                    Some(weights)
+                }
+            };
+            Ok((knots, projected, weights))
+        };
+        let (mut knots, mut projected, mut weights) = whole_lanes(ctx)?;
+        let mut against_edge = false;
+        let gap = |left: Point2, right: Point2| (left.u - right.u).hypot(left.v - right.v);
+        let tolerance = tolerance.max(EPS_SKETCH_EDGES_NURBS_ENDPOINT_MM);
+        let ends_match = |poles: &[Point2], first: Point2, last: Point2| {
+            poles.first().zip(poles.last()).is_some_and(|(head, tail)| {
+                gap(*head, first) <= tolerance && gap(*tail, last) <= tolerance
+            })
+        };
+        if !ends_match(&projected, start, end) {
+            if ends_match(&projected, end, start) {
+                against_edge = true;
+            } else if let Some(span) =
+                crate::brep::graph::nurbs_edge_span(ctx, nurbs, *start_point, *end_point)?
+            {
+                let mut cut = Vec::new();
+                ctx.reserve_vec(&mut cut, span.poles.len(), operation)?;
+                cut.extend(span.poles.iter().map(|point| project(*point)));
+                let (head_end, tail_end) = if span.against_edge {
+                    (end, start)
+                } else {
+                    (start, end)
+                };
+                if ends_match(&cut, head_end, tail_end) {
+                    knots = span.knots;
+                    projected = cut;
+                    weights = span.weights;
+                    against_edge = span.against_edge;
+                }
             }
         }
-        let weights = match nurbs.pole_rows() {
-            cadmpeg_ir::geometry::nurbs::NurbsPoles3::Polynomial { .. } => None,
-            cadmpeg_ir::geometry::nurbs::NurbsPoles3::Rational { points } => {
-                let mut weights = Vec::new();
-                ctx.reserve_vec(&mut weights, count, operation)?;
-                weights.extend(points.iter().map(|point| point.weight));
-                Some(weights)
-            }
-        };
-        return match cadmpeg_ir::geometry::pcurve::PcurveNurbs::from_checked_lanes(
+        if nurbs.degree() == 1
+            && !ends_match(&projected, start, end)
+            && !ends_match(&projected, end, start)
+            && straight_chart_contains(&projected, start, end)
+        {
+            // A straight chart polyline that contains both end points, with a
+            // vertex a chart error off the polyline: the edge is the chord.
+            return Ok(line().map(ProjectedEdge::forward));
+        }
+        return match cadmpeg_ir::geometry::pcurve::PcurveNurbs::from_lanes(
             ctx,
             nurbs.degree(),
             knots,
@@ -322,7 +426,10 @@ pub(super) fn project_edge(
             weights,
             nurbs.periodic(),
         )? {
-            Ok(nurbs) => Ok(Some(SketchGeometry::nurbs(nurbs))),
+            Ok(nurbs) => Ok(Some(ProjectedEdge {
+                geometry: SketchGeometry::nurbs(nurbs),
+                reversed_endpoints: against_edge,
+            })),
             Err(error) => {
                 refusal.note(
                     ctx,
@@ -345,6 +452,7 @@ pub(super) fn project_edge(
         Some(other) => cadmpeg_core::text::NonBlankString::new(retained_curve_debug(ctx, other)?)
             .map(SketchGeometry::native),
     };
+    let normal = u_axis.cross(v_axis);
     let projected = (|| match curve {
         Some(CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle_curve))) => {
             let center = circle_curve.center().get();
@@ -353,36 +461,46 @@ pub(super) fn project_edge(
             if !circle_contains_point(center, radius, start, tolerance)
                 || !circle_contains_point(center, radius, end, tolerance)
             {
-                return line();
+                return line().map(ProjectedEdge::forward);
             }
             if (start.u - end.u).hypot(start.v - end.v) <= EPS_SKETCH_EDGES_PROJECT_EDGE_E9 {
-                Some(
+                Some(ProjectedEdge::forward(
                     SketchGeometry::try_from(SketchGeometryDefinition::Circle {
                         center,
                         radius: cadmpeg_ir::scalar::Length::from(circle_curve.radius()),
                     })
                     .ok()?,
-                )
+                ))
             } else {
                 let parameters = edge
                     .param_range()
                     .map(cadmpeg_ir::units::FiniteVector::get)
                     .filter(|[start, end]| start != end);
-                Some(
-                    SketchGeometry::try_from(SketchGeometryDefinition::Arc {
+                let clockwise = circle_curve.frame().axis().as_raw().dot(normal) < 0.0;
+                // The stored parameter counts from the reference direction.
+                let reference = circle_curve.frame().reference().as_raw();
+                let reference_angle = reference.dot(v_axis).atan2(reference.dot(u_axis));
+                let angle_at = |point: Point2| (point.v - center.v).atan2(point.u - center.u);
+                let (start_angle, end_angle) = match (parameters, clockwise) {
+                    (Some([first, last]), false) => {
+                        (reference_angle + first, reference_angle + last)
+                    }
+                    (Some([first, last]), true) => {
+                        (reference_angle - last, reference_angle - first)
+                    }
+                    (None, false) => (angle_at(start), angle_at(end)),
+                    (None, true) => (angle_at(end), angle_at(start)),
+                };
+                Some(ProjectedEdge {
+                    geometry: SketchGeometry::try_from(SketchGeometryDefinition::Arc {
                         center,
                         radius: cadmpeg_ir::scalar::Length::from(circle_curve.radius()),
-                        start_angle: cadmpeg_ir::scalar::Angle::new(parameters.map_or_else(
-                            || (start.v - center.v).atan2(start.u - center.u),
-                            |range| range[0],
-                        ))?,
-                        end_angle: cadmpeg_ir::scalar::Angle::new(parameters.map_or_else(
-                            || (end.v - center.v).atan2(end.u - center.u),
-                            |range| range[1],
-                        ))?,
+                        start_angle: cadmpeg_ir::scalar::Angle::new(start_angle)?,
+                        end_angle: cadmpeg_ir::scalar::Angle::new(end_angle)?,
                     })
                     .ok()?,
-                )
+                    reversed_endpoints: clockwise,
+                })
             }
         }
         Some(CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(ellipse_curve))) => {
@@ -409,7 +527,7 @@ pub(super) fn project_edge(
                 end,
                 tolerance,
             ) {
-                return line();
+                return line().map(ProjectedEdge::forward);
             }
             let full = (start.u - end.u).hypot(start.v - end.v) <= EPS_SKETCH_EDGES_PROJECT_EDGE_E9;
             let parameter = |point: Point2| {
@@ -423,8 +541,23 @@ pub(super) fn project_edge(
                 .param_range()
                 .map(cadmpeg_ir::units::FiniteVector::get)
                 .filter(|[start, end]| start != end);
-            Some(
-                SketchGeometry::try_from(SketchGeometryDefinition::Ellipse {
+            let clockwise = ellipse_curve.frame().axis().as_raw().dot(normal) < 0.0;
+            let bounds = if full {
+                None
+            } else {
+                let (first, last) = match (parameters, clockwise) {
+                    (Some([first, last]), false) => (first, last),
+                    (Some([first, last]), true) => (-last, -first),
+                    (None, false) => (parameter(start), parameter(end)),
+                    (None, true) => (parameter(end), parameter(start)),
+                };
+                Some([
+                    cadmpeg_ir::scalar::Angle::new(first)?,
+                    cadmpeg_ir::scalar::Angle::new(last)?,
+                ])
+            };
+            Some(ProjectedEdge {
+                geometry: SketchGeometry::try_from(SketchGeometryDefinition::Ellipse {
                     center,
                     major_angle: cadmpeg_ir::scalar::Angle::new(major_angle)?,
                     radii: cadmpeg_ir::sketches::EllipseRadii {
@@ -435,28 +568,20 @@ pub(super) fn project_edge(
                             ellipse_curve.minor_radius(),
                         ),
                     },
-                    bounds: if full {
-                        None
-                    } else {
-                        Some([
-                            cadmpeg_ir::scalar::Angle::new(
-                                parameters.map_or_else(|| parameter(start), |range| range[0]),
-                            )?,
-                            cadmpeg_ir::scalar::Angle::new(
-                                parameters.map_or_else(|| parameter(end), |range| range[1]),
-                            )?,
-                        ])
-                    },
+                    bounds,
                 })
                 .ok()?,
-            )
+                reversed_endpoints: clockwise && !full,
+            })
         }
         Some(CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(_))) => None,
-        None if edge.start == edge.end => Some(
+        None if edge.start == edge.end => Some(ProjectedEdge::forward(
             SketchGeometry::try_from(SketchGeometryDefinition::Point { position: start }).ok()?,
-        ),
-        Some(CurveGeometry::Solved(SolvedCurveGeometry::Line(_))) | None => line(),
-        Some(_) => native,
+        )),
+        Some(CurveGeometry::Solved(SolvedCurveGeometry::Line(_))) | None => {
+            line().map(ProjectedEdge::forward)
+        }
+        Some(_) => native.map(ProjectedEdge::forward),
     })();
     Ok(projected)
 }

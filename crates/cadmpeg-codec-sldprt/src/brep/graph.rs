@@ -1132,7 +1132,11 @@ fn walk_face(
         if !ctx.insert_hash_set(&mut loop_guard, loop_ref, "walk Parasolid face loops")? {
             break;
         }
-        let Some(lp) = t.loops().get(&loop_ref) else {
+        let Some(lp) = t
+            .loops()
+            .get(&loop_ref)
+            .or_else(|| t.vertex_loops().get(&loop_ref))
+        else {
             break;
         };
         let owner_bridge = lp.refs[2];
@@ -1244,6 +1248,24 @@ fn closed_seam_point(
     Ok((gap <= RING_CLOSURE_TOLERANCE_MM).then_some(first))
 }
 
+/// Put the start of a circle or ellipse edge range into one turn from zero.
+///
+/// A stored start angle may fall a rounding error below zero, or a turn away
+/// from it. The sweep stays as stored, except that a start within `1e-9` below
+/// zero is read as zero.
+fn canonical_angular_range(range: [f64; 2]) -> [f64; 2] {
+    const SNAP: f64 = 1.0e-9;
+    let [start, end] = range;
+    if (0.0..std::f64::consts::TAU).contains(&start) {
+        return range;
+    }
+    if (-SNAP..0.0).contains(&start) {
+        return [0.0, end];
+    }
+    let shift = (start / std::f64::consts::TAU).floor() * std::f64::consts::TAU;
+    [start - shift, end - shift]
+}
+
 fn edge_parameter_range(
     ctx: &DecodeContext<'_>,
     carrier: &CurveCarrier,
@@ -1265,6 +1287,12 @@ fn edge_parameter_range(
         range
     } else {
         [range[1], range[0]]
+    };
+    let range = match &carrier.geometry {
+        CurveGeometry::Solved(SolvedCurveGeometry::Circle(_) | SolvedCurveGeometry::Ellipse(_)) => {
+            canonical_angular_range(range)
+        }
+        _ => range,
     };
     let Some(endpoints) = endpoints else {
         return Ok(Some((range, false)));
@@ -2013,10 +2041,20 @@ fn decode_graph(
             continue;
         };
         let end_vuse = edge_end_vuse(canonical, *ring_end_vuse, t.coedges());
-        let curve_attr = t
+        let mut curve_attr = t
             .edge_uses()
             .get(&edge_attr)
             .map_or(0, |edge_use| edge_use.references.curve());
+        if curve_attr <= 1 {
+            // A tolerant edge states no support curve. Its coedges carry the
+            // curve in the eighth reference cell.
+            curve_attr = incidences
+                .iter()
+                .filter_map(|(coedge_attr, _, _)| t.coedges().get(coedge_attr))
+                .map(|coedge| coedge.refs[7])
+                .find(|curve| *curve > 1 && carriers.curve(*curve).is_some())
+                .unwrap_or(curve_attr);
+        }
         ctx.admit_hash_map_entry(&mut edge_ends, &edge_attr, "index Parasolid edge endpoints")?;
         edge_ends.insert(edge_attr, (*start_vuse, end_vuse, curve_attr));
         for vuse in [*start_vuse, end_vuse] {
@@ -6727,6 +6765,51 @@ fn nurbs_edge_parameter_range(
     Ok(Some([range[0].min(range[1]), range[0].max(range[1])]))
 }
 
+/// The part of a B-spline edge carrier between the two end points of the edge.
+pub(crate) struct NurbsEdgeSpan {
+    pub(crate) knots: Vec<f64>,
+    pub(crate) poles: Vec<Point3>,
+    pub(crate) weights: Option<Vec<f64>>,
+    /// The carrier runs from the end point of the edge to its start point.
+    pub(crate) against_edge: bool,
+}
+
+/// Cut a non-periodic B-spline carrier to the interval between the parameters
+/// of the edge end points. The end points select the parameters when each has
+/// one unique nearest parameter on the carrier. A carrier whose end points
+/// coincide, a periodic carrier, and a point without a unique parameter select
+/// no span.
+pub(crate) fn nurbs_edge_span(
+    ctx: &DecodeContext<'_>,
+    nurbs: &cadmpeg_ir::geometry::nurbs::NurbsCurve,
+    start: Point3,
+    end: Point3,
+) -> Result<Option<NurbsEdgeSpan>, cadmpeg_core::CodecError> {
+    if nurbs.periodic() {
+        return Ok(None);
+    }
+    let (InverseResolution::Unique(first), InverseResolution::Unique(last)) = (
+        nurbs_parameter_at_point(ctx, nurbs, start)?,
+        nurbs_parameter_at_point(ctx, nurbs, end)?,
+    ) else {
+        return Ok(None);
+    };
+    if first == last {
+        return Ok(None);
+    }
+    let Some((knots, poles, weights)) =
+        clamp_nurbs_curve_to_domain_lanes(ctx, nurbs, [first.min(last), first.max(last)])?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(NurbsEdgeSpan {
+        knots,
+        poles,
+        weights,
+        against_edge: first > last,
+    }))
+}
+
 fn derive_nurbs_edge_pcurve(
     ctx: &DecodeContext<'_>,
     surface: &cadmpeg_ir::geometry::nurbs::NurbsSurface,
@@ -8156,6 +8239,19 @@ mod tests {
         assert_eq!(sphere_latitude(2.1, 2.0), None);
         // A signed radius keeps the signed ratio.
         assert_eq!(sphere_latitude(2.0, -2.0), Some(-FRAC_PI_2));
+    }
+
+    #[test]
+    fn angular_edge_range_starts_within_one_turn_from_zero() {
+        use std::f64::consts::TAU;
+        // A start a rounding error below zero is read as zero.
+        assert_eq!(super::canonical_angular_range([-5.0e-15, 1.5]), [0.0, 1.5]);
+        // A start inside the turn stays as stored.
+        assert_eq!(super::canonical_angular_range([0.5, 1.5]), [0.5, 1.5]);
+        // A start further below zero moves up by whole turns with its sweep.
+        let [start, end] = super::canonical_angular_range([-1.0, 0.5]);
+        assert!((start - (TAU - 1.0)).abs() < 1.0e-12);
+        assert!((end - (TAU + 0.5)).abs() < 1.0e-12);
     }
 
     #[test]
