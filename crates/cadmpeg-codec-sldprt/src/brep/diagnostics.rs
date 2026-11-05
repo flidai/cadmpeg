@@ -310,6 +310,10 @@ pub(crate) fn render(
                 )
             }
             Finding::NoCanonical { edge, forward } => {
+                let canonical_ref = tables
+                    .edge_uses()
+                    .get(&edge)
+                    .and_then(|record| record.references.canonical());
                 let coedges: Vec<String> = coedges_of(ctx, tables, edge)?
                     .into_iter()
                     .map(|coedge| {
@@ -341,7 +345,10 @@ pub(crate) fn render(
                     .collect();
                 format!(
                     "{{\"kind\":\"no_canonical\",\"edge\":{edge},\"forward\":{forward},\
+                     \"canonical_ref\":{},\"canonical_ref_known\":{},\
                      \"edge_known\":{},\"edge_hits\":{},\"coedges\":[{}]}}",
+                    option(canonical_ref),
+                    list(canonical_ref.map_or_else(Vec::new, |named| known_as(tables, named))),
                     list(known_as(tables, edge)),
                     at(edge),
                     coedges.join(","),
