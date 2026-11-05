@@ -259,6 +259,14 @@ struct BodyRoot {
     root_ordinal: Option<usize>,
 }
 
+/// Kinds of the leaf shapes below one compound root.
+#[derive(Default)]
+struct CompoundLeaves {
+    solid: bool,
+    surface: bool,
+    other: bool,
+}
+
 #[derive(Clone, Copy)]
 struct RegionTraversal {
     shape_index: usize,
@@ -688,7 +696,10 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
             TextShapeKind::Solid => BodyKind::Solid,
             TextShapeKind::Wire | TextShapeKind::Edge => BodyKind::Wire,
             TextShapeKind::Shell | TextShapeKind::Face => BodyKind::Sheet,
-            _ => BodyKind::General,
+            TextShapeKind::Compound | TextShapeKind::CompSolid => {
+                self.compound_body_kind(ctx, root.shape)?
+            }
+            TextShapeKind::Vertex => BodyKind::General,
         };
         let tessellation_start = ir.model.tessellations.len();
         let mut regions = Vec::new();
@@ -728,6 +739,49 @@ impl<'a, 'c, 'r> Builder<'a, 'c, 'r> {
                 Transform::identity(),
                 body_id.as_str(),
             )?;
+        }
+        Ok(())
+    }
+
+    /// Dimension of a compound body, from the shapes that carry its regions.
+    ///
+    /// A compound whose every region comes from a `Solid` is a body of solids,
+    /// as a Boolean result with several lumps is. A compound whose every region
+    /// comes from a `Shell` or `Face` is a sheet body. Any other mixture, and a
+    /// compound with only wires or vertices, is general.
+    fn compound_body_kind(
+        &self,
+        ctx: &DecodeContext<'_>,
+        shape_index: usize,
+    ) -> Result<BodyKind, CodecError> {
+        let mut leaves = CompoundLeaves::default();
+        self.collect_compound_leaves(ctx, shape_index, &mut leaves)?;
+        Ok(match (leaves.solid, leaves.surface, leaves.other) {
+            (true, false, false) => BodyKind::Solid,
+            (false, true, false) => BodyKind::Sheet,
+            _ => BodyKind::General,
+        })
+    }
+
+    fn collect_compound_leaves(
+        &self,
+        ctx: &DecodeContext<'_>,
+        shape_index: usize,
+        leaves: &mut CompoundLeaves,
+    ) -> Result<(), CodecError> {
+        let _depth = ctx.enter_nested("classify FCStd compound nesting")?;
+        let shape = self.shape(shape_index)?;
+        match shape.kind() {
+            TextShapeKind::Compound | TextShapeKind::CompSolid => {
+                for child in &shape.children {
+                    self.collect_compound_leaves(ctx, child.shape, leaves)?;
+                }
+            }
+            TextShapeKind::Solid => leaves.solid = true,
+            TextShapeKind::Shell | TextShapeKind::Face => leaves.surface = true,
+            TextShapeKind::Vertex | TextShapeKind::Edge | TextShapeKind::Wire => {
+                leaves.other = true;
+            }
         }
         Ok(())
     }
@@ -2929,3 +2983,6 @@ mod located_geometry_tests;
 
 #[cfg(test)]
 mod near_occurrence_tests;
+
+#[cfg(test)]
+mod compound_body_kind_tests;

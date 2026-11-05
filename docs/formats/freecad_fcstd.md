@@ -332,6 +332,11 @@ use is a distinct neutral occurrence. Repeated root uses of the same shape at th
 retain their serialized root order as an occurrence discriminator; they do not share body,
 region, shell, face, loop, coedge, edge, vertex, or point identity.
 
+CADIR decision: a root `Solid` gives a solid body, a root `Wire` or `Edge` a wire body, and a root
+`Shell` or `Face` a sheet body. A root `Compound` or `CompSolid` gives a solid body when every leaf
+shape below it is a `Solid`, a sheet body when every leaf is a `Shell` or `Face`, and a general body
+for any other mixture. Each `Solid`, `Shell`, or `Face` leaf is one region of the body.
+
 An edge endpoint accessor visits the edge's direct child uses in serialized order. Its endpoint
 incidence has exactly one `Forward` vertex use and exactly one `Reversed` vertex use: `Forward`
 supplies the start vertex and `Reversed` supplies the end vertex. A closed or degenerated edge
