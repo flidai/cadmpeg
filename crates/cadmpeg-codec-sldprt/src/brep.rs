@@ -250,31 +250,46 @@ fn parse_carrier_at_marker(
     decode_carrier_values(tt, vals, attr, off, end)
 }
 
+/// Where the marker of a partition record with wide pointers lies, and the attribute.
+struct WideMarker {
+    marker_at: usize,
+    attr: u16,
+    /// A reference needs more than sixteen bits. Only the attribute has to fit sixteen bits.
+    over_16_bits: bool,
+}
+
 /// The partition form with wide pointers: `attr`, the four-byte ordinal, and five references,
 /// each of which takes two cells above `0x7ffe`, so that the marker lies two bytes further for
 /// each wide pointer. Returns the marker position and the attribute, only when a pointer is
 /// wide: the strict reading covers the others.
-fn wide_partition_marker(body: &[u8], hdr: usize) -> Option<(usize, u16)> {
+fn wide_partition_marker(body: &[u8], hdr: usize) -> Option<WideMarker> {
     let mut at = hdr;
-    let mut wide = 0_usize;
     let mut attr = 0_u16;
+    let mut over_16_bits = false;
     for slot in 0..=COMPACT_REF_COUNT {
-        let first = View::u16_be_at(body, at)?;
-        at = at.checked_add(2)?;
-        let value = if first <= 0x7ffe {
-            first
-        } else {
-            let second = View::u16_be_at(body, at)?;
-            at = at.checked_add(2)?;
-            wide += 1;
-            u16::try_from(u32::from(first & 0x7fff) | (u32::from(second) << 15)).ok()?
-        };
+        let value = typed::read_ref(body, &mut at)?;
+        over_16_bits |= value > u32::from(u16::MAX);
         if slot == 0 {
-            attr = value;
+            attr = u16::try_from(value).ok()?;
             at = at.checked_add(4)?;
         }
     }
-    (wide > 0).then_some((at, attr))
+    (at != hdr.checked_add(analytic::MARKER)?).then_some(WideMarker {
+        marker_at: at,
+        attr,
+        over_16_bits,
+    })
+}
+
+/// How a carrier was read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Framing {
+    /// The fixed offsets, or the deltas framing.
+    Strict,
+    /// The partition framing that follows wide pointers.
+    Wide,
+    /// The same, with a reference that needs more than sixteen bits.
+    WideOver16,
 }
 
 /// Try to parse a compact analytic carrier whose tag byte pair `00 TT` begins at
@@ -287,6 +302,15 @@ pub(crate) fn parse_carrier(body: &[u8], off: usize) -> Option<Carrier> {
 
 /// [`parse_carrier`], with the partition framing that follows wide pointers when `wide` is set.
 pub(crate) fn parse_carrier_with(body: &[u8], off: usize, wide: bool) -> Option<Carrier> {
+    parse_carrier_framed(body, off, wide).map(|(carrier, _)| carrier)
+}
+
+/// [`parse_carrier_with`], and the framing that read the carrier.
+pub(crate) fn parse_carrier_framed(
+    body: &[u8],
+    off: usize,
+    wide: bool,
+) -> Option<(Carrier, Framing)> {
     if body.get(off) != Some(&0x00) {
         return None;
     }
@@ -298,16 +322,23 @@ pub(crate) fn parse_carrier_with(body: &[u8], off: usize, wide: bool) -> Option<
     let has_ff = body.get(tag_end) == Some(&0xff);
     let hdr = tag_end.checked_add(usize::from(has_ff))?;
     let attr = View::u16_be_at(body, hdr)?;
-    let mut candidates: Vec<Carrier> = analytic_marker_candidates(body, hdr)?
+    let mut candidates: Vec<(Carrier, Framing)> = analytic_marker_candidates(body, hdr)?
         .into_iter()
         .filter_map(|marker_at| parse_carrier_at_marker(body, off, tt, attr, n, marker_at))
+        .map(|carrier| (carrier, Framing::Strict))
         .collect();
     if wide {
-        if let Some((marker_at, wide_attr)) = wide_partition_marker(body, hdr) {
-            if matches!(body.get(marker_at), Some(0x2b | 0x2d)) {
-                candidates.extend(parse_carrier_at_marker(
-                    body, off, tt, wide_attr, n, marker_at,
-                ));
+        if let Some(found) = wide_partition_marker(body, hdr) {
+            if matches!(body.get(found.marker_at), Some(0x2b | 0x2d)) {
+                let framing = if found.over_16_bits {
+                    Framing::WideOver16
+                } else {
+                    Framing::Wide
+                };
+                candidates.extend(
+                    parse_carrier_at_marker(body, off, tt, found.attr, n, found.marker_at)
+                        .map(|carrier| (carrier, framing)),
+                );
             }
         }
     }
@@ -485,7 +516,7 @@ pub(crate) fn patch_nurbs_by_attr(
 #[cfg(test)]
 mod tests {
     use super::index::scan_carriers;
-    use super::{parse_carrier, parse_carrier_with, tag, Carrier};
+    use super::{parse_carrier, parse_carrier_framed, parse_carrier_with, tag, Carrier, Framing};
     use cadmpeg_ir::geometry::SolvedCurveGeometry;
     use cadmpeg_ir::geometry::SolvedSurfaceGeometry;
     use cadmpeg_ir::math::Point3;
@@ -568,6 +599,22 @@ mod tests {
             parse_carrier_with(&narrow, 0, true).map(|c| matches!(c, Carrier::Surface(_))),
             Some(true)
         );
+    }
+
+    #[test]
+    fn a_reference_above_sixteen_bits_does_not_stop_a_wide_carrier() {
+        let values = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.001, 0.0, 1.0, 0.0];
+        let bytes =
+            wide_compact_carrier(tag::CYLINDER, 40_000, [1, 3_000_000, 2, 3, 40_001], &values);
+        let Some((Carrier::Surface(carrier), framing)) = parse_carrier_framed(&bytes, 0, true)
+        else {
+            panic!("expected a surface carrier");
+        };
+        assert_eq!(framing, Framing::WideOver16);
+        assert_eq!(carrier.attr, 40_000);
+        // The attribute is the key, so it has to fit sixteen bits.
+        let wide_attr = wide_compact_carrier(tag::CYLINDER, 3_000_000, [1, 2, 3, 4, 5], &values);
+        assert!(parse_carrier_framed(&wide_attr, 0, true).is_none());
     }
 
     #[test]

@@ -38,6 +38,9 @@ pub(super) struct CarrierIndex {
     /// Spline carriers whose pole and weight lanes do not pair, each a loss
     /// naming its attribute id and the pairing's own refusal.
     pub(super) lane_refusals: Vec<LossNote>,
+    /// Carriers read with the wide-pointer framing: attribute, curve or surface, and whether a
+    /// reference needs more than sixteen bits. Filled only when the scan is told to count.
+    pub(super) wide_read: Vec<(u16, bool, bool)>,
 }
 
 impl CarrierIndex {
@@ -101,6 +104,15 @@ impl CarrierIndex {
         surfaces.sort_unstable();
         surfaces.dedup();
         (curves, surfaces)
+    }
+
+    /// Whether a curve carrier or a surface carrier of the family has this key.
+    pub(super) fn has(&self, attr: u16, curve: bool) -> bool {
+        if curve {
+            self.curves.contains_key(&attr)
+        } else {
+            self.surfaces.contains_key(&attr)
+        }
     }
 
     pub(super) fn surface(&self, attr: u16) -> Option<&SurfaceCarrier> {
@@ -252,7 +264,18 @@ pub(super) fn scan_carriers_with(
                     "probe SLDPRT analytic carrier",
                 )?;
             }
-            if let Some(c) = super::parse_carrier_with(body, i, wide) {
+            if let Some((c, framing)) = super::parse_carrier_framed(body, i, wide) {
+                if framing != super::Framing::Strict {
+                    let (attr, curve) = match &c {
+                        Carrier::Curve(carrier) => (carrier.attr, true),
+                        Carrier::Surface(carrier) => (carrier.attr, false),
+                    };
+                    ctx.push_vec(
+                        &mut out.wide_read,
+                        (attr, curve, framing == super::Framing::WideOver16),
+                        "collect SLDPRT wide-pointer carriers",
+                    )?;
+                }
                 out.insert(ctx, c)?;
             }
         }

@@ -82,6 +82,9 @@ pub(crate) struct Diagnostics {
     pub(crate) unknown_surfaces: Vec<u16>,
     /// The sorted keys of the typed curve carriers and of the typed surface carriers.
     pub(crate) carrier_keys: (Vec<u16>, Vec<u16>),
+    /// Per stream kind (partition, deltas): carriers the wide-pointer framing reads, those whose
+    /// key was not held yet, and those with a reference of more than sixteen bits.
+    pub(crate) wide_counts: [[usize; 3]; 2],
     /// JSON lines, filled by [`render`].
     pub(crate) lines: Vec<String>,
 }
@@ -628,6 +631,12 @@ pub(crate) fn render(
             cells.concat()
         ));
     }
+    let [[wide_p, new_p, over_p], [wide_d, new_d, over_d]] = diagnostics.wide_counts;
+    lines.push(format!(
+        "{{\"kind\":\"summary5\",\"wide_partition\":{wide_p},\"wide_partition_new\":{new_p},\
+         \"wide_partition_over_16_bits\":{over_p},\"wide_deltas\":{wide_d},\
+         \"wide_deltas_new\":{new_d},\"wide_deltas_over_16_bits\":{over_d}}}"
+    ));
     diagnostics.lines = lines;
     Ok(())
 }
@@ -666,25 +675,23 @@ fn carrier_class(buf: &[u8], at: usize, tag: u8) -> String {
         return format!("m16_{}", values(hdr + 16));
     }
     // The record with wide pointers: a cell above 0x7ffe takes a second cell.
-    let (mut position, mut wide) = (hdr, 0_usize);
-    let cell = |position: &mut usize, wide: &mut usize| -> bool {
-        let Some(value) = View::u16_be_at(buf, *position) else {
-            return false;
+    let (mut position, mut wide, mut over_16_bits) = (hdr, 0_usize, false);
+    let mut parsed = true;
+    for slot in 0..=5 {
+        let before = position;
+        let Some(value) = super::typed::read_ref(buf, &mut position) else {
+            parsed = false;
+            break;
         };
-        *position += 2;
-        if value > MASK_15 - 1 {
-            *position += 2;
-            *wide += 1;
+        wide += (position - before - 2) / 2;
+        over_16_bits |= value > u32::from(u16::MAX);
+        if slot == 0 {
+            position += 4;
         }
-        true
-    };
-    let mut parsed = cell(&mut position, &mut wide);
-    position += 4;
-    for _ in 0..5 {
-        parsed = parsed && cell(&mut position, &mut wide);
     }
     if parsed && wide > 0 && is_marker(position) {
-        return format!("wide{wide}_{}", values(position));
+        let over = if over_16_bits { "_over16" } else { "" };
+        return format!("wide{wide}{over}_{}", values(position));
     }
     if is_marker(hdr + 21) {
         return format!("tripled_{}", values(hdr + 21));

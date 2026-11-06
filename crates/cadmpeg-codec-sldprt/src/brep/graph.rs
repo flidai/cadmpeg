@@ -1721,6 +1721,7 @@ pub(crate) fn decode_bodies_in(
         |stream| stream.1.description.len(),
         "sort Parasolid body streams",
     )?;
+    let mut wide_counts = [[0_usize; 3]; 2];
     let mut entity_streams = Vec::new();
     ctx.reserve_vec(
         &mut entity_streams,
@@ -1752,7 +1753,25 @@ pub(crate) fn decode_bodies_in(
         let is_deltas = is_deltas_stream(header);
         let typed_face_offsets =
             selected_typed_face_offsets(ctx, &stream_typed_facts, typed_bridge_attrs.as_ref())?;
-        carriers.merge_missing(ctx, scan_carriers_with(ctx, body, hosting.rules)?)?;
+        // The wide-pointer framing is the partition layout, so a deltas stream does not use it.
+        let wide_here = hosting.rules && !is_deltas;
+        let scanned = scan_carriers_with(ctx, body, wide_here)?;
+        if hosting.diagnostics && hosting.rules {
+            // What the framing reads in this stream, and how much of it is new.
+            let counted_scan = if wide_here {
+                None
+            } else {
+                Some(scan_carriers_with(ctx, body, true)?)
+            };
+            let counted = counted_scan.as_ref().unwrap_or(&scanned);
+            let counts = &mut wide_counts[usize::from(is_deltas)];
+            for &(attr, curve, over_16_bits) in &counted.wide_read {
+                counts[0] += 1;
+                counts[1] += usize::from(!carriers.has(attr, curve));
+                counts[2] += usize::from(over_16_bits);
+            }
+        }
+        carriers.merge_missing(ctx, scanned)?;
         let curve_attrs = carriers.curve_attrs(ctx)?;
         let scanned_tables = if hosting.rules {
             topology::scan_hosted_with_curve_attrs_excluding(
@@ -1809,6 +1828,7 @@ pub(crate) fn decode_bodies_in(
     brep.stats.admitted_by_reference = admitted;
     if hosting.diagnostics {
         brep.stats.diagnostics.carrier_keys = carriers.sorted_keys();
+        brep.stats.diagnostics.wide_counts = wide_counts;
         diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
     }
     Ok(brep)
