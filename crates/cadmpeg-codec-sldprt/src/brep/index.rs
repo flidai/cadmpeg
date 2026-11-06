@@ -103,7 +103,12 @@ impl CarrierIndex {
             .chain(self.offsets.keys())
             .copied()
             .collect();
-        ctx.sort_unstable_by(&mut curves, u16::cmp, |_| 0, "sort SLDPRT curve carrier keys")?;
+        ctx.sort_unstable_by(
+            &mut curves,
+            u16::cmp,
+            |_| 0,
+            "sort SLDPRT curve carrier keys",
+        )?;
         ctx.sort_unstable_by(
             &mut surfaces,
             u16::cmp,
@@ -245,8 +250,8 @@ pub(super) fn scan_carriers(
     scan_carriers_with(ctx, body, false)
 }
 
-/// [`scan_carriers`], reading the compact analytic records that carry wide pointers when `wide`
-/// is set.
+/// [`scan_carriers`], reading the compact analytic, blend, offset, and intersection records that
+/// carry wide pointers when `wide` is set.
 pub(super) fn scan_carriers_with(
     ctx: &DecodeContext<'_>,
     body: &[u8],
@@ -300,12 +305,12 @@ pub(super) fn scan_carriers_with(
         out.insert(ctx, Carrier::Curve(carrier))?;
     }
     out.sweeps = sweep::scan_sweep_carriers(ctx, body)?;
-    let blend::BlendCarriers { blends, pairs } = blend::scan(ctx, body)?;
+    let blend::BlendCarriers { blends, pairs } = blend::scan(ctx, body, wide)?;
     out.blends = blends;
     out.blend_support_pairs = pairs;
-    out.offsets = offset::scan(ctx, body)?;
+    out.offsets = offset::scan(ctx, body, wide)?;
     for intersection in
-        intersection::scan_intersection_carriers(ctx, body, &mut lane_refusals)?.into_values()
+        intersection::scan_intersection_carriers(ctx, body, wide, &mut lane_refusals)?.into_values()
     {
         out.insert_intersection(ctx, intersection)?;
     }
