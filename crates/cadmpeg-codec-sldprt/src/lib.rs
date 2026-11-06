@@ -109,6 +109,7 @@ mod feature_schema;
 #[doc(hidden)]
 pub mod fuzz;
 mod history;
+mod hosted;
 mod lane_refusal;
 /// Byte-offset constants generated from `docs/layouts/sldprt.toml`.
 mod layout;
@@ -124,6 +125,9 @@ mod tessellation;
 mod writer;
 mod writer_patch;
 mod writer_transform;
+
+#[doc(hidden)]
+pub use hosted::{decode_hosted_brep, read_hosted_header, HostedBrep, HostedHeader};
 
 use cadmpeg_core::decode::{DecodeContext, View};
 use cadmpeg_core::dialect::DialectId;

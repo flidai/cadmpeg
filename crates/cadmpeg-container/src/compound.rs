@@ -3,6 +3,7 @@
 
 use cadmpeg_core::container::{ContainerRole, EntryStorage, VerbatimLabel};
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -245,14 +246,12 @@ impl DirectoryName {
                 "CFB empty live directory names cannot be represented as paths".into(),
             ));
         }
-        if name.encode_utf16().count() > 31
-            || name
-                .chars()
-                .any(|character| matches!(character, '/' | '\\' | ':' | '!'))
-        {
-            return malformed(
-                "CFB directory name contains a forbidden character or exceeds 31 UTF-16 units",
-            );
+        // [MS-CFB] 2.6.1 forbids `/`, `\`, `:`, and `!` in a name. Writers other
+        // than the Structured Storage API emit the last three, for example
+        // `S:Master`, so they are read as ordinary characters. Only `/` is
+        // refused because it is the path separator of every path built here.
+        if name.encode_utf16().count() > 31 || name.contains('/') {
+            return malformed("CFB directory name contains `/` or exceeds 31 UTF-16 units");
         }
         Ok(Self(name))
     }
@@ -317,6 +316,37 @@ struct CompoundState {
     fat_sectors: BTreeSet<u32>,
     difat_sectors: BTreeSet<u32>,
     range_lock_sector: Option<u32>,
+    tolerant: bool,
+    allocation_deviated: bool,
+    coloring_violated: Cell<bool>,
+}
+
+/// A structural deviation from MS-CFB that a tolerant reader accepts.
+///
+/// Readers in common use ignore the node colours of the directory sibling
+/// tree, and they find the FAT sectors through the DIFAT entries that are
+/// present, whatever the header count says. A strict read refuses both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompoundDeviation {
+    /// The sibling tree breaks the red-black colour rules of MS-CFB 2.6.4.
+    SiblingTreeColoring,
+    /// The header FAT or DIFAT counts do not match the allocation sectors that the DIFAT lists.
+    AllocationTableCounts,
+}
+
+impl CompoundDeviation {
+    /// A one-line description for a loss message.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::SiblingTreeColoring => {
+                "the directory sibling tree breaks the red-black colour rules"
+            }
+            Self::AllocationTableCounts => {
+                "the header FAT or DIFAT counts do not match the listed allocation sectors"
+            }
+        }
+    }
 }
 
 /// Parsed CFB navigation state over one decode-session root view.
@@ -334,7 +364,32 @@ impl<'a> CompoundSnapshot<'a> {
     /// Parses and validates the complete CFB structure without opening streams.
     /// Stream extents are checked against their available bytes when opened.
     pub fn new(ctx: &DecodeContext<'a>, root: View<'a>) -> Result<Self, CodecError> {
-        let parsed = CompoundState::parse(ctx, root.window())?;
+        Self::build(ctx, root, false)
+    }
+
+    /// Parses like [`CompoundSnapshot::new`] and accepts the deviations that
+    /// [`CompoundDeviation`] lists. Chain loops, out-of-range sector ids and
+    /// every other structural fault stay refused. [`CompoundSnapshot::deviations`]
+    /// names what was accepted.
+    pub fn new_tolerant(ctx: &DecodeContext<'a>, root: View<'a>) -> Result<Self, CodecError> {
+        Self::build(ctx, root, true)
+    }
+
+    /// The deviations from MS-CFB that a tolerant parse accepted.
+    #[must_use]
+    pub fn deviations(&self) -> Vec<CompoundDeviation> {
+        let mut found = Vec::new();
+        if self.parsed.allocation_deviated {
+            found.push(CompoundDeviation::AllocationTableCounts);
+        }
+        if self.parsed.coloring_violated.get() {
+            found.push(CompoundDeviation::SiblingTreeColoring);
+        }
+        found
+    }
+
+    fn build(ctx: &DecodeContext<'a>, root: View<'a>, tolerant: bool) -> Result<Self, CodecError> {
+        let parsed = CompoundState::parse_with(ctx, root.window(), tolerant)?;
         let snapshot_id = NEXT_COMPOUND_SNAPSHOT_ID.fetch_add(1, AtomicOrdering::Relaxed);
         let entries = parsed.build_entries(ctx, snapshot_id)?;
         parsed.validate_sector_ownership(ctx, &entries)?;
@@ -585,7 +640,16 @@ impl<'a> CompoundSnapshot<'a> {
 }
 
 impl CompoundState {
+    #[cfg(test)]
     fn parse(ctx: &DecodeContext<'_>, bytes: &[u8]) -> Result<Self, CodecError> {
+        Self::parse_with(ctx, bytes, false)
+    }
+
+    fn parse_with(
+        ctx: &DecodeContext<'_>,
+        bytes: &[u8],
+        tolerant: bool,
+    ) -> Result<Self, CodecError> {
         if bytes.get(..8) != Some(&MAGIC) {
             return malformed("input is not a CFB file");
         }
@@ -677,7 +741,13 @@ impl CompoundState {
         let mut next_difat = difat_start;
         let difat_entries = sector_size / 4 - 1;
         let mut seen_difat = BTreeSet::new();
+        let mut difat_short = false;
         for _ in 0..difat_count {
+            if tolerant && next_difat == END_OF_CHAIN {
+                // The header counts more DIFAT sectors than the chain holds.
+                difat_short = true;
+                break;
+            }
             if cadmpeg_core::decode::index_from_u32(next_difat) >= sector_count {
                 return malformed("CFB DIFAT chain is cyclic or out of range");
             }
@@ -714,9 +784,14 @@ impl CompoundState {
             next_difat = le_u32(data, difat_entries * 4)
                 .ok_or_else(|| CodecError::Malformed("truncated CFB DIFAT link".into()))?;
         }
-        if (difat_count == 0 && difat_start != END_OF_CHAIN)
-            || (difat_count != 0 && next_difat != END_OF_CHAIN)
-            || fat_sectors.len() != fat_count
+        let chain_end_matches = if difat_count == 0 {
+            difat_start == END_OF_CHAIN
+        } else {
+            next_difat == END_OF_CHAIN
+        };
+        let allocation_deviated =
+            difat_short || !chain_end_matches || fat_sectors.len() != fat_count;
+        if (allocation_deviated && !tolerant)
             || fat_sectors
                 .iter()
                 .any(|id| cadmpeg_core::decode::index_from_u32(*id) >= sector_count)
@@ -872,6 +947,9 @@ impl CompoundState {
             fat_sectors: fat_sector_set,
             difat_sectors: seen_difat,
             range_lock_sector,
+            tolerant,
+            allocation_deviated,
+            coloring_violated: Cell::new(false),
         })
     }
 
@@ -935,7 +1013,9 @@ impl CompoundState {
             return Ok(());
         }
         let _depth = ctx.enter_nested("traverse CFB storage hierarchy")?;
-        validate_sibling_tree(ctx, &self.directory, root)?;
+        if validate_sibling_tree_with(ctx, &self.directory, root, self.tolerant)? {
+            self.coloring_violated.set(true);
+        }
         let mut pending = ctx.temporary_vec(1, "traverse CFB pending siblings")?;
         pending.0.push(root);
         while let Some(id) = pending.0.pop() {
@@ -1781,8 +1861,19 @@ fn validate_sibling_tree(
     directory: &[DirectorySlot],
     root: u32,
 ) -> Result<(), CodecError> {
+    validate_sibling_tree_with(ctx, directory, root, false).map(drop)
+}
+
+/// Validates one sibling tree. A tolerant walk accepts colour violations and
+/// returns whether it saw any; name ordering, links and cycles stay checked.
+fn validate_sibling_tree_with(
+    ctx: &DecodeContext<'_>,
+    directory: &[DirectorySlot],
+    root: u32,
+    tolerant: bool,
+) -> Result<bool, CodecError> {
     if root == NO_STREAM {
-        return Ok(());
+        return Ok(false);
     }
     let root_entry = directory
         .get(cadmpeg_core::decode::index_from_u32(root))
@@ -1790,14 +1881,27 @@ fn validate_sibling_tree(
     let root_entry = root_entry.live().ok_or_else(|| {
         CodecError::Malformed("CFB sibling-tree root points to a free directory slot".into())
     })?;
+    let mut walk = SiblingWalk {
+        ids: BTreeSet::new(),
+        storage: ctx.reserve_scoped(0, "validate CFB sibling nodes")?,
+        tolerant,
+        violated: false,
+    };
     if root_entry.color != DirectoryColor::Black {
-        return malformed("CFB sibling-tree root is not black");
+        if !tolerant {
+            return malformed("CFB sibling-tree root is not black");
+        }
+        walk.violated = true;
     }
-    let mut seen = (
-        BTreeSet::new(),
-        ctx.reserve_scoped(0, "validate CFB sibling nodes")?,
-    );
-    visit_sibling_tree(ctx, directory, root, None, None, false, &mut seen)
+    visit_sibling_tree(ctx, directory, root, None, None, false, &mut walk)?;
+    Ok(walk.violated)
+}
+
+struct SiblingWalk<'scope> {
+    ids: BTreeSet<u32>,
+    storage: ScopedReservation<'scope>,
+    tolerant: bool,
+    violated: bool,
 }
 
 fn visit_sibling_tree(
@@ -1807,7 +1911,7 @@ fn visit_sibling_tree(
     lower: Option<&str>,
     upper: Option<&str>,
     parent_red: bool,
-    seen: &mut (BTreeSet<u32>, ScopedReservation<'_>),
+    seen: &mut SiblingWalk<'_>,
 ) -> Result<(), CodecError> {
     if id == NO_STREAM {
         return Ok(());
@@ -1822,8 +1926,8 @@ fn visit_sibling_tree(
     };
     if !matches!(entry.kind, DirectoryKind::Storage | DirectoryKind::Stream)
         || !ctx.insert_scoped_btree_set(
-            &mut seen.1,
-            &mut seen.0,
+            &mut seen.storage,
+            &mut seen.ids,
             id,
             "compare CFB sibling nodes",
             "validate CFB sibling nodes",
@@ -1852,7 +1956,10 @@ fn visit_sibling_tree(
     }
     let red = entry.color == DirectoryColor::Red;
     if red && parent_red {
-        return malformed("CFB sibling tree contains adjacent red nodes");
+        if !seen.tolerant {
+            return malformed("CFB sibling tree contains adjacent red nodes");
+        }
+        seen.violated = true;
     }
     visit_sibling_tree(
         ctx,
@@ -2621,6 +2728,55 @@ mod tests {
     }
 
     #[test]
+    fn names_with_colon_bang_or_backslash_are_ordinary_characters() {
+        for name in ["A:mal", "A!mal", "A\\mal"] {
+            let mut file = fixture();
+            directory_entry(
+                sector_mut(&mut file, 0),
+                1,
+                name,
+                2,
+                NO_STREAM,
+                2,
+                NO_STREAM,
+                0,
+                5,
+            );
+            let arena = DecodeArena::new();
+            let policy = DecodePolicy::default();
+            let (ctx, root) = DecodeContext::from_root_bytes(&file, &arena, &policy)
+                .expect("synthetic CFB fits the decode policy");
+            let snapshot = CompoundSnapshot::new(&ctx, root).expect("the name parses");
+            let stream = snapshot.stream(name).expect("the named stream exists");
+            assert_eq!(
+                snapshot.open(&ctx, stream).expect("stream opens").window(),
+                b"small"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_with_the_path_separator_is_refused() {
+        let mut file = fixture();
+        directory_entry(
+            sector_mut(&mut file, 0),
+            1,
+            "A/mal",
+            2,
+            NO_STREAM,
+            2,
+            NO_STREAM,
+            0,
+            5,
+        );
+        let arena = DecodeArena::new();
+        let policy = DecodePolicy::default();
+        let (ctx, root) = DecodeContext::from_root_bytes(&file, &arena, &policy)
+            .expect("synthetic CFB fits the decode policy");
+        assert!(CompoundSnapshot::new(&ctx, root).is_err());
+    }
+
+    #[test]
     fn stream_open_uses_absolute_coordinates_for_nonzero_root_views() {
         for prefix_len in [16, 1024] {
             for empty in [false, true] {
@@ -2904,6 +3060,77 @@ mod tests {
         let snapshot = CompoundSnapshot::new(&ctx, root)
             .expect("root color and black-height metadata do not govern traversal");
         assert!(snapshot.stream("Store/Large").is_some());
+    }
+
+    fn tolerant_snapshot_of(file: &[u8]) -> (bool, Vec<super::CompoundDeviation>) {
+        let arena = DecodeArena::new();
+        let policy = DecodePolicy::default();
+        let (ctx, root) = DecodeContext::from_root_bytes(file, &arena, &policy)
+            .expect("synthetic CFB fits the decode policy");
+        let strict = CompoundSnapshot::new(&ctx, root).is_ok();
+        let snapshot = CompoundSnapshot::new_tolerant(&ctx, root)
+            .expect("a tolerant read accepts the deviation");
+        assert!(snapshot.stream("Store/Large").is_some());
+        assert!(snapshot.stream("Small").is_some());
+        (strict, snapshot.deviations())
+    }
+
+    #[test]
+    fn a_tolerant_read_accepts_adjacent_red_nodes_and_names_them() {
+        let mut file = fixture();
+        let directory = sector_mut(&mut file, 0);
+        // "Small" and "Store" are linked siblings; both red breaks MS-CFB 2.6.4.
+        directory[128 + 67] = 0;
+        directory[2 * 128 + 67] = 0;
+        let (strict, deviations) = tolerant_snapshot_of(&file);
+        assert!(!strict);
+        assert_eq!(deviations, [super::CompoundDeviation::SiblingTreeColoring]);
+    }
+
+    #[test]
+    fn a_tolerant_read_accepts_a_header_that_counts_more_fat_sectors_than_the_difat_lists() {
+        let mut file = fixture();
+        put_u32(&mut file, 44, 2);
+        let (strict, deviations) = tolerant_snapshot_of(&file);
+        assert!(!strict);
+        assert_eq!(
+            deviations,
+            [super::CompoundDeviation::AllocationTableCounts]
+        );
+    }
+
+    #[test]
+    fn a_tolerant_read_accepts_a_difat_count_that_the_chain_does_not_reach() {
+        let mut file = fixture();
+        put_u32(&mut file, 72, 1);
+        let (strict, deviations) = tolerant_snapshot_of(&file);
+        assert!(!strict);
+        assert_eq!(
+            deviations,
+            [super::CompoundDeviation::AllocationTableCounts]
+        );
+    }
+
+    #[test]
+    fn a_tolerant_read_still_refuses_a_fat_sector_that_is_out_of_range() {
+        let mut file = fixture();
+        put_u32(&mut file, 76, 4000);
+        let arena = DecodeArena::new();
+        let policy = DecodePolicy::default();
+        let (ctx, root) = DecodeContext::from_root_bytes(&file, &arena, &policy)
+            .expect("synthetic CFB fits the decode policy");
+        assert!(CompoundSnapshot::new_tolerant(&ctx, root).is_err());
+    }
+
+    #[test]
+    fn a_clean_file_reports_no_deviation() {
+        let file = fixture();
+        let arena = DecodeArena::new();
+        let policy = DecodePolicy::default();
+        let (ctx, root) = DecodeContext::from_root_bytes(&file, &arena, &policy)
+            .expect("synthetic CFB fits the decode policy");
+        let snapshot = CompoundSnapshot::new_tolerant(&ctx, root).expect("clean file");
+        assert!(snapshot.deviations().is_empty());
     }
 
     #[test]

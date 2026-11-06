@@ -96,23 +96,93 @@ fn record_bodies(bytes: &[u8], tt: u8) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-/// Carrier, body, and payload-marker offsets for both intersection forms.
-fn composite_records(bytes: &[u8]) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+/// One reading of an intersection record: the tag offset, the body offset, the attribute, the
+/// payload-marker offset, and whether a payload reference above `0x7ffe` takes two cells.
+type Composite = (usize, usize, u16, usize, bool);
+
+/// The readings of the record whose body starts at `body`, in order: the fixed offsets, and with
+/// `wide` the partition form whose references take two cells above `0x7ffe` (the payload alone,
+/// then the header and the payload). The first reading that resolves keeps the attribute.
+fn composite_readings(
+    bytes: &[u8],
+    offset: usize,
+    body: usize,
+    wide: bool,
+) -> impl Iterator<Item = Composite> {
+    let marker = body.checked_add(isect::MARKER);
+    let strict = marker
+        .filter(|marker| matches!(bytes.get(*marker), Some(0x2b | 0x2d)))
+        .and_then(|marker| {
+            View::u16_be_at(bytes, body + isect::ATTR).map(|attr| (offset, body, attr, marker))
+        });
+    let wide_payload = strict
+        .filter(|&(_, _, _, marker)| wide && payload_has_wide_cell(bytes, marker))
+        .map(|(offset, body, attr, marker)| (offset, body, attr, marker, true));
+    let shifted = wide
+        .then(|| super::wide_partition_marker(bytes, body))
+        .flatten()
+        .filter(|found| matches!(bytes.get(found.marker_at), Some(0x2b | 0x2d)))
+        .map(|found| (offset, body, found.attr, found.marker_at, true));
+    strict
+        .map(|(offset, body, attr, marker)| (offset, body, attr, marker, false))
+        .into_iter()
+        .chain(wide_payload)
+        .chain(shifted)
+}
+
+/// Whether a cell of the fixed six-reference payload after `marker` is above `0x7ffe`.
+fn payload_has_wide_cell(bytes: &[u8], marker: usize) -> bool {
+    (0..6).any(|index| {
+        View::u16_be_at(bytes, marker + (isect::PAYLOAD - isect::MARKER) + index * 2)
+            .is_some_and(|cell| cell > 0x7ffe)
+    })
+}
+
+/// Every reading of both intersection forms.
+fn composite_records(bytes: &[u8], wide: bool) -> impl Iterator<Item = Composite> + '_ {
     record_bodies(bytes, 0x26)
-        .filter_map(|body| {
-            let marker = body.checked_add(isect::MARKER)?;
-            matches!(bytes.get(marker), Some(0x2b | 0x2d)).then_some((body - 2, body, marker))
-        })
+        .flat_map(move |body| composite_readings(bytes, body - 2, body, wide))
         .chain(
-            (0..bytes.len().checked_sub(20).map_or(0, |end| end)).filter_map(|offset| {
-                if bytes.get(offset..offset + 3) != Some(&[0x00, 0x01, 0x5a]) {
-                    return None;
-                }
-                let body = offset + 3;
-                let marker = body + isect::MARKER;
-                matches!(bytes.get(marker), Some(0x2b | 0x2d)).then_some((offset, body, marker))
-            }),
+            (0..bytes.len().checked_sub(20).map_or(0, |end| end))
+                .filter(|offset| bytes.get(*offset..*offset + 3) == Some(&[0x00, 0x01, 0x5a]))
+                .flat_map(move |offset| composite_readings(bytes, offset, offset + 3, wide)),
         )
+}
+
+/// The six payload references after the marker, and the offset after them. With `wide`, a
+/// reference above `0x7ffe` takes two cells and must fit sixteen bits.
+fn composite_payload(bytes: &[u8], marker: usize, wide: bool) -> Option<([u16; 6], usize)> {
+    let mut at = marker.checked_add(isect::PAYLOAD - isect::MARKER)?;
+    let mut refs = [0_u16; 6];
+    for reference in &mut refs {
+        *reference = if wide {
+            u16::try_from(super::typed::read_ref(bytes, &mut at)?).ok()?
+        } else {
+            let value = View::u16_be_at(bytes, at)?;
+            at += 2;
+            value
+        };
+    }
+    // The fixed reading ends at the fixed record length.
+    let end = if wide {
+        at
+    } else {
+        marker.checked_add(isect::LEN - isect::MARKER)?
+    };
+    Some((refs, end))
+}
+
+/// The own attribute of a chart, terminator, or support-UV record at `at`, and how many bytes it
+/// moves the fields after it. With `wide_attr`, the attribute is the two cells of the partition
+/// form (the first cell above `0x7ffe`); otherwise one cell.
+fn own_attr(bytes: &[u8], at: usize, wide_attr: bool) -> Option<(u16, usize)> {
+    if !wide_attr {
+        return View::u16_be_at(bytes, at).map(|attr| (attr, 0));
+    }
+    let mut end = at;
+    let value = super::typed::read_ref(bytes, &mut end)?;
+    (end - at == 4).then_some(())?;
+    Some((u16::try_from(value).ok()?, 2))
 }
 
 fn finite_point(bytes: &[u8], at: usize) -> Option<[f64; 3]> {
@@ -150,10 +220,15 @@ fn finite_tangent(bytes: &[u8], at: usize) -> bool {
 fn chart_records(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
+    wide: bool,
 ) -> Result<HashMap<u16, Vec<Chart>>, CodecError> {
     let mut out: HashMap<u16, Vec<Chart>> = HashMap::new();
     for body in record_bodies(bytes, 0x28) {
-        let Some((attr, candidates)) = chart_candidates(ctx, bytes, body)? else {
+        let mut found = chart_candidates(ctx, bytes, body, false)?;
+        if found.is_none() && wide {
+            found = chart_candidates(ctx, bytes, body, true)?;
+        }
+        let Some((attr, candidates)) = found else {
             continue;
         };
         ctx.admit_hash_map_entry(&mut out, &attr, "collect Parasolid intersection charts")?;
@@ -170,15 +245,16 @@ fn chart_candidates(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
     body: usize,
+    wide_attr: bool,
 ) -> Result<Option<(u16, Vec<Chart>)>, CodecError> {
     let Some(count) = View::u32_be_at(bytes, body).and_then(|count| usize::try_from(count).ok())
     else {
         return Ok(None);
     };
-    let Some(attr) = View::u16_be_at(bytes, body + 4) else {
+    let Some((attr, shift)) = own_attr(bytes, body + 4, wide_attr) else {
         return Ok(None);
     };
-    let preamble = body + 6;
+    let preamble = body + 6 + shift;
     let (Some(base_parameter), Some(base_scale), Some(chart_count), Some(chordal_error)) = (
         View::f64_be_at(bytes, preamble),
         View::f64_be_at(bytes, preamble + 8),
@@ -257,26 +333,44 @@ fn term_at(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
     body: usize,
+    wide: bool,
     out: &mut HashMap<u16, Vec<[f64; 3]>>,
 ) -> Result<(), CodecError> {
-    let (Some(count), Some(attr)) = (
+    if !term_at_framed(ctx, bytes, body, false, out)? && wide {
+        term_at_framed(ctx, bytes, body, true, out)?;
+    }
+    Ok(())
+}
+
+/// [`term_at`] with one reading of the attribute; whether an endpoint was read.
+fn term_at_framed(
+    ctx: &DecodeContext<'_>,
+    bytes: &[u8],
+    body: usize,
+    wide_attr: bool,
+    out: &mut HashMap<u16, Vec<[f64; 3]>>,
+) -> Result<bool, CodecError> {
+    let (Some(count), Some((attr, shift))) = (
         View::u32_be_at(bytes, body),
-        View::u16_be_at(bytes, body + 4),
+        own_attr(bytes, body + 4, wide_attr),
     ) else {
-        return Ok(());
+        return Ok(false);
     };
     if !(1..=2).contains(&count) {
-        return Ok(());
+        return Ok(false);
     }
-    if !matches!(bytes.get(body + 6), Some(b'L' | b'H' | b'T')) {
-        return Ok(());
+    let label = body + 6 + shift;
+    if !matches!(bytes.get(label), Some(b'L' | b'H' | b'T')) {
+        return Ok(false);
     }
-    let two_char = matches!(bytes.get(body + 7), Some(b'?' | b'F' | b'S'));
+    let two_char = matches!(bytes.get(label + 1), Some(b'?' | b'F' | b'S'));
+    let mut read = false;
     for label_len in [2usize, 1] {
         if label_len == 2 && !two_char {
             continue;
         }
-        if let Some(point) = finite_point(bytes, body + 6 + label_len) {
+        if let Some(point) = finite_point(bytes, label + label_len) {
+            read = true;
             ctx.push_hash_group(
                 out,
                 attr,
@@ -286,22 +380,23 @@ fn term_at(
             )?;
         }
     }
-    Ok(())
+    Ok(read)
 }
 
 /// Every `00 29` or inline `term_use` terminator, keyed by attribute.
 fn term_records(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
+    wide: bool,
 ) -> Result<HashMap<u16, Vec<[f64; 3]>>, CodecError> {
     let mut out: HashMap<u16, Vec<[f64; 3]>> = HashMap::new();
     for body in record_bodies(bytes, 0x29) {
-        term_at(ctx, bytes, body, &mut out)?;
+        term_at(ctx, bytes, body, wide, &mut out)?;
     }
     for label in find_iter(bytes, b"term_use") {
         let tail = label + b"term_use".len();
         if bytes.get(tail..tail + INLINE_TERM_TAIL.len()) == Some(INLINE_TERM_TAIL) {
-            term_at(ctx, bytes, tail + INLINE_TERM_TAIL.len(), &mut out)?;
+            term_at(ctx, bytes, tail + INLINE_TERM_TAIL.len(), wide, &mut out)?;
         }
     }
     Ok(out)
@@ -313,12 +408,29 @@ fn uv_at(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
     body: usize,
+    wide: bool,
 ) -> Result<Option<(u16, UvRecord)>, CodecError> {
-    let (Some(count), Some(attr), Some(marker)) = (
+    let record = uv_at_framed(ctx, bytes, body, false)?;
+    if record.is_none() && wide {
+        return uv_at_framed(ctx, bytes, body, true);
+    }
+    Ok(record)
+}
+
+/// [`uv_at`] with one reading of the attribute.
+fn uv_at_framed(
+    ctx: &DecodeContext<'_>,
+    bytes: &[u8],
+    body: usize,
+    wide_attr: bool,
+) -> Result<Option<(u16, UvRecord)>, CodecError> {
+    let Some((attr, shift)) = own_attr(bytes, body + support_uv::ATTR, wide_attr) else {
+        return Ok(None);
+    };
+    let (Some(count), Some(marker)) = (
         View::u32_be_at(bytes, body + support_uv::COUNT)
             .and_then(|count| usize::try_from(count).ok()),
-        View::u16_be_at(bytes, body + support_uv::ATTR),
-        bytes.get(body + support_uv::WIDTH).copied(),
+        bytes.get(body + shift + support_uv::WIDTH).copied(),
     ) else {
         return Ok(None);
     };
@@ -330,7 +442,7 @@ fn uv_at(
     if count < width.values_per_point() * 2 || !count.is_multiple_of(width.values_per_point()) {
         return Ok(None);
     }
-    let Some(values_at) = body.checked_add(support_uv::LEN) else {
+    let Some(values_at) = body.checked_add(shift + support_uv::LEN) else {
         return Ok(None);
     };
     if cadmpeg_core::decode::bounded_len(
@@ -348,7 +460,7 @@ fn uv_at(
     }
     let mut values = ctx.collection_vec(count, "decode Parasolid support UV values")?;
     for index in 0..count {
-        if let Some(value) = View::f64_be_at(bytes, body + support_uv::LEN + index * 8) {
+        if let Some(value) = View::f64_be_at(bytes, values_at + index * 8) {
             values.push(value);
         }
     }
@@ -362,10 +474,11 @@ fn uv_at(
 fn uv_records(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
+    wide: bool,
 ) -> Result<HashMap<u16, Vec<UvRecord>>, CodecError> {
     let mut out: HashMap<u16, Vec<UvRecord>> = HashMap::new();
     for body in record_bodies(bytes, 0xcc) {
-        if let Some((attr, shape)) = uv_at(ctx, bytes, body)? {
+        if let Some((attr, shape)) = uv_at(ctx, bytes, body, wide)? {
             ctx.push_hash_group(
                 &mut out,
                 attr,
@@ -378,7 +491,7 @@ fn uv_records(
     for label in find_iter(bytes, b"values") {
         let tail = label + b"values".len();
         if bytes.get(tail..tail + INLINE_UV_TAIL.len()) == Some(INLINE_UV_TAIL) {
-            if let Some((attr, shape)) = uv_at(ctx, bytes, tail + INLINE_UV_TAIL.len())? {
+            if let Some((attr, shape)) = uv_at(ctx, bytes, tail + INLINE_UV_TAIL.len(), wide)? {
                 ctx.push_hash_group(
                     &mut out,
                     attr,
@@ -540,37 +653,26 @@ fn nearest_term(
 /// both 24-byte and 88-byte chart strides frame, the referenced terminators
 /// select the unique candidate with the least endpoint displacement. An absent
 /// or inconsistent optional UV record does not invalidate the model-space
-/// curve; only a unique complete width-4 record supplies solved pcurves.
+/// curve; only a unique complete width-4 record supplies solved pcurves. With
+/// `wide`, the partition form whose references take two cells above `0x7ffe`
+/// is read as well.
 pub(super) fn scan_intersection_carriers(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
+    wide: bool,
     lane_refusals: &mut Vec<LossNote>,
 ) -> Result<HashMap<u16, IntersectionCarrier>, CodecError> {
-    let charts = chart_records(ctx, bytes)?;
-    let terms = term_records(ctx, bytes)?;
-    let uvs = uv_records(ctx, bytes)?;
+    let charts = chart_records(ctx, bytes, wide)?;
+    let terms = term_records(ctx, bytes, wide)?;
+    let uvs = uv_records(ctx, bytes, wide)?;
     if charts.is_empty() || terms.is_empty() {
         return Ok(HashMap::new());
     }
     let mut out = HashMap::new();
-    for (offset, body, _) in composite_records(bytes) {
-        let Some(attr) = View::u16_be_at(bytes, body + isect::ATTR) else {
+    for (offset, _, attr, marker, wide_payload) in composite_records(bytes, wide) {
+        let Some((refs, end)) = composite_payload(bytes, marker, wide_payload) else {
             continue;
         };
-        let payload = body + isect::PAYLOAD;
-        let mut refs = [0_u16; 6];
-        let mut valid = true;
-        for (index, reference) in refs.iter_mut().enumerate() {
-            if let Some(value) = View::u16_be_at(bytes, payload + index * 2) {
-                *reference = value;
-            } else {
-                valid = false;
-                break;
-            }
-        }
-        if !valid {
-            continue;
-        }
         let (chart_ref, start_ref, end_ref, uv_ref) = (refs[2], refs[3], refs[4], refs[5]);
         let Some(candidates) = charts.get(&chart_ref) else {
             continue;
@@ -644,7 +746,7 @@ pub(super) fn scan_intersection_carriers(
             carrier: CurveCarrier {
                 attr,
                 offset,
-                end: body + isect::LEN,
+                end,
                 geometry: selected.geometry,
                 parameter_range: None,
             },
@@ -660,6 +762,55 @@ pub(super) fn scan_intersection_carriers(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_partition_terminator_with_a_wide_attribute_is_read_only_with_the_wide_framing() {
+        let mut bytes = vec![0x00, 0x29];
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        // Attribute 65,523 as the two cells of the partition form.
+        bytes.extend_from_slice(&[0xff, 0xf3, 0x00, 0x01]);
+        bytes.extend_from_slice(b"L?");
+        for value in [0.001f64, 0.002, 0.003] {
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        let arena = cadmpeg_core::decode::DecodeArena::new();
+        let (ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
+            &bytes,
+            &arena,
+            &cadmpeg_core::decode::DecodePolicy::service(),
+        )
+        .expect("test bytes fit service policy");
+        let narrow = super::term_records(&ctx, &bytes, false).expect("terminator scan");
+        assert!(!narrow.contains_key(&65_523));
+        let wide = super::term_records(&ctx, &bytes, true).expect("terminator scan");
+        assert_eq!(wide.get(&65_523), Some(&vec![[0.001, 0.002, 0.003]]));
+    }
+
+    #[test]
+    fn a_partition_intersection_with_wide_pointers_is_read_only_with_the_wide_framing() {
+        let mut bytes = vec![0x00, 0x26];
+        bytes.extend_from_slice(&21u16.to_be_bytes());
+        bytes.extend_from_slice(&5u32.to_be_bytes());
+        // The second header reference and the chart reference are above `0x7ffe`.
+        bytes.extend_from_slice(&1u16.to_be_bytes());
+        bytes.extend_from_slice(&[0x80, 0x07, 0x00, 0x01]);
+        bytes.extend_from_slice(&[0, 3, 0, 4, 0, 1]);
+        bytes.push(0x2b);
+        for reference in [31u16, 32] {
+            bytes.extend_from_slice(&reference.to_be_bytes());
+        }
+        bytes.extend_from_slice(&[0x80, 0x09, 0x00, 0x01]);
+        for reference in [34u16, 35, 36] {
+            bytes.extend_from_slice(&reference.to_be_bytes());
+        }
+
+        assert_eq!(super::composite_records(&bytes, false).count(), 0);
+        let readings: Vec<_> = super::composite_records(&bytes, true).collect();
+        assert_eq!(readings, vec![(0, 2, 21, 20, true)]);
+        let (refs, end) = super::composite_payload(&bytes, 20, true).expect("payload");
+        assert_eq!(refs, [31, 32, 0x8009, 34, 35, 36]);
+        assert_eq!(end, bytes.len());
+    }
 
     #[test]
     fn numerical_ranges_short_chart_chord_preserves_parameter_increment() {
@@ -838,7 +989,7 @@ mod tests {
                 policy.limits.max_collection_items = $cap;
                 let (ctx, _) =
                     DecodeContext::from_root_bytes(&bytes, &arena, &policy).expect("root");
-                let Err(error) = $route(&ctx, &bytes) else {
+                let Err(error) = $route(&ctx, &bytes, false) else {
                     panic!("record collection exceeded its limit");
                 };
                 assert!(matches!(error,
@@ -852,7 +1003,7 @@ mod tests {
                     &DecodePolicy::service(),
                 )
                 .expect("root");
-                assert!($route(&ctx, &bytes).is_ok());
+                assert!($route(&ctx, &bytes, false).is_ok());
             }
         };
     }
@@ -1028,7 +1179,7 @@ mod tests {
         let mut policy = DecodePolicy::service();
         policy.limits.max_collection_items = 46;
         let (ctx, _) = DecodeContext::from_root_bytes(&bytes, &arena, &policy).expect("root");
-        let Err(error) = scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()) else {
+        let Err(error) = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new()) else {
             panic!("carrier insertion exceeds the collection limit");
         };
         assert!(
@@ -1041,9 +1192,11 @@ mod tests {
         let arena = DecodeArena::new();
         let (ctx, _) =
             DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::service()).expect("root");
-        assert!(scan_intersection_carriers(&ctx, &bytes, &mut Vec::new())
-            .expect("service scan")
-            .contains_key(&9));
+        assert!(
+            scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+                .expect("service scan")
+                .contains_key(&9)
+        );
     }
 
     #[test]
@@ -1070,16 +1223,18 @@ mod tests {
         bytes.extend(term(5, *points.first().unwrap()));
         bytes.extend(term(6, *points.last().unwrap()));
         bytes.extend(record);
-        let charts = chart_records(&ctx, &bytes).expect("chart scan");
-        let records = uv_records(&ctx, &bytes).expect("UV scan");
+        let charts = chart_records(&ctx, &bytes, false).expect("chart scan");
+        let records = uv_records(&ctx, &bytes, false).expect("UV scan");
         let chart = &charts[&4][0];
         let uv = &records[&7][0];
         assert_eq!(chart.interior_points.len() + 2, 9);
         assert!(uv.width == UvWidth::Two);
         assert_eq!(uv.values.len(), (chart.interior_points.len() + 2) * 2);
-        assert!(scan_intersection_carriers(&ctx, &bytes, &mut Vec::new())
-            .expect("intersection scan")
-            .contains_key(&9));
+        assert!(
+            scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+                .expect("intersection scan")
+                .contains_key(&9)
+        );
     }
 
     #[test]
@@ -1098,14 +1253,14 @@ mod tests {
         for value in [0.0_f64, 1.0, 2.0, 3.0, 4.0, 5.0] {
             record.extend_from_slice(&value.to_be_bytes());
         }
-        assert!(uv_at(&ctx, &record, 2).expect("UV parse").is_some());
+        assert!(uv_at(&ctx, &record, 2, false).expect("UV parse").is_some());
         let mut bytes = composite(9, [2, 3, 4, 5, 6, 7]);
         bytes.extend(chart(4, &POINTS));
         bytes.extend(term(5, POINTS[0]));
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(record);
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         let carrier = carriers
             .get(&9)
             .expect("width-two support leaves the curve available");
@@ -1121,7 +1276,7 @@ mod tests {
             &cadmpeg_core::decode::DecodePolicy::service(),
         )
         .unwrap();
-        let carriers = scan_intersection_carriers(&ctx, &stream(), &mut Vec::new())
+        let carriers = scan_intersection_carriers(&ctx, &stream(), false, &mut Vec::new())
             .expect("intersection scan");
         let carrier = carriers.get(&9).expect("composite decoded");
         let Some(SolvedCurveGeometry::Nurbs(curve)) = carrier.carrier.geometry.solved() else {
@@ -1165,7 +1320,7 @@ mod tests {
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(uv(7, POINTS.len()));
 
-        let carrier = scan_intersection_carriers(&ctx, &bytes, &mut Vec::new())
+        let carrier = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
             .expect("intersection scan")
             .remove(&9)
             .expect("intersection-data entity decoded");
@@ -1193,8 +1348,8 @@ mod tests {
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(uv(7, POINTS.len()));
 
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         let carrier = carriers.get(&9).expect("decreasing chart decoded");
         let Some(SolvedCurveGeometry::Nurbs(curve)) = carrier.carrier.geometry.solved() else {
             panic!("expected a NURBS polyline");
@@ -1229,8 +1384,8 @@ mod tests {
         bytes.extend(term(5, POINTS[0]));
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(uv(7, POINTS.len() + 1));
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         let carrier = carriers.get(&9).expect("seam-row carrier decoded");
         assert!(carrier.support_data.support_uv.is_none());
     }
@@ -1250,8 +1405,8 @@ mod tests {
         bytes.extend(term(5, POINTS[0]));
         bytes.extend(term(6, end));
         bytes.extend(uv(7, POINTS.len()));
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         let CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(curve)) = &carriers
             .get(&9)
             .expect("composite decoded")
@@ -1283,9 +1438,11 @@ mod tests {
         bytes.extend(term(5, POINTS[0]));
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(uv(7, POINTS.len()));
-        assert!(scan_intersection_carriers(&ctx, &bytes, &mut Vec::new())
-            .expect("intersection scan")
-            .is_empty());
+        assert!(
+            scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+                .expect("intersection scan")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1313,8 +1470,8 @@ mod tests {
             term.extend_from_slice(&value.to_be_bytes());
         }
         bytes.extend(term);
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         let CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(curve)) = &carriers
             .get(&9)
             .expect("ring composite decoded")
@@ -1341,8 +1498,8 @@ mod tests {
         bytes.extend(term(5, POINTS[0]));
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(uv(7, POINTS.len() + 2));
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         assert!(carriers.contains_key(&9));
         assert!(carriers[&9].support_data.support_uv.is_none());
     }
@@ -1357,7 +1514,7 @@ mod tests {
         )
         .unwrap();
         let chart_bytes = extended_chart(4, &POINTS, [0.5, 0.0, 0.0]);
-        let (_, candidates) = chart_candidates(&ctx, &chart_bytes, 2)
+        let (_, candidates) = chart_candidates(&ctx, &chart_bytes, 2, false)
             .expect("chart parse")
             .expect("chart candidates");
         assert_eq!(candidates.len(), 2);
@@ -1368,8 +1525,8 @@ mod tests {
         bytes.extend(term(6, POINTS[2]));
         bytes.extend(uv(7, POINTS.len()));
 
-        let carriers =
-            scan_intersection_carriers(&ctx, &bytes, &mut Vec::new()).expect("intersection scan");
+        let carriers = scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+            .expect("intersection scan");
         let CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(curve)) = &carriers
             .get(&9)
             .expect("extended chart decoded")
@@ -1405,7 +1562,7 @@ mod tests {
             chart_bytes[bare_endpoint + index * 8..bare_endpoint + (index + 1) * 8]
                 .copy_from_slice(&value.to_be_bytes());
         }
-        let (_, candidates) = chart_candidates(&ctx, &chart_bytes, 2)
+        let (_, candidates) = chart_candidates(&ctx, &chart_bytes, 2, false)
             .expect("chart parse")
             .expect("chart candidates");
         assert_eq!(candidates.len(), 2);
@@ -1415,8 +1572,10 @@ mod tests {
         bytes.extend(term(5, POINTS[0]));
         bytes.extend(term(6, end));
         bytes.extend(uv(7, 2));
-        assert!(scan_intersection_carriers(&ctx, &bytes, &mut Vec::new())
-            .expect("intersection scan")
-            .is_empty());
+        assert!(
+            scan_intersection_carriers(&ctx, &bytes, false, &mut Vec::new())
+                .expect("intersection scan")
+                .is_empty()
+        );
     }
 }

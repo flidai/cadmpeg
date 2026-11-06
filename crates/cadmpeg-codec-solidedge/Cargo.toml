@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "cadmpeg-codec-solidedge"
+description = "Read the Parasolid B-rep of Solid Edge .par, .psm, and .asm files."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+# Golden decode snapshots are a repository-side regression asset, not part of
+# the published API.
+exclude = ["tests/golden/**"]
+readme = "README.md"
+documentation = "https://docs.rs/cadmpeg-codec-solidedge"
+keywords = ["cad", "solid-edge", "parasolid", "par", "geometry"]
+categories = ["encoding", "parser-implementations", "graphics"]
+
+[dependencies]
+cadmpeg-core.workspace = true
+cadmpeg-ir.workspace = true
+cadmpeg-container.workspace = true
+cadmpeg-parasolid.workspace = true
+cadmpeg-codec-sldprt.workspace = true
+
+[dev-dependencies]
+cadmpeg-ir = { workspace = true, features = ["examples"] }
+
+# Test-only golden harness and round-trip helpers.
+cadmpeg-test-support = { workspace = true }
+serde_json.workspace = true
+
+[lints]
+workspace = true

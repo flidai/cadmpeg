@@ -196,6 +196,23 @@ fn validate_model_with_index(
     })
 }
 
+/// The findings of the checks that judge the parameter ranges of edges and of
+/// pcurve uses: the range lies in the domain of its carrier, and the carrier at
+/// the range ends meets the vertices of the edge.
+///
+/// A decoder that cannot compute a range reliably reads these findings to
+/// withhold the range and not to emit a wrong one.
+///
+/// # Errors
+///
+/// A resource refusal of the decode session.
+pub fn range_findings(ctx: &DecodeContext<'_>, ir: &CadIr) -> Result<Vec<Finding>, CodecError> {
+    let mut findings = Vec::new();
+    check_parameter_domains(ctx, ir, &mut findings)?;
+    check_edge_endpoint_consistency(ctx, ir, &mut findings)?;
+    Ok(findings)
+}
+
 /// Validate an application-owned document under the explicit standalone policy.
 fn standalone_validation(
     validate: impl FnOnce(&DecodeContext<'_>) -> Result<ValidationReport, CodecError>,

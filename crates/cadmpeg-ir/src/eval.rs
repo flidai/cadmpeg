@@ -750,6 +750,21 @@ pub fn nurbs_surface_parameter_segment_chord_bound_with_budget(
     ctx.charge_work(0, "IR surface segment completion")?;
     if budget.exhausted() {
         let limit = u64_from_index(budget.consumed());
+        if budget.is_advisory() {
+            // The caller owns the decision to withhold the optional bound.
+            return Err(CodecError::ResourceLimit(
+                cadmpeg_core::decode::ResourceLimit {
+                    dimension: cadmpeg_core::decode::ResourceDimension::Codec(
+                        "IR surface segment work",
+                    ),
+                    reason: cadmpeg_core::decode::ResourceFailure::BudgetExceeded,
+                    limit,
+                    used: limit,
+                    additional: 1,
+                    operation: "IR surface segment work",
+                },
+            ));
+        }
         let requested = limit.checked_add(1).ok_or_else(|| {
             ctx.refuse_codec_limit("IR surface segment work", u64::MAX - 1, u64::MAX)
         })?;

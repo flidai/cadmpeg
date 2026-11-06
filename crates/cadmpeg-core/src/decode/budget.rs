@@ -55,6 +55,22 @@ impl DecodeBudget {
         self.fuse.get()
     }
 
+    /// Session work units still available. A fused session has none.
+    pub(super) fn work_remaining(&self) -> u64 {
+        if self.fuse.get().is_some() {
+            return 0;
+        }
+        let Some(remaining) = self
+            .policy
+            .limits
+            .max_work_units
+            .checked_sub(self.work.get())
+        else {
+            return 0;
+        };
+        remaining
+    }
+
     pub(super) fn decompression_allowance(&self) -> u64 {
         let policy_limit = self.policy.limits.max_decompressed_bytes_total;
         let Some(proportional) = DECOMPRESSED_TOTAL_PER_INPUT_BYTE
@@ -644,6 +660,7 @@ pub struct WorkBudget<'a> {
     recursion_depth: Cell<usize>,
     session: Option<&'a DecodeBudget>,
     session_work_scale: NonZeroU64,
+    advisory: bool,
 }
 
 /// RAII guard for one recursive geometry-evaluation frame.
@@ -677,6 +694,7 @@ impl WorkBudget<'static> {
             recursion_depth: Cell::new(0),
             session: None,
             session_work_scale: NonZeroU64::MIN,
+            advisory: false,
         }
     }
 }
@@ -698,6 +716,7 @@ impl<'a> WorkBudget<'a> {
                 recursion_depth: Cell::new(0),
                 session: Some(session),
                 session_work_scale: NonZeroU64::MIN,
+                advisory: false,
             };
         };
         Self {
@@ -706,6 +725,7 @@ impl<'a> WorkBudget<'a> {
             recursion_depth: Cell::new(0),
             session: Some(session),
             session_work_scale: NonZeroU64::MIN,
+            advisory: false,
         }
     }
 
@@ -715,6 +735,21 @@ impl<'a> WorkBudget<'a> {
     pub fn with_session_work_scale(mut self, scale: NonZeroU64) -> Self {
         self.session_work_scale = scale;
         self
+    }
+
+    /// Mark this slice advisory: the work it bounds is optional, so running
+    /// out of the slice leaves the session unfused. The caller reads
+    /// [`WorkBudget::exhausted`] and reports what it did not compute.
+    /// Attached children keep the mark.
+    #[must_use]
+    pub fn advisory(mut self) -> Self {
+        self.advisory = true;
+        self
+    }
+
+    /// Returns whether exhausting this slice leaves the session unfused.
+    pub fn is_advisory(&self) -> bool {
+        self.advisory
     }
 
     /// Reserve temporary evaluator storage in the attached decode session.
@@ -905,6 +940,7 @@ impl<'a> WorkBudget<'a> {
             recursion_depth: Cell::new(0),
             session: self.session,
             session_work_scale: self.session_work_scale,
+            advisory: self.advisory,
         }
     }
 
@@ -1077,6 +1113,23 @@ mod tests {
         assert_eq!(failure.dimension, super::ResourceDimension::WorkUnits);
         assert_eq!(failure.used, 8);
         assert_eq!(failure.additional, 4);
+    }
+
+    #[test]
+    fn an_advisory_slice_and_its_children_report_it_and_work_remaining_never_fuses() {
+        let mut policy = DecodePolicy::service();
+        policy.limits.max_work_units = 5;
+        let session = DecodeBudget::new(policy, 1);
+        let parent = WorkBudget::for_session(3, &session).advisory();
+        assert!(parent.is_advisory());
+        assert!(parent.session_child_slice(1).is_advisory());
+        assert!(!WorkBudget::for_session(3, &session).is_advisory());
+        assert_eq!(session.work_remaining(), 5);
+        assert!(session.charge_work(5, "spend the session").is_ok());
+        assert_eq!(session.work_remaining(), 0);
+        assert!(session.fused().is_none());
+        assert!(session.charge_work(1, "overspend").is_err());
+        assert_eq!(session.work_remaining(), 0, "a fused session has none");
     }
 
     #[test]

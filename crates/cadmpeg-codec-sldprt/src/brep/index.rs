@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{
-    blend, intersection, offset, parse_carrier, spline, subset, sweep, Carrier, CurveCarrier,
-    SurfaceCarrier,
+    blend, intersection, offset, spline, subset, sweep, Carrier, CurveCarrier, SurfaceCarrier,
 };
 use cadmpeg_core::decode::DecodeContext;
 use cadmpeg_ir::report::loss::LossNote;
@@ -39,6 +38,9 @@ pub(super) struct CarrierIndex {
     /// Spline carriers whose pole and weight lanes do not pair, each a loss
     /// naming its attribute id and the pairing's own refusal.
     pub(super) lane_refusals: Vec<LossNote>,
+    /// Carriers read with the wide-pointer framing: attribute, curve or surface, and whether a
+    /// reference needs more than sixteen bits. Filled only when the scan is told to count.
+    pub(super) wide_read: Vec<(u16, bool, bool)>,
 }
 
 impl CarrierIndex {
@@ -85,6 +87,45 @@ impl CarrierIndex {
         )?;
         attrs.extend(self.curves.keys().copied());
         Ok(attrs)
+    }
+
+    /// The sorted keys of the curve carriers and of the surface carriers of every kind.
+    pub(super) fn sorted_keys(
+        &self,
+        ctx: &DecodeContext<'_>,
+    ) -> Result<(Vec<u16>, Vec<u16>), cadmpeg_core::CodecError> {
+        let mut curves: Vec<u16> = self.curves.keys().copied().collect();
+        let mut surfaces: Vec<u16> = self
+            .surfaces
+            .keys()
+            .chain(self.sweeps.keys())
+            .chain(self.blends.keys())
+            .chain(self.offsets.keys())
+            .copied()
+            .collect();
+        ctx.sort_unstable_by(
+            &mut curves,
+            u16::cmp,
+            |_| 0,
+            "sort SLDPRT curve carrier keys",
+        )?;
+        ctx.sort_unstable_by(
+            &mut surfaces,
+            u16::cmp,
+            |_| 0,
+            "sort SLDPRT surface carrier keys",
+        )?;
+        surfaces.dedup();
+        Ok((curves, surfaces))
+    }
+
+    /// Whether a curve carrier or a surface carrier of the family has this key.
+    pub(super) fn has(&self, attr: u16, curve: bool) -> bool {
+        if curve {
+            self.curves.contains_key(&attr)
+        } else {
+            self.surfaces.contains_key(&attr)
+        }
     }
 
     pub(super) fn surface(&self, attr: u16) -> Option<&SurfaceCarrier> {
@@ -206,6 +247,16 @@ pub(super) fn scan_carriers(
     ctx: &DecodeContext<'_>,
     body: &[u8],
 ) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
+    scan_carriers_with(ctx, body, false)
+}
+
+/// [`scan_carriers`], reading the compact analytic, blend, offset, and intersection records that
+/// carry wide pointers when `wide` is set.
+pub(super) fn scan_carriers_with(
+    ctx: &DecodeContext<'_>,
+    body: &[u8],
+    wide: bool,
+) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
     ctx.charge_work(
         cadmpeg_core::decode::u64_from_index(body.len()),
         "scan SLDPRT analytic carriers",
@@ -226,7 +277,18 @@ pub(super) fn scan_carriers(
                     "probe SLDPRT analytic carrier",
                 )?;
             }
-            if let Some(c) = parse_carrier(body, i) {
+            if let Some((c, framing)) = super::parse_carrier_framed(body, i, wide) {
+                if framing != super::Framing::Strict {
+                    let (attr, curve) = match &c {
+                        Carrier::Curve(carrier) => (carrier.attr, true),
+                        Carrier::Surface(carrier) => (carrier.attr, false),
+                    };
+                    ctx.push_vec(
+                        &mut out.wide_read,
+                        (attr, curve, framing == super::Framing::WideOver16),
+                        "collect SLDPRT wide-pointer carriers",
+                    )?;
+                }
                 out.insert(ctx, c)?;
             }
         }
@@ -243,12 +305,12 @@ pub(super) fn scan_carriers(
         out.insert(ctx, Carrier::Curve(carrier))?;
     }
     out.sweeps = sweep::scan_sweep_carriers(ctx, body)?;
-    let blend::BlendCarriers { blends, pairs } = blend::scan(ctx, body)?;
+    let blend::BlendCarriers { blends, pairs } = blend::scan(ctx, body, wide)?;
     out.blends = blends;
     out.blend_support_pairs = pairs;
-    out.offsets = offset::scan(ctx, body)?;
+    out.offsets = offset::scan(ctx, body, wide)?;
     for intersection in
-        intersection::scan_intersection_carriers(ctx, body, &mut lane_refusals)?.into_values()
+        intersection::scan_intersection_carriers(ctx, body, wide, &mut lane_refusals)?.into_values()
     {
         out.insert_intersection(ctx, intersection)?;
     }

@@ -74,7 +74,7 @@ struct RawCarrier {
     values: [f64; 4],
 }
 
-fn parse_raw(bytes: &[u8], offset: usize) -> Option<RawCarrier> {
+fn parse_raw(bytes: &[u8], offset: usize, wide: bool) -> Option<RawCarrier> {
     if bytes.get(offset..offset + 2) != Some(&[0x00, 0x38]) {
         return None;
     }
@@ -83,23 +83,56 @@ fn parse_raw(bytes: &[u8], offset: usize) -> Option<RawCarrier> {
         body += 1;
     }
     let attr = View::u16_be_at(bytes, body + blend_rec::ATTR)?;
-    if attr == 0 || !matches!(bytes.get(body + blend_rec::MARKER), Some(0x2b | 0x2d)) {
+    let strict = parse_tail(bytes, attr, body + blend_rec::MARKER, false);
+    if strict.is_some() || !wide {
+        return strict;
+    }
+    // The partition form with wide pointers: a reference above `0x7ffe` takes two cells, and
+    // each wide reference before the marker moves it two bytes. These readings apply only when
+    // the fixed offsets fail, and only when exactly one of them passes.
+    let wide_payload = parse_tail(bytes, attr, body + blend_rec::MARKER, true);
+    let shifted = super::wide_partition_marker(bytes, body)
+        .and_then(|found| parse_tail(bytes, found.attr, found.marker_at, true));
+    match (wide_payload, shifted) {
+        (Some(carrier), None) | (None, Some(carrier)) => Some(carrier),
+        (None, None) | (Some(_), Some(_)) => None,
+    }
+}
+
+/// The selector, the three references, and the four values after the marker at `marker`. With
+/// `wide`, a reference above `0x7ffe` takes two cells and must fit sixteen bits.
+fn parse_tail(bytes: &[u8], attr: u16, marker: usize, wide: bool) -> Option<RawCarrier> {
+    if attr == 0 || !matches!(bytes.get(marker), Some(0x2b | 0x2d)) {
         return None;
     }
-    let selector = SupportSelector::read(*bytes.get(body + blend_rec::SELECTOR)?)?;
-    let references = [
-        View::u16_be_at(bytes, body + blend_rec::SUPPORT0)?,
-        View::u16_be_at(bytes, body + blend_rec::SUPPORT1)?,
-        View::u16_be_at(bytes, body + blend_rec::SPINE)?,
-    ];
+    let selector =
+        SupportSelector::read(*bytes.get(marker + (blend_rec::SELECTOR - blend_rec::MARKER))?)?;
+    let (references, at) = if wide {
+        let mut at = marker + (blend_rec::SUPPORT0 - blend_rec::MARKER);
+        let mut references = [0_u16; 3];
+        for reference in &mut references {
+            *reference = u16::try_from(super::typed::read_ref(bytes, &mut at)?).ok()?;
+        }
+        (references, at)
+    } else {
+        let field = |offset: usize| View::u16_be_at(bytes, marker + (offset - blend_rec::MARKER));
+        (
+            [
+                field(blend_rec::SUPPORT0)?,
+                field(blend_rec::SUPPORT1)?,
+                field(blend_rec::SPINE)?,
+            ],
+            marker + (blend_rec::OFFSET0 - blend_rec::MARKER),
+        )
+    };
     if references.contains(&0) {
         return None;
     }
     let values = [
-        View::f64_be_at(bytes, body + blend_rec::OFFSET0)?,
-        View::f64_be_at(bytes, body + blend_rec::OFFSET1)?,
-        View::f64_be_at(bytes, body + blend_rec::SIDE0)?,
-        View::f64_be_at(bytes, body + blend_rec::SIDE1)?,
+        View::f64_be_at(bytes, at)?,
+        View::f64_be_at(bytes, at + (blend_rec::OFFSET1 - blend_rec::OFFSET0))?,
+        View::f64_be_at(bytes, at + (blend_rec::SIDE0 - blend_rec::OFFSET0))?,
+        View::f64_be_at(bytes, at + (blend_rec::SIDE1 - blend_rec::OFFSET0))?,
     ];
     if values.iter().any(|value| !value.is_finite())
         || (values[2].abs() - 1.0).abs() > EPS_BLEND_PARSE_RAW_E12
@@ -115,8 +148,8 @@ fn parse_raw(bytes: &[u8], offset: usize) -> Option<RawCarrier> {
     })
 }
 
-fn parse_blend(bytes: &[u8], offset: usize) -> Option<BlendCarrier> {
-    let raw = parse_raw(bytes, offset)?;
+fn parse_blend(bytes: &[u8], offset: usize, wide: bool) -> Option<BlendCarrier> {
+    let raw = parse_raw(bytes, offset, wide)?;
     let [first_radius, second_radius, first_side, second_side] = raw.values;
     if first_radius.abs() <= f64::EPSILON
         || (first_radius.abs() - second_radius.abs()).abs() > EPS_BLEND_PARSE_BLEND_E12
@@ -152,10 +185,12 @@ pub(super) struct BlendCarriers {
     pub pairs: HashMap<u16, SupportPairCarrier>,
 }
 
-/// Scan rolling-ball carriers and their zero-offset support-pair records.
+/// Scan rolling-ball carriers and their zero-offset support-pair records. With `wide`, also read
+/// the partition form whose references take two cells above `0x7ffe`.
 pub(super) fn scan(
     ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     bytes: &[u8],
+    wide: bool,
 ) -> Result<BlendCarriers, cadmpeg_core::CodecError> {
     ctx.charge_work(u64_from_index(bytes.len()), "scan SLDPRT blend carriers")?;
     let mut blends = HashMap::new();
@@ -164,11 +199,11 @@ pub(super) fn scan(
         return Ok(BlendCarriers { blends, pairs });
     };
     for offset in 0..last_offset {
-        if let Some(carrier) = parse_blend(bytes, offset) {
+        if let Some(carrier) = parse_blend(bytes, offset, wide) {
             ctx.admit_hash_map_entry(&mut blends, &carrier.attr, "index SLDPRT blend carriers")?;
             blends.entry(carrier.attr).or_insert(carrier);
         }
-        if let Some(raw) = parse_raw(bytes, offset) {
+        if let Some(raw) = parse_raw(bytes, offset, wide) {
             if raw.selector == SupportSelector::TwoSurfaces
                 && raw.values[0].abs() <= f64::EPSILON
                 && raw.values[1].abs() <= f64::EPSILON
@@ -196,6 +231,13 @@ mod tests {
     fn scan_with_service_context(
         bytes: &[u8],
     ) -> (HashMap<u16, BlendCarrier>, HashMap<u16, SupportPairCarrier>) {
+        scan_framed(bytes, false)
+    }
+
+    fn scan_framed(
+        bytes: &[u8],
+        wide: bool,
+    ) -> (HashMap<u16, BlendCarrier>, HashMap<u16, SupportPairCarrier>) {
         let arena = cadmpeg_core::decode::DecodeArena::new();
         let (ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
             bytes,
@@ -204,7 +246,7 @@ mod tests {
         )
         .expect("test carrier bytes fit service policy");
         let super::BlendCarriers { blends, pairs } =
-            super::scan(&ctx, bytes).expect("test carriers fit service policy");
+            super::scan(&ctx, bytes, wide).expect("test carriers fit service policy");
         (blends, pairs)
     }
 
@@ -243,6 +285,50 @@ mod tests {
             assert_eq!(carrier.signed_radius, -0.5);
             assert_eq!(carrier.reversed, [false, true]);
         }
+    }
+
+    /// A reference above `0x7ffe` as the two cells of the partition form.
+    fn wide_cells(value: u32) -> [u8; 4] {
+        let first = 0x8000 | u16::try_from(value & 0x7fff).expect("low cell");
+        let second = u16::try_from(value >> 15).expect("high cell");
+        let [a, b] = first.to_be_bytes();
+        let [c, d] = second.to_be_bytes();
+        [a, b, c, d]
+    }
+
+    #[test]
+    fn a_partition_blend_with_wide_pointers_is_read_only_with_the_wide_framing() {
+        let mut bytes = vec![0x00, 0x38];
+        bytes.extend_from_slice(&9u16.to_be_bytes());
+        bytes.extend_from_slice(&17u32.to_be_bytes());
+        bytes.extend_from_slice(&1u16.to_be_bytes());
+        bytes.extend_from_slice(&wide_cells(40_000));
+        for reference in [3u16, 4, 1] {
+            bytes.extend_from_slice(&reference.to_be_bytes());
+        }
+        bytes.push(0x2b);
+        bytes.push(0x52);
+        bytes.extend_from_slice(&11u16.to_be_bytes());
+        bytes.extend_from_slice(&wide_cells(40_001));
+        bytes.extend_from_slice(&13u16.to_be_bytes());
+        for value in [0.0005f64, 0.0005, 1.0, 1.0] {
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+
+        assert!(scan_framed(&bytes, false).0.is_empty());
+        let carrier = scan_framed(&bytes, true)
+            .0
+            .remove(&9)
+            .expect("wide blend carrier");
+        assert_eq!(
+            carrier.supports,
+            [
+                BlendSupportRef::Surface(11),
+                BlendSupportRef::Surface(40_001)
+            ]
+        );
+        assert_eq!(carrier.spine, 13);
+        assert_eq!(carrier.signed_radius, 0.5);
     }
 
     #[test]

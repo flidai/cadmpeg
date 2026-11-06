@@ -504,6 +504,15 @@ impl<'a> DecodeContext<'a> {
         self.budget.charge_work(units, operation)
     }
 
+    /// Session work units still available, without charging or fusing.
+    ///
+    /// A caller that can degrade reads this before it starts optional work, so
+    /// that work the session cannot pay for is withheld and reported instead of
+    /// fusing the session. A fused session reports zero.
+    pub fn work_remaining(&self) -> u64 {
+        self.budget.work_remaining()
+    }
+
     /// Charges work with a resource-only refusal channel.
     pub fn charge_work_limit(
         &self,

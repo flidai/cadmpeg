@@ -69,7 +69,19 @@ fuzz_reason = "focused targets call SatCodec"
 [[crate]]
 id = "sldprt"
 names = ["SldprtCodec"]
+hidden = [
+    "decode_hosted_brep",
+    "read_hosted_header",
+    "HostedBrep",
+    "HostedHeader",
+]
 fuzz = "required"
+
+[[crate]]
+id = "solidedge"
+names = ["SolidEdgeCodec"]
+fuzz = "absent"
+fuzz_reason = "focused targets call SolidEdgeCodec"
 
 [[crate]]
 id = "step"

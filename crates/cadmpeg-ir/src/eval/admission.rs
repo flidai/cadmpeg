@@ -125,6 +125,11 @@ impl<'ctx, 'arena> EvaluationAdmission<'ctx, 'arena> {
                     .charge_work_limit(0, "geometry work slice boundary")
                     .map_err(EvaluationFailure::ResourceLimit)?;
                 let child = context.work_budget(u64_from_index(parent.remaining()));
+                let child = if parent.is_advisory() {
+                    child.advisory()
+                } else {
+                    child
+                };
                 let result = run(EvaluationAdmission::WorkSlice(EvaluationWorkSlice {
                     policy: WorkSlicePolicy::Session {
                         context,
@@ -138,6 +143,11 @@ impl<'ctx, 'arena> EvaluationAdmission<'ctx, 'arena> {
                         remaining,
                         u64_from_index(work_units(child.consumed())),
                     ));
+                }
+                if parent.is_advisory() && child.exhausted() {
+                    // The caller reads the parent to learn that the optional
+                    // evaluation ran out of its slice.
+                    parent.exhaust();
                 }
                 context
                     .charge_work_limit(0, "geometry work slice boundary")
@@ -198,6 +208,16 @@ impl<'ctx, 'arena> EvaluationAdmission<'ctx, 'arena> {
                 let remaining = u64_from_index(work.remaining());
                 if !usize::try_from(count).is_ok_and(|count| work.charge_by(count)) {
                     context.charge_work_limit(0, operation)?;
+                    if work.is_advisory() {
+                        return Err(ResourceLimit {
+                            dimension: ResourceDimension::Codec("geometry evaluation work slice"),
+                            reason: ResourceFailure::BudgetExceeded,
+                            limit: remaining,
+                            used: 0,
+                            additional: count,
+                            operation,
+                        });
+                    }
                     drop(context.refuse_codec_limit(
                         "geometry evaluation work slice",
                         remaining,
@@ -733,6 +753,30 @@ mod tests {
                 matches!(ctx.finish_session(), Err(CodecError::ResourceLimit(sticky)) if sticky == first)
             );
         }
+    }
+
+    #[test]
+    fn an_advisory_work_slice_refuses_locally_and_leaves_the_session_unfused() {
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).unwrap();
+        let parent = ctx.work_budget(3).advisory();
+        let result: Result<(), EvaluationFailure<()>> = EvaluationAdmission::Decode(&ctx)
+            .within_work_slice(&parent, |admission| {
+                admission
+                    .work(10, "test numerical work")
+                    .map_err(EvaluationFailure::ResourceLimit)
+            });
+        let EvaluationFailure::ResourceLimit(refusal) = result.unwrap_err() else {
+            panic!("an exhausted slice is a resource refusal");
+        };
+        assert_eq!(
+            refusal.dimension,
+            ResourceDimension::Codec("geometry evaluation work slice")
+        );
+        assert!(parent.exhausted(), "the caller learns of the exhaustion");
+        ctx.charge_work(1, "later work still runs").unwrap();
+        ctx.finish_session().unwrap();
     }
 
     #[test]

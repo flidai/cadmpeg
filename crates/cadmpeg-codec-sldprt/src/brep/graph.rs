@@ -36,11 +36,12 @@ use cadmpeg_ir::Exactness;
 
 use super::attrib;
 use super::blend::BlendSupportRef;
+use super::diagnostics;
 use super::entity;
 use super::evaluation::{
-    nurbs_surface_parameter_segment_chord_bound, nurbs_surface_parameter_within_tolerance,
+    nurbs_surface_parameter_segment_chord_bound, nurbs_surface_parameter_within_tolerance, Solved,
 };
-use super::index::{scan_carriers, CarrierIndex, IndexedCurve};
+use super::index::{scan_carriers, scan_carriers_with, CarrierIndex, IndexedCurve};
 use super::offset::OffsetCarrier;
 use super::sweep::{self, SweepKind};
 use super::topology;
@@ -541,6 +542,56 @@ pub(crate) struct Stats {
     pub(crate) unknown_procedural_supports: usize,
     /// Edges whose support curve is an untyped carrier (emitted with no curve).
     pub(crate) unknown_curve_edges: usize,
+    /// Edges dropped because an endpoint vertex did not resolve and the edge is
+    /// not a closed ring edge with a typed carrier.
+    pub(crate) unresolved_edges: usize,
+    /// Of the unresolved edges, those with an endpoint whose vertex-use
+    /// reference is null.
+    pub(crate) unresolved_null_vertex_use: usize,
+    /// Of the unresolved edges, those with an endpoint whose vertex-use
+    /// record is absent from the tables.
+    pub(crate) unresolved_absent_vertex_use: usize,
+    /// Of the unresolved edges, those with an endpoint whose world-point
+    /// record is absent from the tables.
+    pub(crate) unresolved_absent_point: usize,
+    /// Edges that the coedges name and that no edge record or coedge fixes as
+    /// the canonical coedge, so no edge was emitted for them.
+    pub(crate) skipped_edges_no_canonical: usize,
+    /// Of those edges, the ones that no coedge of a kept face uses forward.
+    pub(crate) skipped_edges_no_forward: usize,
+    /// Of those edges, the ones that several coedges use forward.
+    pub(crate) skipped_edges_several_forward: usize,
+    /// Of the dropped loops, those with a coedge that the tables do not hold.
+    pub(crate) dropped_loops_missing_coedge: usize,
+    /// Of the dropped loops, those with a coedge whose edge was not emitted.
+    pub(crate) dropped_loops_unemitted_edge: usize,
+    /// Loops dropped because a coedge of the ring has no emitted edge.
+    pub(crate) dropped_loops: usize,
+    /// Faces dropped because none of their loops was kept.
+    pub(crate) faces_without_loops: usize,
+    /// Faces that have no loop after the walk, by the reason the walk stopped.
+    pub(crate) faces_walked_empty_end: usize,
+    pub(crate) faces_walked_empty_no_head: usize,
+    pub(crate) faces_walked_empty_loop_absent: usize,
+    pub(crate) faces_walked_empty_other_owner: usize,
+    pub(crate) faces_walked_empty_ring_coedge_absent: usize,
+    pub(crate) faces_walked_empty_ring_foreign_loop: usize,
+    pub(crate) faces_walked_empty_ring_cycle: usize,
+    pub(crate) faces_walked_empty_ring_null_next: usize,
+    /// Records that a hosted decode admitted because a record in the tables names
+    /// them and the strict scan left them out.
+    pub(crate) admitted_by_reference: topology::Admitted,
+    /// Of the unclaimed faces, those of bridges admitted by reference.
+    pub(crate) unclaimed_admitted: usize,
+    /// Faces that no body record names and that took the shell of a neighbour.
+    pub(crate) adopted_faces: usize,
+    /// Faces with loops whose loops were all dropped later, as opposed to faces
+    /// whose loop walk found no loop.
+    pub(crate) faces_loops_all_dropped: usize,
+    /// Edges whose canonical coedge is in no ring of a kept face.
+    pub(crate) skipped_edges_off_ring: usize,
+    /// Structural findings about dropped edges, collected on request.
+    pub(crate) diagnostics: diagnostics::Diagnostics,
     /// Pcurves withheld because geometric inverse selection was ambiguous.
     pub(crate) ambiguous_pcurve_parameters: usize,
     /// NURBS edge carriers whose vertex range is off their bound surface.
@@ -737,6 +788,130 @@ struct WalkedFace {
     sense: Sense,
     /// `(loop_attr, ordered_coedge_attrs)` in sibling order.
     loops: Vec<(u16, Vec<u16>)>,
+    /// Why the walk of the loop chain ended before the end of the chain.
+    stop: WalkStop,
+    /// For a ring that did not close: the loop, the coedges walked, and the
+    /// reference at which the walk stopped.
+    ring_stop: Option<(u16, usize, u16)>,
+}
+
+/// Bind the faces that no body record names to the shell of the faces they
+/// share an edge with.
+///
+/// A face of an admitted bridge is named by no face node of the body hierarchy
+/// when that node is not held. The face still lies in the shell of its
+/// neighbours: two faces that use one edge are in one shell. A face is adopted
+/// only when every neighbour that is bound agrees on the group and the shell,
+/// and the pass runs until no face is adopted. Returns the faces adopted.
+fn adopt_unclaimed_faces(
+    ctx: &DecodeContext<'_>,
+    coedges: &HashMap<u16, topology::Coedge>,
+    faces: &[WalkedFace],
+    bridge_group: &mut HashMap<u16, usize>,
+    bridge_shell: &mut HashMap<u16, u16>,
+) -> Result<usize, cadmpeg_core::CodecError> {
+    let mut count = 0;
+    let mut face_edges: Vec<(u16, Vec<u16>)> = Vec::new();
+    let mut faces_of_edge: HashMap<u16, Vec<u16>> = HashMap::new();
+    for face in faces {
+        let mut edges = Vec::new();
+        for (_, ring) in &face.loops {
+            for coedge in ring {
+                ctx.charge_work(1, "index unclaimed Parasolid face edges")?;
+                let edge = coedges.get(coedge).map_or(0, |c| c.refs[6]);
+                if edge != 0 && !edges.contains(&edge) {
+                    ctx.push_vec(&mut edges, edge, "index unclaimed Parasolid face edges")?;
+                    let owners = faces_of_edge.entry(edge).or_default();
+                    ctx.push_vec(
+                        owners,
+                        face.bridge_attr,
+                        "index unclaimed Parasolid face edges",
+                    )?;
+                }
+            }
+        }
+        ctx.push_vec(
+            &mut face_edges,
+            (face.bridge_attr, edges),
+            "index unclaimed Parasolid face edges",
+        )?;
+    }
+    loop {
+        let mut adopted = false;
+        for (bridge, edges) in &face_edges {
+            if bridge_group.contains_key(bridge) {
+                continue;
+            }
+            let mut found: Option<(usize, Option<u16>)> = None;
+            let mut agree = true;
+            for edge in edges {
+                for other in faces_of_edge.get(edge).into_iter().flatten() {
+                    ctx.charge_work(1, "adopt unclaimed Parasolid faces")?;
+                    let Some(group) = bridge_group.get(other).copied() else {
+                        continue;
+                    };
+                    let seen = (group, bridge_shell.get(other).copied());
+                    if *found.get_or_insert(seen) != seen {
+                        agree = false;
+                    }
+                }
+            }
+            let Some((group, shell)) = found.filter(|_| agree) else {
+                continue;
+            };
+            ctx.admit_hash_map_entry(bridge_group, bridge, "index Parasolid bridge groups")?;
+            bridge_group.insert(*bridge, group);
+            if let Some(shell) = shell {
+                ctx.admit_hash_map_entry(bridge_shell, bridge, "index Parasolid bridge shells")?;
+                bridge_shell.insert(*bridge, shell);
+            }
+            adopted = true;
+            count += 1;
+        }
+        if !adopted {
+            return Ok(count);
+        }
+    }
+}
+
+/// Why the walk of a face's loop chain stopped early.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WalkStop {
+    /// The chain ended at a null sibling reference.
+    End,
+    /// The bridge names no first loop.
+    NoHead,
+    /// A loop reference names no loop record.
+    LoopAbsent,
+    /// A loop names another face-use as its owner.
+    OtherOwner,
+    /// A loop's coedge ring did not close.
+    Ring(RingStop),
+}
+
+/// Why a coedge ring did not close.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RingStop {
+    /// A coedge reference names no coedge record.
+    CoedgeAbsent,
+    /// A coedge names another loop as its owner.
+    ForeignLoop,
+    /// The walk met a coedge twice without returning to the first.
+    Cycle,
+    /// The next reference is null before the ring returns to the first coedge.
+    NullNext,
+}
+
+impl RingStop {
+    /// The number that the diagnostics use for the cause.
+    const fn code(self) -> u8 {
+        match self {
+            Self::CoedgeAbsent => 0,
+            Self::ForeignLoop => 1,
+            Self::Cycle => 2,
+            Self::NullNext => 3,
+        }
+    }
 }
 
 /// Follow the sibling loop-head chain of a bridge and each loop's coedge ring,
@@ -1111,12 +1286,21 @@ fn walk_face(
     let mut loops = Vec::new();
     let mut loop_ref = bridge.refs[2];
     let mut loop_guard = HashSet::new();
+    let mut ring_stop = None;
+    let mut stop = if loop_ref == 0 {
+        WalkStop::NoHead
+    } else {
+        WalkStop::End
+    };
     while loop_ref != 0 {
         ctx.charge_work(1, "walk Parasolid face loops")?;
         if !ctx.insert_hash_set(&mut loop_guard, loop_ref, "walk Parasolid face loops")? {
             break;
         }
         let Some(lp) = t.loops().get(&loop_ref) else {
+            if stop == WalkStop::End {
+                stop = WalkStop::LoopAbsent;
+            }
             break;
         };
         let owner_bridge = lp.refs[2];
@@ -1128,6 +1312,9 @@ fn walk_face(
                     == Some(owner)
             });
         if !same_face_use {
+            if stop == WalkStop::End {
+                stop = WalkStop::OtherOwner;
+            }
             break;
         }
         let first = lp.refs[1];
@@ -1135,15 +1322,19 @@ fn walk_face(
         let mut ce_ref = first;
         let mut ce_guard = HashSet::new();
         let mut ring_closed = false;
+        let mut ring_failure = RingStop::NullNext;
         while ce_ref != 0 {
             ctx.charge_work(1, "walk Parasolid face coedges")?;
             if !ctx.insert_hash_set(&mut ce_guard, ce_ref, "walk Parasolid face coedges")? {
+                ring_failure = RingStop::Cycle;
                 break;
             }
             let Some(ce) = t.coedges().get(&ce_ref) else {
+                ring_failure = RingStop::CoedgeAbsent;
                 break;
             };
             if ce.refs[1] != loop_ref {
+                ring_failure = RingStop::ForeignLoop;
                 break;
             }
             ctx.reserve_vec(&mut ring, 1, "walk Parasolid face coedges")?;
@@ -1157,6 +1348,9 @@ fn walk_face(
         if ring_closed {
             ctx.reserve_vec(&mut loops, 1, "walk Parasolid face loops")?;
             loops.push((loop_ref, ring));
+        } else if stop == WalkStop::End {
+            stop = WalkStop::Ring(ring_failure);
+            ring_stop = Some((loop_ref, ring.len(), ce_ref));
         }
         loop_ref = lp.refs[3];
     }
@@ -1165,7 +1359,90 @@ fn walk_face(
         surface_attr,
         sense: bridge.sense,
         loops,
+        stop,
+        ring_stop,
     })
+}
+
+/// Largest gap between the two ends of a ring edge, in millimetres.
+const RING_CLOSURE_TOLERANCE_MM: f64 = 1.0e-4;
+
+/// The point a ring edge starts and ends at, when its carrier is a typed closed
+/// curve.
+///
+/// A ring edge has no vertices: its start and end coincide on a closed curve.
+/// A circle starts at its reference direction. An ellipse or a B-spline starts
+/// at the start of its parameter range, or at the start of its natural domain
+/// when the carrier states no range, and must close within
+/// [`RING_CLOSURE_TOLERANCE_MM`].
+fn closed_seam_point(
+    ctx: &DecodeContext<'_>,
+    carrier: &CurveCarrier,
+) -> Result<Option<cadmpeg_ir::math::Point3>, cadmpeg_core::CodecError> {
+    let natural_range = match &carrier.geometry {
+        CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle_curve)) => {
+            let center = circle_curve.center().get();
+            let ref_direction = circle_curve.frame().reference().as_raw();
+            let radius = circle_curve.radius().get();
+            let at_reference = cadmpeg_ir::math::Point3::new(
+                center.x + ref_direction.x * radius,
+                center.y + ref_direction.y * radius,
+                center.z + ref_direction.z * radius,
+            );
+            // A ring edge starts at the start of its range. A range that does
+            // not start at the reference direction puts the vertex there.
+            if let Some(range) = carrier
+                .parameter_range
+                .map(cadmpeg_ir::units::FiniteVector::get)
+            {
+                if range[0].abs() > f64::EPSILON {
+                    let first = super::evaluation::curve_point(ctx, &carrier.geometry, range[0])?;
+                    let last = super::evaluation::curve_point(ctx, &carrier.geometry, range[1])?;
+                    if let (Some(first), Some(last)) = (first, last) {
+                        let (first, last) = (first.get(), last.get());
+                        let gap = (first.x - last.x)
+                            .hypot(first.y - last.y)
+                            .hypot(first.z - last.z);
+                        if gap <= RING_CLOSURE_TOLERANCE_MM {
+                            return Ok(Some(first));
+                        }
+                    }
+                }
+            }
+            return Ok(Some(at_reference));
+        }
+        CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(_)) => [0.0, std::f64::consts::TAU],
+        CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(nurbs)) => {
+            let knots = nurbs.knots();
+            let Ok(degree) = usize::try_from(nurbs.degree()) else {
+                return Ok(None);
+            };
+            let (Some(first), Some(last)) = (
+                knots.get(degree),
+                knots
+                    .len()
+                    .checked_sub(degree + 1)
+                    .and_then(|index| knots.get(index)),
+            ) else {
+                return Ok(None);
+            };
+            [*first, *last]
+        }
+        _ => return Ok(None),
+    };
+    let range = carrier
+        .parameter_range
+        .map_or(natural_range, cadmpeg_ir::units::FiniteVector::get);
+    let first = super::evaluation::curve_point(ctx, &carrier.geometry, range[0])?;
+    let last = super::evaluation::curve_point(ctx, &carrier.geometry, range[1])?;
+    let (Some(first), Some(last)) = (first, last) else {
+        return Ok(None);
+    };
+    let (first, last) = (first.get(), last.get());
+    let gap = (first.x - last.x)
+        .hypot(first.y - last.y)
+        .hypot(first.z - last.z);
+    Ok((gap <= RING_CLOSURE_TOLERANCE_MM).then_some(first))
 }
 
 fn edge_parameter_range(
@@ -1240,6 +1517,42 @@ fn canonical_coedge_attr(
         .filter(|(_, coedge)| coedge.refs[6] == edge_attr && coedge.sense == Sense::Forward);
     let (&attr, _) = candidates.next()?;
     candidates.next().is_none().then_some(attr)
+}
+
+/// The coedge that defines the direction of an edge with no forward coedge.
+///
+/// A boundary edge of a sheet has one coedge. When that coedge is reversed, the
+/// edge runs against it, so no forward coedge exists. The sole coedge then
+/// defines the edge, and the edge starts where the coedge ends. An explicit
+/// canonical reference that names this coedge defines the edge the same way,
+/// with the ends as the coedge has them. An edge with two or more coedges, or
+/// with an explicit reference to another coedge, is left to
+/// [`canonical_coedge_attr`].
+fn sole_reversed_coedge(
+    edge_attr: u16,
+    edge_use: Option<&topology::EdgeUse>,
+    incidences: &[(u16, u16, u16)],
+    coedge_counts: &HashMap<u16, usize>,
+    coedges: &HashMap<u16, topology::Coedge>,
+) -> Option<(u16, bool)> {
+    let explicit = edge_use
+        .and_then(|record| record.references.canonical())
+        .filter(|attr| *attr > 1);
+    let [(attr, _, _)] = incidences else {
+        return None;
+    };
+    // An explicit canonical reference that names this very coedge states the
+    // direction of the edge, so the coedge is not against the edge.
+    let against_edge = match explicit {
+        None => true,
+        Some(named) if named == *attr => false,
+        Some(_) => return None,
+    };
+    (coedge_counts.get(&edge_attr) == Some(&1)
+        && coedges
+            .get(attr)
+            .is_some_and(|coedge| coedge.sense == Sense::Reversed))
+    .then_some((*attr, against_edge))
 }
 
 fn edge_end_vuse(canonical: u16, ring_end: u16, coedges: &HashMap<u16, topology::Coedge>) -> u16 {
@@ -1374,6 +1687,26 @@ pub(crate) fn decode_bodies(
     bodies: &[(&[u8], &StreamHeader)],
     stream: &cadmpeg_ir::StreamName,
 ) -> Result<Brep, cadmpeg_core::CodecError> {
+    decode_bodies_in(ctx, bodies, stream, Hosting::default())
+}
+
+/// What a hosting codec asks of the decode.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Hosting {
+    /// Admit the rules that no `SolidWorks` fixture has verified: an edge that
+    /// only one reversed coedge names takes that coedge as its definition.
+    pub(crate) rules: bool,
+    /// Collect structural diagnostics for the edges that the build drops.
+    pub(crate) diagnostics: bool,
+}
+
+/// [`decode_bodies`] with the rules of a hosting codec.
+pub(crate) fn decode_bodies_in(
+    ctx: &DecodeContext<'_>,
+    bodies: &[(&[u8], &StreamHeader)],
+    stream: &cadmpeg_ir::StreamName,
+    hosting: Hosting,
+) -> Result<Brep, cadmpeg_core::CodecError> {
     let mut carriers = CarrierIndex::default();
     let mut tables = topology::Tables::default();
     let mut facts = entity::Facts::default();
@@ -1388,6 +1721,7 @@ pub(crate) fn decode_bodies(
         |stream| stream.1.description.len(),
         "sort Parasolid body streams",
     )?;
+    let mut wide_counts = [[0_usize; 3]; 2];
     let mut entity_streams = Vec::new();
     ctx.reserve_vec(
         &mut entity_streams,
@@ -1419,9 +1753,35 @@ pub(crate) fn decode_bodies(
         let is_deltas = is_deltas_stream(header);
         let typed_face_offsets =
             selected_typed_face_offsets(ctx, &stream_typed_facts, typed_bridge_attrs.as_ref())?;
-        carriers.merge_missing(ctx, scan_carriers(ctx, body)?)?;
+        // The wide-pointer framing is the partition layout, so a deltas stream does not use it.
+        let wide_here = hosting.rules && !is_deltas;
+        let scanned = scan_carriers_with(ctx, body, wide_here)?;
+        if hosting.diagnostics && hosting.rules {
+            // What the framing reads in this stream, and how much of it is new.
+            let counted_scan = if wide_here {
+                None
+            } else {
+                Some(scan_carriers_with(ctx, body, true)?)
+            };
+            let counted = counted_scan.as_ref().unwrap_or(&scanned);
+            let counts = &mut wide_counts[usize::from(is_deltas)];
+            for &(attr, curve, over_16_bits) in &counted.wide_read {
+                counts[0] += 1;
+                counts[1] += usize::from(!carriers.has(attr, curve));
+                counts[2] += usize::from(over_16_bits);
+            }
+        }
+        carriers.merge_missing(ctx, scanned)?;
         let curve_attrs = carriers.curve_attrs(ctx)?;
-        let scanned_tables = if is_deltas {
+        let scanned_tables = if hosting.rules {
+            topology::scan_hosted_with_curve_attrs_excluding(
+                ctx,
+                body,
+                is_deltas,
+                &curve_attrs,
+                &typed_face_offsets,
+            )
+        } else if is_deltas {
             topology::scan_deltas_with_curve_attrs_excluding(
                 ctx,
                 body,
@@ -1452,7 +1812,26 @@ pub(crate) fn decode_bodies(
             append_entity_facts(ctx, &mut facts, scanned_facts)?;
         }
     }
-    decode_graph(ctx, &mut carriers, &tables, facts, &typed_facts, stream)
+    let admitted = if hosting.rules {
+        topology::admit_referenced(ctx, &entity_streams, &mut tables)?
+    } else {
+        topology::Admitted::default()
+    };
+    let mut brep = decode_graph(
+        ctx,
+        &mut carriers,
+        &tables,
+        facts,
+        &typed_facts,
+        (stream, hosting),
+    )?;
+    brep.stats.admitted_by_reference = admitted;
+    if hosting.diagnostics {
+        brep.stats.diagnostics.carrier_keys = carriers.sorted_keys(ctx)?;
+        brep.stats.diagnostics.wide_counts = wide_counts;
+        diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
+    }
+    Ok(brep)
 }
 
 fn decode_body(
@@ -1469,7 +1848,14 @@ fn decode_body(
     let t =
         topology::scan_with_curve_attrs_excluding(ctx, body, &curve_attrs, &typed_face_offsets)?;
     let entity_facts = entity::scan_metadata(ctx, body, false)?;
-    decode_graph(ctx, &mut carriers, &t, entity_facts, &typed_facts, stream)
+    decode_graph(
+        ctx,
+        &mut carriers,
+        &t,
+        entity_facts,
+        &typed_facts,
+        (stream, Hosting::default()),
+    )
 }
 
 fn admit_brep_entity(ctx: &DecodeContext<'_>) -> Result<(), cadmpeg_core::CodecError> {
@@ -1611,11 +1997,35 @@ fn typed_body_records(
     tables: &topology::Tables,
 ) -> Result<Option<Vec<BodyRecord>>, cadmpeg_core::CodecError> {
     let mut bridge_attrs = HashSet::new();
+    // A bridge that was admitted by reference and has no typed face node would
+    // make the typed ownership incomplete and merge every body into one. It
+    // takes no part in the typed hierarchy, so the bodies stay as they are.
+    let typed_faces: HashSet<u16> = facts.faces.iter().map(|face| face.attr).collect();
     for attr in tables.bridges().keys().copied() {
+        if tables.is_admitted_bridge(attr) && !typed_faces.contains(&attr) {
+            continue;
+        }
         ctx.insert_hash_set(&mut bridge_attrs, attr, "index Parasolid body bridges")?;
     }
-    let Some(hierarchies) = facts.hierarchies(ctx, &bridge_attrs)? else {
-        return Ok(None);
+    let hierarchies = match facts.hierarchies(ctx, &bridge_attrs)? {
+        Some(hierarchies) => hierarchies,
+        None => {
+            // When the admitted bridges that have a typed face break the typed
+            // ownership, the bodies come from the bridges of the scan alone.
+            let mut scanned = HashSet::new();
+            for attr in tables.bridges().keys().copied() {
+                if !tables.is_admitted_bridge(attr) {
+                    ctx.insert_hash_set(&mut scanned, attr, "index Parasolid body bridges")?;
+                }
+            }
+            if scanned.len() == bridge_attrs.len() {
+                return Ok(None);
+            }
+            match facts.hierarchies(ctx, &scanned)? {
+                Some(hierarchies) => hierarchies,
+                None => return Ok(None),
+            }
+        }
     };
     let mut records = Vec::new();
     for hierarchy in hierarchies {
@@ -1761,8 +2171,9 @@ fn decode_graph(
     t: &topology::Tables,
     entity_facts: entity::Facts,
     typed_facts: &typed::Facts,
-    stream: &cadmpeg_ir::StreamName,
+    (stream, hosting): (&cadmpeg_ir::StreamName, Hosting),
 ) -> Result<Brep, cadmpeg_core::CodecError> {
+    let hosted = hosting.rules;
     let typed_records = typed_body_records(ctx, typed_facts, t)?;
     let body_records = typed_records.unwrap_or_default();
     let body_modifiers = unique_body_modifiers(ctx, entity_facts.body_modifiers)?;
@@ -1886,6 +2297,51 @@ fn decode_graph(
         "sort Parasolid topology",
     )?;
     out.stats.ambiguous_face_owners += ambiguous_face_owners;
+    if hosted {
+        for face in faces.iter().filter(|face| face.loops.is_empty()) {
+            match face.stop {
+                WalkStop::End => out.stats.faces_walked_empty_end += 1,
+                WalkStop::NoHead => out.stats.faces_walked_empty_no_head += 1,
+                WalkStop::LoopAbsent => {
+                    out.stats.faces_walked_empty_loop_absent += 1;
+                    if hosting.diagnostics {
+                        let loop_ref = t
+                            .bridges()
+                            .get(&face.bridge_attr)
+                            .map_or(0, |bridge| bridge.refs[2]);
+                        out.stats
+                            .diagnostics
+                            .record_empty_face(ctx, face.bridge_attr, loop_ref)?;
+                    }
+                }
+                WalkStop::OtherOwner => out.stats.faces_walked_empty_other_owner += 1,
+                WalkStop::Ring(why) => {
+                    match why {
+                        RingStop::CoedgeAbsent => {
+                            out.stats.faces_walked_empty_ring_coedge_absent += 1;
+                        }
+                        RingStop::ForeignLoop => {
+                            out.stats.faces_walked_empty_ring_foreign_loop += 1;
+                        }
+                        RingStop::Cycle => out.stats.faces_walked_empty_ring_cycle += 1,
+                        RingStop::NullNext => out.stats.faces_walked_empty_ring_null_next += 1,
+                    }
+                    if hosting.diagnostics {
+                        if let Some((loop_attr, walked, at)) = face.ring_stop {
+                            out.stats.diagnostics.record_ring_stop(
+                                ctx,
+                                face.bridge_attr,
+                                loop_attr,
+                                walked,
+                                at,
+                                why.code(),
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Edge attr -> [(coedge attr, start vuse, next coedge's start vuse)] from
     // the ring walk. The ring order supplies a boundary edge's second endpoint;
@@ -1923,17 +2379,81 @@ fn decode_graph(
     // Edge attr -> (canonical start vuse, canonical end vuse, curve carrier attr).
     let mut edge_ends: HashMap<u16, (u16, u16, u16)> = HashMap::new();
 
+    let mut coedge_counts = HashMap::<u16, usize>::new();
+    for coedge in t.coedges().values().filter(|_| hosted) {
+        ctx.charge_work(1, "count Parasolid coedges per edge")?;
+        if let Some(count) = coedge_counts.get_mut(&coedge.refs[6]) {
+            *count += 1;
+        } else {
+            ctx.admit_hash_map_entry(
+                &mut coedge_counts,
+                &coedge.refs[6],
+                "count Parasolid coedges per edge",
+            )?;
+            coedge_counts.insert(coedge.refs[6], 1);
+        }
+    }
     for (edge_attr, incidences) in edge_incidence {
         ctx.charge_work(1, "resolve Parasolid edge incidences")?;
         let canonical =
             canonical_coedge_attr(edge_attr, t.edge_uses().get(&edge_attr), t.coedges());
-        let Some(canonical) = canonical else {
-            continue;
+        let (canonical, against_edge) = match canonical {
+            Some(canonical) => (canonical, false),
+            None => match hosted
+                .then(|| {
+                    sole_reversed_coedge(
+                        edge_attr,
+                        t.edge_uses().get(&edge_attr),
+                        &incidences,
+                        &coedge_counts,
+                        t.coedges(),
+                    )
+                })
+                .flatten()
+            {
+                Some(sole) => sole,
+                None => {
+                    out.stats.skipped_edges_no_canonical += 1;
+                    let forward = incidences
+                        .iter()
+                        .filter(|(attr, _, _)| {
+                            t.coedges()
+                                .get(attr)
+                                .is_some_and(|coedge| coedge.sense == Sense::Forward)
+                        })
+                        .count();
+                    if forward == 0 {
+                        out.stats.skipped_edges_no_forward += 1;
+                    } else if forward > 1 {
+                        out.stats.skipped_edges_several_forward += 1;
+                    }
+                    if hosting.diagnostics {
+                        out.stats.diagnostics.record(
+                            ctx,
+                            diagnostics::Finding::NoCanonical {
+                                edge: edge_attr,
+                                forward,
+                            },
+                        )?;
+                    }
+                    continue;
+                }
+            },
         };
         let Some((_, start_vuse, ring_end_vuse)) = incidences
             .iter()
             .find(|(coedge_attr, _, _)| *coedge_attr == canonical)
         else {
+            out.stats.skipped_edges_off_ring += 1;
+            if hosting.diagnostics {
+                out.stats.diagnostics.record(
+                    ctx,
+                    diagnostics::Finding::OffRing {
+                        edge: edge_attr,
+                        canonical,
+                    },
+                )?;
+            }
             continue;
         };
         let end_vuse = edge_end_vuse(canonical, *ring_end_vuse, t.coedges());
@@ -1942,8 +2462,14 @@ fn decode_graph(
             .get(&edge_attr)
             .map_or(0, |edge_use| edge_use.references.curve());
         ctx.admit_hash_map_entry(&mut edge_ends, &edge_attr, "index Parasolid edge endpoints")?;
-        edge_ends.insert(edge_attr, (*start_vuse, end_vuse, curve_attr));
-        for vuse in [*start_vuse, end_vuse] {
+        // The edge of a reversed sole coedge starts where that coedge ends.
+        let ends = if against_edge {
+            (end_vuse, *start_vuse)
+        } else {
+            (*start_vuse, end_vuse)
+        };
+        edge_ends.insert(edge_attr, (ends.0, ends.1, curve_attr));
+        for vuse in [ends.0, ends.1] {
             if vuse == 0 {
                 continue;
             }
@@ -2002,7 +2528,9 @@ fn decode_graph(
         out.vertices.push(Vertex {
             id: id_vertex(a),
             point: id_point(point_attr),
-            tolerance: None,
+            tolerance: rec
+                .tolerance_m
+                .and_then(|metres| cadmpeg_ir::scalar::PositiveReal::new(metres * LEN_TO_MM)),
         });
     }
 
@@ -2016,23 +2544,46 @@ fn decode_graph(
     for e in edge_attrs {
         let (start_v, end_v, curve_attr) = edge_ends[&e];
         let resolved_endpoints = kept_vertices.contains(&start_v) && kept_vertices.contains(&end_v);
-        let closed_circle_point = (!resolved_endpoints && start_v <= 1 && end_v <= 1)
-            .then(|| carriers.curve(curve_attr))
-            .flatten()
-            .and_then(|carrier| match &carrier.carrier().geometry {
-                CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle_curve)) => {
-                    let center = circle_curve.center().get();
-                    let ref_direction = circle_curve.frame().reference().as_raw();
-                    let radius = circle_curve.radius().get();
-                    Some(cadmpeg_ir::math::Point3::new(
-                        center.x + ref_direction.x * radius,
-                        center.y + ref_direction.y * radius,
-                        center.z + ref_direction.z * radius,
-                    ))
-                }
-                _ => None,
-            });
+        let closed_circle_point = if !resolved_endpoints && start_v <= 1 && end_v <= 1 {
+            match carriers.curve(curve_attr) {
+                Some(indexed) => closed_seam_point(ctx, indexed.carrier())?,
+                None => None,
+            }
+        } else {
+            None
+        };
         if !resolved_endpoints && closed_circle_point.is_none() {
+            out.stats.unresolved_edges += 1;
+            // Name the first cause that blocks an endpoint, so that a reader of
+            // the loss can tell a null reference from a record that the
+            // tables do not hold.
+            let blocked = [start_v, end_v]
+                .into_iter()
+                .enumerate()
+                .find(|(_, vuse)| !kept_vertices.contains(vuse));
+            if let Some((end, vuse)) = blocked {
+                let cause = if vuse == 0 {
+                    out.stats.unresolved_null_vertex_use += 1;
+                    diagnostics::DropCause::NullVertex
+                } else if t.vertex_uses().contains_key(&vuse) {
+                    out.stats.unresolved_absent_point += 1;
+                    diagnostics::DropCause::AbsentPoint
+                } else {
+                    out.stats.unresolved_absent_vertex_use += 1;
+                    diagnostics::DropCause::AbsentVertex
+                };
+                if hosting.diagnostics {
+                    out.stats.diagnostics.record(
+                        ctx,
+                        diagnostics::Finding::Unresolved {
+                            edge: e,
+                            cause,
+                            end: u8::from(end == 1),
+                            vertex: vuse,
+                        },
+                    )?;
+                }
+            }
             continue;
         }
         let (mut start_id, mut end_id) = if let Some(position) = closed_circle_point {
@@ -2184,6 +2735,9 @@ fn decode_graph(
                         });
                     }
                     curve = Some(id_curve(curve_attr));
+                    out.stats
+                        .diagnostics
+                        .record_unknown_carrier(true, curve_attr);
                     out.stats.unknown_curve_edges += 1;
                 }
             }
@@ -2230,6 +2784,13 @@ fn decode_graph(
                 });
             if ok {
                 ctx.insert_hash_set(&mut kept_loops, *loop_attr, "track kept Parasolid loops")?;
+            } else {
+                out.stats.dropped_loops += 1;
+                if ring.iter().any(|c| !t.coedges().contains_key(c)) {
+                    out.stats.dropped_loops_missing_coedge += 1;
+                } else {
+                    out.stats.dropped_loops_unemitted_edge += 1;
+                }
             }
         }
     }
@@ -2249,6 +2810,9 @@ fn decode_graph(
         }
     }
 
+    // One sink for the whole pass: it carries the solver gate, which counts the
+    // solver calls that ran out of work across every coedge.
+    let mut pcurve_refusal_sink = crate::lane_refusal::LaneRefusals::new();
     // Coedges of kept loops: `next`/`prev` from the ring order, partner from a
     // mutual twin that is itself emitted.
     for f in &faces {
@@ -2273,8 +2837,7 @@ fn decode_graph(
                     u64_from_index(ce.offset),
                     Some("00_11"),
                 )?;
-                let mut pcurve_refusal = crate::lane_refusal::LaneRefusals::new();
-                let pcurve_refusal = &mut pcurve_refusal;
+                let pcurve_refusal = &mut pcurve_refusal_sink;
                 let pcurves = if let Some((_, _, curve_attr)) = edge_ends.get(&edge_attr) {
                     (|| -> Result<_, cadmpeg_core::CodecError> {
                         let Some(IndexedCurve::Derived(intersection)) = carriers.curve(*curve_attr)
@@ -2380,6 +2943,14 @@ fn decode_graph(
                     ctx.reserve_vec(&mut out.losses, 1, "collect intersection pcurve losses")?;
                     out.losses.push(note);
                 }
+                for record in pcurve_refusal.take_withheld() {
+                    let note = crate::loss::solver_work_withheld(
+                        ctx,
+                        format_args!("coedge {ce_attr}, {record}"),
+                    )?;
+                    ctx.reserve_vec(&mut out.losses, 1, "collect intersection pcurve losses")?;
+                    out.losses.push(note);
+                }
                 let pcurves = pcurves
                     .transpose()
                     .map_err(cadmpeg_core::CodecError::malformed)?
@@ -2479,11 +3050,25 @@ fn decode_graph(
         }
         Ok((bridge_group, bridge_shell))
     };
-    let (bridge_group, bridge_shell) = bind_bridges(&body_records, &faces)?;
+    let (mut bridge_group, mut bridge_shell) = bind_bridges(&body_records, &faces)?;
+    if hosted && !body_records.is_empty() {
+        out.stats.adopted_faces += adopt_unclaimed_faces(
+            ctx,
+            t.coedges(),
+            &faces,
+            &mut bridge_group,
+            &mut bridge_shell,
+        )?;
+    }
     if !body_records.is_empty() {
         out.stats.unclaimed_faces += faces
             .iter()
             .filter(|face| !bridge_group.contains_key(&face.bridge_attr))
+            .count();
+        out.stats.unclaimed_admitted += faces
+            .iter()
+            .filter(|face| !bridge_group.contains_key(&face.bridge_attr))
+            .filter(|face| t.is_admitted_bridge(face.bridge_attr))
             .count();
         faces.retain(|face| bridge_group.contains_key(&face.bridge_attr));
     }
@@ -2540,6 +3125,8 @@ fn decode_graph(
             }
         }
         if loops.is_empty() {
+            out.stats.faces_without_loops += 1;
+            out.stats.faces_loops_all_dropped += usize::from(!f.loops.is_empty());
             continue;
         }
         // Support surface: a decoded surface carrier, else an opaque carrier.
@@ -2795,6 +3382,9 @@ fn decode_graph(
                         geometry: SurfaceGeometry::Solved(geometry),
                     });
                 } else {
+                    out.stats
+                        .diagnostics
+                        .record_unknown_carrier(false, f.surface_attr);
                     out.stats.unknown_surface_faces += 1;
                     annotations.note(
                         ctx,
@@ -2898,7 +3488,9 @@ fn decode_graph(
             });
         }
     }
-    solve_face_orientation(ctx, &mut out)?;
+    if face_senses_are_solved(hosted) {
+        solve_face_orientation(ctx, &mut out)?;
+    }
     synthesize_cylinder_seams(ctx, &mut out, &mut annotations, &source_stream)?;
     synthesize_sphere_seams(ctx, &mut out, &mut annotations, &source_stream)?;
     derive_planar_pcurves(ctx, &mut out, &mut annotations, &source_stream)?;
@@ -5241,14 +5833,23 @@ fn intersection_support_pcurve(
                     for point in chart_points {
                         let parameters = match nurbs_surface_parameter_within_tolerance(
                             ctx,
+                            refusal.gate(),
                             surface,
                             point.get(),
                             control_points.last().copied(),
                             support_data.fit_tolerance_mm,
-                        ) {
-                            Ok(Some(parameters)) => parameters,
-                            Ok(None) => return Ok(None),
-                            Err(limit) => return Err(limit),
+                        )? {
+                            Solved::Done(Some(parameters)) => parameters,
+                            Solved::Done(None) => return Ok(None),
+                            Solved::Withheld => {
+                                refusal.withhold(
+                                    ctx,
+                                    format_args!(
+                                        "intersection support pcurve for surface attr {surface_attr}"
+                                    ),
+                                )?;
+                                return Ok(None);
+                            }
                         };
                         control_points.push(parameters.get());
                     }
@@ -5313,15 +5914,24 @@ fn intersection_support_pcurve(
             let last = control_points.len() - 1;
             for (index, target) in [(0, targets[0]), (last, targets[1])] {
                 control_points[index] = match nurbs_surface_parameter_within_tolerance(
-                            ctx,
+                    ctx,
+                    refusal.gate(),
                     surface,
                     target,
                     Some(control_points[index]),
                     tolerance,
-                ) {
-                    Ok(Some(parameters)) => parameters.get(),
-                    Ok(None) => return Ok(None),
-                    Err(limit) => return Err(limit),
+                )? {
+                    Solved::Done(Some(parameters)) => parameters.get(),
+                    Solved::Done(None) => return Ok(None),
+                    Solved::Withheld => {
+                        refusal.withhold(
+                            ctx,
+                            format_args!(
+                                "intersection support pcurve for surface attr {surface_attr}"
+                            ),
+                        )?;
+                        return Ok(None);
+                    }
                 };
             }
         } else {
@@ -5396,13 +6006,26 @@ fn intersection_support_pcurve(
         {
             let exceeds = match surface {
                 SurfaceGeometry::Solved(SolvedSurfaceGeometry::Nurbs(surface)) => {
-                    let error = nurbs_surface_parameter_segment_chord_bound(
+                    match nurbs_surface_parameter_segment_chord_bound(
                         ctx,
+                        refusal.gate(),
                         surface,
                         [parameters[0], parameters[1]],
                         [chord[0].get(), chord[1].get()],
-                    )?;
-                    error.is_none_or(|error| error > support_data.fit_tolerance_mm)
+                    )? {
+                        Solved::Done(error) => {
+                            error.is_none_or(|error| error > support_data.fit_tolerance_mm)
+                        }
+                        Solved::Withheld => {
+                            refusal.withhold(
+                                ctx,
+                                format_args!(
+                                    "intersection support pcurve for surface attr {surface_attr}"
+                                ),
+                            )?;
+                            return Ok(None);
+                        }
+                    }
                 }
                 _ => analytic_pcurve_chord_bound(surface, parameters[0], parameters[1]).is_none_or(
                     |curvature_error| {
@@ -6806,6 +7429,16 @@ fn ruled_surface_line_pcurve(
     }))
 }
 
+/// Whether the face senses are replaced by the ones that the coedge senses of each connected shell
+/// imply. That rule is for the `SolidWorks` streams. On a hosted Solid Edge stream it gave every
+/// face of a shell one sense (all faces forward in each of the five open documents tried), while the
+/// senses the face records state agree with the side found from the edges for 98.5 percent of the
+/// planar faces of the models that match their stored volume. The hosted path keeps the record's
+/// own sense.
+fn face_senses_are_solved(hosted: bool) -> bool {
+    !hosted
+}
+
 fn solve_face_orientation(
     ctx: &DecodeContext<'_>,
     out: &mut Brep,
@@ -7749,6 +8382,38 @@ fn emit_curve(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_ring_edge_on_a_closed_ellipse_has_a_seam_point() {
+        use crate::brep::CurveCarrier;
+        use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+        use cadmpeg_ir::math::{Point3, Vector3};
+        let geometry = CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(
+            cadmpeg_ir::geometry::analytic::EllipseCurve::try_new(
+                Point3::new(3.0, -2.0, 7.0),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                5.0,
+                2.0,
+            )
+            .unwrap(),
+        ));
+        let carrier = CurveCarrier {
+            attr: 1,
+            offset: 0,
+            end: 0,
+            geometry,
+            parameter_range: None,
+        };
+        let ctx = cadmpeg_test_support::service_decode_context();
+        let seam = super::closed_seam_point(&ctx, &carrier).unwrap().unwrap();
+        assert!((seam.x - 8.0).abs() < 1e-9 && (seam.y + 2.0).abs() < 1e-9);
+        let open = CurveCarrier {
+            parameter_range: cadmpeg_ir::units::FiniteVector::new([0.0, 1.0]),
+            ..carrier
+        };
+        assert!(super::closed_seam_point(&ctx, &open).unwrap().is_none());
+    }
+
     #[test]
     fn incomplete_brep_marker_does_not_consume_collection_slots() {
         let arena = cadmpeg_core::decode::DecodeArena::new();
@@ -8991,7 +9656,10 @@ mod tests {
                 ..Default::default()
             },
             &super::typed::Facts::default(),
-            &cadmpeg_ir::stream_name!("empty"),
+            (
+                &cadmpeg_ir::stream_name!("empty"),
+                super::Hosting::default(),
+            ),
         )
         .expect("valid exactness fields");
 
@@ -9706,3 +10374,6 @@ mod numerical_range_tests;
 
 #[cfg(test)]
 mod evaluation_admission_tests;
+
+#[cfg(test)]
+mod seam_range_tests;
