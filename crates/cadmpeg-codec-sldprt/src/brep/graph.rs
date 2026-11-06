@@ -1827,7 +1827,7 @@ pub(crate) fn decode_bodies_in(
     )?;
     brep.stats.admitted_by_reference = admitted;
     if hosting.diagnostics {
-        brep.stats.diagnostics.carrier_keys = carriers.sorted_keys();
+        brep.stats.diagnostics.carrier_keys = carriers.sorted_keys(ctx)?;
         brep.stats.diagnostics.wide_counts = wide_counts;
         diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
     }

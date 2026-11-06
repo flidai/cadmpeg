@@ -654,11 +654,10 @@ fn carrier_class(buf: &[u8], at: usize, tag: u8) -> String {
     let values = |marker: usize| -> &'static str {
         let mut read = [0_f64; 12];
         for (slot, value) in read.iter_mut().take(count).enumerate() {
-            let start = marker + 1 + slot * 8;
-            let Some(bytes) = buf.get(start..start + 8) else {
+            let Some(read_value) = View::f64_be_at(buf, marker + 1 + slot * 8) else {
                 return "short";
             };
-            *value = f64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]));
+            *value = read_value;
         }
         let read = &read[..count];
         if read.iter().any(|value| !value.is_finite()) {

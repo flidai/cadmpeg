@@ -90,7 +90,10 @@ impl CarrierIndex {
     }
 
     /// The sorted keys of the curve carriers and of the surface carriers of every kind.
-    pub(super) fn sorted_keys(&self) -> (Vec<u16>, Vec<u16>) {
+    pub(super) fn sorted_keys(
+        &self,
+        ctx: &DecodeContext<'_>,
+    ) -> Result<(Vec<u16>, Vec<u16>), cadmpeg_core::CodecError> {
         let mut curves: Vec<u16> = self.curves.keys().copied().collect();
         let mut surfaces: Vec<u16> = self
             .surfaces
@@ -100,10 +103,15 @@ impl CarrierIndex {
             .chain(self.offsets.keys())
             .copied()
             .collect();
-        curves.sort_unstable();
-        surfaces.sort_unstable();
+        ctx.sort_unstable_by(&mut curves, u16::cmp, |_| 0, "sort SLDPRT curve carrier keys")?;
+        ctx.sort_unstable_by(
+            &mut surfaces,
+            u16::cmp,
+            |_| 0,
+            "sort SLDPRT surface carrier keys",
+        )?;
         surfaces.dedup();
-        (curves, surfaces)
+        Ok((curves, surfaces))
     }
 
     /// Whether a curve carrier or a surface carrier of the family has this key.
