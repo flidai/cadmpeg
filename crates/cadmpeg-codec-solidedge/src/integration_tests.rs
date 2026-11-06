@@ -14,7 +14,7 @@ use crate::test_support::parasolid::text_header;
 use crate::test_support::{
     binary_deltas, binary_partition, deltas_body, deltas_stream, document, moved_point_deltas_body,
     part_with_pair, partition_stream, partition_stream_of, transmit_stream, triangle_body,
-    with_decode_context,
+    two_triangle_body, with_decode_context,
 };
 use crate::SolidEdgeCodec;
 
@@ -498,6 +498,38 @@ fn a_standalone_transmit_stream_decodes_as_a_base_state() {
         &result,
         SolidEdgeLossCode::ContainerDeltasMissing
     ));
+}
+
+fn face_senses_of(body: &[u8]) -> Vec<cadmpeg_ir::topology::Sense> {
+    let result = decode(&pair_without(vec![stream(
+        "Body.X_B",
+        &transmit_stream(body),
+    )]));
+    assert!(result.report().geometry_transferred());
+    let faces = &result.ir().model.faces;
+    assert_eq!(faces.len(), 2);
+    let mut senses: Vec<_> = faces
+        .iter()
+        .map(|face| (face.id.as_str().to_owned(), face.sense))
+        .collect();
+    senses.sort_by(|a, b| a.0.cmp(&b.0));
+    senses.into_iter().map(|(_, sense)| sense).collect()
+}
+
+#[test]
+fn a_hosted_stream_keeps_the_face_senses_of_its_records() {
+    use cadmpeg_ir::topology::Sense;
+    // The coedge senses place the two faces on the same side. The SolidWorks rule rewrites the
+    // senses to agree with that, which would make both forward; a hosted stream keeps what its
+    // face records say.
+    assert_eq!(
+        face_senses_of(&two_triangle_body(true)),
+        [Sense::Forward, Sense::Reversed]
+    );
+    assert_eq!(
+        face_senses_of(&two_triangle_body(false)),
+        [Sense::Forward, Sense::Forward]
+    );
 }
 
 #[test]

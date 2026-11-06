@@ -285,6 +285,18 @@ pub(crate) fn typed_single_face_ownership(
     }
     bytes.push(b'S');
 
+    typed_face(bytes, face_attr, shell_attr, surface_attr, 0x2b);
+}
+
+/// Append one typed face record of a shell; `marker` is `0x2b` for a forward and `0x2d` for a
+/// reversed face sense.
+pub(crate) fn typed_face(
+    bytes: &mut Vec<u8>,
+    face_attr: u16,
+    shell_attr: u16,
+    surface_attr: u16,
+    marker: u8,
+) {
     typed_prefix(
         bytes,
         [0x00, 0x0e],
@@ -296,5 +308,5 @@ pub(crate) fn typed_single_face_ownership(
     for value in [1, 1, 0, u32::from(shell_attr), u32::from(surface_attr)] {
         typed_ref(bytes, value);
     }
-    bytes.push(0x2b);
+    bytes.push(marker);
 }

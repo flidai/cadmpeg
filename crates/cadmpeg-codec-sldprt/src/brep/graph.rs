@@ -9487,12 +9487,6 @@ mod tests {
     }
 
     #[test]
-    fn a_hosted_stream_keeps_the_face_senses_of_its_records() {
-        assert!(super::face_senses_are_solved(false));
-        assert!(!super::face_senses_are_solved(true));
-    }
-
-    #[test]
     fn geometry_free_stream_does_not_report_synthetic_body_grouping() {
         let arena = cadmpeg_core::decode::DecodeArena::new();
         let (ctx, _) = cadmpeg_core::decode::DecodeContext::from_root_bytes(
