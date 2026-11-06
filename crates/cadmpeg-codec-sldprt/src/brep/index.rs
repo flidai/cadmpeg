@@ -87,6 +87,23 @@ impl CarrierIndex {
         Ok(attrs)
     }
 
+    /// The sorted keys of the curve carriers and of the surface carriers of every kind.
+    pub(super) fn sorted_keys(&self) -> (Vec<u16>, Vec<u16>) {
+        let mut curves: Vec<u16> = self.curves.keys().copied().collect();
+        let mut surfaces: Vec<u16> = self
+            .surfaces
+            .keys()
+            .chain(self.sweeps.keys())
+            .chain(self.blends.keys())
+            .chain(self.offsets.keys())
+            .copied()
+            .collect();
+        curves.sort_unstable();
+        surfaces.sort_unstable();
+        surfaces.dedup();
+        (curves, surfaces)
+    }
+
     pub(super) fn surface(&self, attr: u16) -> Option<&SurfaceCarrier> {
         self.surfaces.get(&attr)
     }

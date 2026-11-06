@@ -14,6 +14,7 @@ use cadmpeg_core::CodecError;
 use cadmpeg_ir::topology::Sense;
 
 use super::topology::Tables;
+use super::{analytic_value_count, valid_carrier_frame, valid_carrier_scalars};
 
 /// The most findings a decode keeps, so that a damaged file stays cheap.
 pub(crate) const FINDING_LIMIT: usize = 20_000;
@@ -79,6 +80,8 @@ pub(crate) struct Diagnostics {
     /// does not type, for the probe of the record type that sits at the index.
     pub(crate) unknown_curves: Vec<u16>,
     pub(crate) unknown_surfaces: Vec<u16>,
+    /// The sorted keys of the typed curve carriers and of the typed surface carriers.
+    pub(crate) carrier_keys: (Vec<u16>, Vec<u16>),
     /// JSON lines, filled by [`render`].
     pub(crate) lines: Vec<String>,
 }
@@ -548,8 +551,154 @@ pub(crate) fn render(
             types.concat()
         ));
     }
+    // Why the compact analytic parse did not accept a header of an analytic type at the index of
+    // an untyped carrier, and how far the index lies from the nearest typed carrier.
+    for (what, list, keys) in [
+        (
+            "curve",
+            &diagnostics.unknown_curves,
+            &diagnostics.carrier_keys.0,
+        ),
+        (
+            "surface",
+            &diagnostics.unknown_surfaces,
+            &diagnostics.carrier_keys.1,
+        ),
+    ] {
+        let mut classes: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut distances: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
+        for index in list {
+            ctx.charge_work(1, "render Parasolid carrier diagnostics")?;
+            let analytic = |hit: &&Hit| analytic_value_count(hit.node_type).is_some();
+            let found = hits.get(index);
+            let chosen = found.and_then(|found| {
+                found
+                    .iter()
+                    .filter(analytic)
+                    .find(|hit| !hit.delta)
+                    .or_else(|| found.iter().find(analytic))
+            });
+            if let Some(hit) = chosen {
+                let class = carrier_class(streams[hit.stream].0, hit.at, hit.node_type);
+                let repeated = if hit.count > 1 { "_repeated" } else { "" };
+                *classes
+                    .entry(format!(
+                        "t{}_{}_{}{repeated}",
+                        hit.node_type,
+                        if hit.delta { "d" } else { "p" },
+                        class
+                    ))
+                    .or_insert(0) += 1;
+            } else {
+                let slot = keys.partition_point(|key| key < index);
+                let below = slot.checked_sub(1).map(|at| *index - keys[at]);
+                let above = keys.get(slot).map(|key| *key - *index);
+                let nearest = below.into_iter().chain(above).min();
+                let word = match nearest {
+                    None => "no_keys",
+                    Some(0) => "is_key",
+                    Some(1..=2) => "near_2",
+                    Some(3..=16) => "near_16",
+                    Some(17..=256) => "near_256",
+                    Some(_) => "far",
+                };
+                *distances.entry(word).or_insert(0) += 1;
+                if *index > MASK_15 {
+                    *distances.entry("wide_index").or_insert(0) += 1;
+                }
+                if keys.binary_search(&(*index & MASK_15)).is_ok() && *index > MASK_15 {
+                    *distances.entry("low15_is_key").or_insert(0) += 1;
+                }
+            }
+        }
+        let cells: Vec<String> = classes
+            .iter()
+            .map(|(name, count)| format!(",\"{name}\":{count}"))
+            .chain(
+                distances
+                    .iter()
+                    .map(|(name, count)| format!(",\"d_{name}\":{count}")),
+            )
+            .collect();
+        lines.push(format!(
+            "{{\"kind\":\"summary4\",\"what\":\"{what}\",\"refs\":{}{}}}",
+            list.len(),
+            cells.concat()
+        ));
+    }
     diagnostics.lines = lines;
     Ok(())
+}
+
+/// How a compact analytic record whose header sits at `at` fails the parse: where its marker
+/// is (at the strict position, after the extra cells of wide pointers, or in the deltas
+/// framing) and what its values fail.
+fn carrier_class(buf: &[u8], at: usize, tag: u8) -> String {
+    let Some(count) = analytic_value_count(tag) else {
+        return "no_tag".to_owned();
+    };
+    let tag_end = at + 2;
+    let hdr = tag_end + usize::from(buf.get(tag_end) == Some(&0xff));
+    let is_marker = |position: usize| matches!(buf.get(position), Some(0x2b | 0x2d));
+    let values = |marker: usize| -> &'static str {
+        let mut read = [0_f64; 12];
+        for (slot, value) in read.iter_mut().take(count).enumerate() {
+            let start = marker + 1 + slot * 8;
+            let Some(bytes) = buf.get(start..start + 8) else {
+                return "short";
+            };
+            *value = f64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]));
+        }
+        let read = &read[..count];
+        if read.iter().any(|value| !value.is_finite()) {
+            "nonfinite"
+        } else if !valid_carrier_frame(tag, read) {
+            "frame"
+        } else if !valid_carrier_scalars(tag, read) {
+            "scalars"
+        } else {
+            "valid"
+        }
+    };
+    if is_marker(hdr + 16) {
+        return format!("m16_{}", values(hdr + 16));
+    }
+    // The record with wide pointers: a cell above 0x7ffe takes a second cell.
+    let (mut position, mut wide) = (hdr, 0_usize);
+    let cell = |position: &mut usize, wide: &mut usize| -> bool {
+        let Some(value) = View::u16_be_at(buf, *position) else {
+            return false;
+        };
+        *position += 2;
+        if value > MASK_15 - 1 {
+            *position += 2;
+            *wide += 1;
+        }
+        true
+    };
+    let mut parsed = cell(&mut position, &mut wide);
+    position += 4;
+    for _ in 0..5 {
+        parsed = parsed && cell(&mut position, &mut wide);
+    }
+    if parsed && wide > 0 && is_marker(position) {
+        return format!("wide{wide}_{}", values(position));
+    }
+    if is_marker(hdr + 21) {
+        return format!("tripled_{}", values(hdr + 21));
+    }
+    // The deltas framing with extra bytes: the first later marker that leads to valid values.
+    if let Some(extra) =
+        (1..=30).find(|extra| is_marker(hdr + 21 + extra) && values(hdr + 21 + extra) == "valid")
+    {
+        return format!("tripled_plus{extra}");
+    }
+    if (1..=6).any(|extra| is_marker(hdr + 16 + 2 * extra)) {
+        return "marker_shifted".to_owned();
+    }
+    "no_marker".to_owned()
 }
 
 /// Mask of the low fifteen bits, the first cell of a wide node pointer.

@@ -1808,6 +1808,7 @@ pub(crate) fn decode_bodies_in(
     )?;
     brep.stats.admitted_by_reference = admitted;
     if hosting.diagnostics {
+        brep.stats.diagnostics.carrier_keys = carriers.sorted_keys();
         diagnostics::render(ctx, &tables, &entity_streams, &mut brep.stats.diagnostics)?;
     }
     Ok(brep)
