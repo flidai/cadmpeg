@@ -29,6 +29,8 @@ const NEXT_HEADER_WINDOW: usize = 160;
 const PROBE_TYPES: std::ops::RangeInclusive<u8> = 0x01..=0x3f;
 /// The node type codes of the topology tables.
 const TABLE_TYPES: [u8; 6] = [0x0e, 0x0f, 0x10, 0x11, 0x12, 0x1d];
+/// The node type codes of the compact curve and surface carriers that the probe reaches.
+const CARRIER_TYPES: std::ops::RangeInclusive<u8> = 0x1e..=0x3f;
 /// Probe cost: one work unit per this many stream bytes.
 const BYTES_PER_WORK_UNIT: usize = 64;
 /// The null real that marks a node without a tolerance of its own.
@@ -73,9 +75,16 @@ pub(crate) struct Diagnostics {
     /// `(bridge, loop, coedges walked, reference where the walk stopped, cause)`
     /// of faces whose first ring did not close.
     pub(crate) ring_stops: Vec<(u16, u16, usize, u16, u8)>,
+    /// Curve and surface references of edges and faces whose carrier the decode
+    /// does not type, for the probe of the record type that sits at the index.
+    pub(crate) unknown_curves: Vec<u16>,
+    pub(crate) unknown_surfaces: Vec<u16>,
     /// JSON lines, filled by [`render`].
     pub(crate) lines: Vec<String>,
 }
+
+/// The most untyped carrier references that one decode lists.
+const UNKNOWN_CARRIER_LIMIT: usize = 20_000;
 
 /// The most faces without a loop record that one decode lists.
 const EMPTY_FACE_LIMIT: usize = 2_000;
@@ -99,6 +108,17 @@ impl Diagnostics {
             (bridge, loop_attr, walked, at, cause),
             "collect Parasolid ring diagnostics",
         )
+    }
+
+    pub(crate) fn record_unknown_carrier(&mut self, curve: bool, index: u16) {
+        let list = if curve {
+            &mut self.unknown_curves
+        } else {
+            &mut self.unknown_surfaces
+        };
+        if list.len() < UNKNOWN_CARRIER_LIMIT && !list.contains(&index) {
+            list.push(index);
+        }
     }
 
     pub(crate) fn record_empty_face(
@@ -346,6 +366,8 @@ pub(crate) fn render(
         wanted.extend(tables.loops().get(loop_attr).map(|record| record.refs[1]));
         wanted.extend(tables.coedges().get(at).map(|coedge| coedge.refs[1]));
     }
+    wanted.extend(diagnostics.unknown_curves.iter().copied());
+    wanted.extend(diagnostics.unknown_surfaces.iter().copied());
     let targets: HashSet<u16> = wanted.into_iter().filter(|index| *index != 0).collect();
     let hits = probe(ctx, streams, &targets)?;
     let at = |index: u16| hits_json(hits.get(&index));
@@ -490,6 +512,42 @@ pub(crate) fn render(
     }
     pair_lines(ctx, tables, &mut lines)?;
     census(ctx, tables, streams, &mut lines)?;
+    // The record type that sits at the index of each untyped carrier: the first header of a
+    // carrier type in the partition stream, else in the deltas stream, counted by type code. The
+    // references that only an unrelated header names count as `other_type`, and the references
+    // that no header names as `no_header`.
+    for (what, list) in [
+        ("curve", &diagnostics.unknown_curves),
+        ("surface", &diagnostics.unknown_surfaces),
+    ] {
+        let mut by_type: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
+        let (mut none, mut other) = (0_usize, 0_usize);
+        for index in list {
+            let Some(found) = hits.get(index) else {
+                none += 1;
+                continue;
+            };
+            let carrier = |hit: &&Hit| CARRIER_TYPES.contains(&hit.node_type);
+            match found
+                .iter()
+                .filter(carrier)
+                .find(|hit| !hit.delta)
+                .or_else(|| found.iter().find(carrier))
+            {
+                Some(hit) => *by_type.entry(hit.node_type).or_insert(0) += 1,
+                None => other += 1,
+            }
+        }
+        let types: Vec<String> = by_type
+            .iter()
+            .map(|(code, count)| format!(",\"type_{code}\":{count}"))
+            .collect();
+        lines.push(format!(
+            "{{\"kind\":\"summary3\",\"what\":\"{what}\",\"refs\":{},\"no_header\":{none},\"other_type\":{other}{}}}",
+            list.len(),
+            types.concat()
+        ));
+    }
     diagnostics.lines = lines;
     Ok(())
 }
@@ -958,6 +1016,37 @@ mod tests {
         assert_eq!(hits[0].null_real_at, Some(6));
         assert_eq!((hits[1].node_type, hits[1].delta), (0x12, true));
         assert!(!found.contains_key(&78));
+    }
+
+    #[test]
+    fn untyped_carriers_are_counted_by_the_record_type_at_their_index() {
+        let arena = cadmpeg_core::decode::DecodeArena::new();
+        let (ctx, _) = DecodeContext::from_root_bytes(
+            &[],
+            &arena,
+            &cadmpeg_core::decode::DecodePolicy::service(),
+        )
+        .expect("context");
+        // A node header of type 0x13 with index 77, and nothing at index 99.
+        let stream = vec![0_u8, 0x13, 0, 77, 0, 0, 0, 7];
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.record_unknown_carrier(true, 77);
+        diagnostics.record_unknown_carrier(true, 77);
+        diagnostics.record_unknown_carrier(true, 99);
+        diagnostics.record_unknown_carrier(false, 77);
+        render(
+            &ctx,
+            &Tables::default(),
+            &[(&stream, false)],
+            &mut diagnostics,
+        )
+        .unwrap();
+        assert!(diagnostics.lines.contains(&String::from(
+            "{\"kind\":\"summary3\",\"what\":\"curve\",\"refs\":2,\"no_header\":1,\"other_type\":1}"
+        )));
+        assert!(diagnostics.lines.contains(&String::from(
+            "{\"kind\":\"summary3\",\"what\":\"surface\",\"refs\":1,\"no_header\":0,\"other_type\":1}"
+        )));
     }
 
     #[test]

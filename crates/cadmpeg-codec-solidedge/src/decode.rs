@@ -719,10 +719,12 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
                 let file = ctx.format_retained(
                     format_args!(
                         "{{\"kind\":\"file\",\"schema\":\"{}\",\"doc_version\":{},\
-                         \"streams\":{}}}",
+                         \"streams\":{},\"bytes_partition\":{},\"bytes_deltas\":{}}}",
                         hosted.schema.value(),
                         doc_version.map_or_else(|| "null".to_owned(), |code| code.to_string()),
-                        streams.len()
+                        streams.len(),
+                        streams.first().map_or(0, |stream| stream.len()),
+                        streams.get(1).map_or(0, |stream| stream.len())
                     ),
                     "retain Solid Edge diagnostic line",
                 )?;

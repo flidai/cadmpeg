@@ -2714,6 +2714,9 @@ fn decode_graph(
                         });
                     }
                     curve = Some(id_curve(curve_attr));
+                    out.stats
+                        .diagnostics
+                        .record_unknown_carrier(true, curve_attr);
                     out.stats.unknown_curve_edges += 1;
                 }
             }
@@ -3358,6 +3361,9 @@ fn decode_graph(
                         geometry: SurfaceGeometry::Solved(geometry),
                     });
                 } else {
+                    out.stats
+                        .diagnostics
+                        .record_unknown_carrier(false, f.surface_attr);
                     out.stats.unknown_surface_faces += 1;
                     annotations.note(
                         ctx,
