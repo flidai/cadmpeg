@@ -215,7 +215,7 @@ Diagnostics. Round 6 on real files left the dropped edges and loops almost uncha
 
 **Need.** We must know which edges stay unresolved on real documents. The counts of the new loss give the answer, and they decide whether another carrier type needs a ring rule.
 
-Round 15. All numbers are totals from the real share, from the checker patch `cad-crosscheck-d29-round14.patch` (the private copy gained the round 15 changes: a converter cache, a trace of all closed readings, a content-hash half bit, the transposed torus, and face traces; the patch file in the scratchpad was regenerated). The checker is the baseline of round 14 and is not committed. "Exact" is within 0.1 percent of the stored volume, "far" more than 25 percent off, "compared" is the number of complete models with a stored volume.
+Round 15. All numbers are totals from the real share, from the checker patch of round 14 plus the round 15 changes (a converter cache, a trace of all closed readings, a content-hash half bit, the transposed torus, and face traces), kept as `cad-crosscheck-d29-round15.patch` in the scratchpad and not committed. The checker is the baseline of round 14 and is not committed. "Exact" is within 0.1 percent of the stored volume, "far" more than 25 percent off, "compared" is the number of complete models with a stored volume.
 
 Holdout of the arc rule. The files are split by a stable hash of the file content (bit 17 of the FNV-1a hash of the bytes), not by anything derived from the name. Real runs, both halves (complete, compared, exact, within 1 percent, within 5 percent, within 25 percent, far):
 
