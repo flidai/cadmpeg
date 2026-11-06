@@ -41,7 +41,7 @@ use super::entity;
 use super::evaluation::{
     nurbs_surface_parameter_segment_chord_bound, nurbs_surface_parameter_within_tolerance, Solved,
 };
-use super::index::{scan_carriers, CarrierIndex, IndexedCurve};
+use super::index::{scan_carriers, scan_carriers_with, CarrierIndex, IndexedCurve};
 use super::offset::OffsetCarrier;
 use super::sweep::{self, SweepKind};
 use super::topology;
@@ -1752,7 +1752,7 @@ pub(crate) fn decode_bodies_in(
         let is_deltas = is_deltas_stream(header);
         let typed_face_offsets =
             selected_typed_face_offsets(ctx, &stream_typed_facts, typed_bridge_attrs.as_ref())?;
-        carriers.merge_missing(ctx, scan_carriers(ctx, body)?)?;
+        carriers.merge_missing(ctx, scan_carriers_with(ctx, body, hosting.rules)?)?;
         let curve_attrs = carriers.curve_attrs(ctx)?;
         let scanned_tables = if hosting.rules {
             topology::scan_hosted_with_curve_attrs_excluding(

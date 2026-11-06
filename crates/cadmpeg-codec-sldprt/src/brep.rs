@@ -250,11 +250,43 @@ fn parse_carrier_at_marker(
     decode_carrier_values(tt, vals, attr, off, end)
 }
 
+/// The partition form with wide pointers: `attr`, the four-byte ordinal, and five references,
+/// each of which takes two cells above `0x7ffe`, so that the marker lies two bytes further for
+/// each wide pointer. Returns the marker position and the attribute, only when a pointer is
+/// wide: the strict reading covers the others.
+fn wide_partition_marker(body: &[u8], hdr: usize) -> Option<(usize, u16)> {
+    let mut at = hdr;
+    let mut wide = 0_usize;
+    let mut attr = 0_u16;
+    for slot in 0..=COMPACT_REF_COUNT {
+        let first = View::u16_be_at(body, at)?;
+        at = at.checked_add(2)?;
+        let value = if first <= 0x7ffe {
+            first
+        } else {
+            let second = View::u16_be_at(body, at)?;
+            at = at.checked_add(2)?;
+            wide += 1;
+            u16::try_from(u32::from(first & 0x7fff) | (u32::from(second) << 15)).ok()?
+        };
+        if slot == 0 {
+            attr = value;
+            at = at.checked_add(4)?;
+        }
+    }
+    (wide > 0).then_some((at, attr))
+}
+
 /// Try to parse a compact analytic carrier whose tag byte pair `00 TT` begins at
 /// `off`. The partition and deltas framings are both considered, and a carrier
 /// is returned only when exactly one framing passes all structural and geometry
 /// invariants.
 pub(crate) fn parse_carrier(body: &[u8], off: usize) -> Option<Carrier> {
+    parse_carrier_with(body, off, false)
+}
+
+/// [`parse_carrier`], with the partition framing that follows wide pointers when `wide` is set.
+pub(crate) fn parse_carrier_with(body: &[u8], off: usize, wide: bool) -> Option<Carrier> {
     if body.get(off) != Some(&0x00) {
         return None;
     }
@@ -266,9 +298,20 @@ pub(crate) fn parse_carrier(body: &[u8], off: usize) -> Option<Carrier> {
     let has_ff = body.get(tag_end) == Some(&0xff);
     let hdr = tag_end.checked_add(usize::from(has_ff))?;
     let attr = View::u16_be_at(body, hdr)?;
-    let mut candidates = analytic_marker_candidates(body, hdr)?
+    let mut candidates: Vec<Carrier> = analytic_marker_candidates(body, hdr)?
         .into_iter()
-        .filter_map(|marker_at| parse_carrier_at_marker(body, off, tt, attr, n, marker_at));
+        .filter_map(|marker_at| parse_carrier_at_marker(body, off, tt, attr, n, marker_at))
+        .collect();
+    if wide {
+        if let Some((marker_at, wide_attr)) = wide_partition_marker(body, hdr) {
+            if matches!(body.get(marker_at), Some(0x2b | 0x2d)) {
+                candidates.extend(parse_carrier_at_marker(
+                    body, off, tt, wide_attr, n, marker_at,
+                ));
+            }
+        }
+    }
+    let mut candidates = candidates.into_iter();
     let carrier = candidates.next()?;
     candidates.next().is_none().then_some(carrier)
 }
@@ -442,7 +485,7 @@ pub(crate) fn patch_nurbs_by_attr(
 #[cfg(test)]
 mod tests {
     use super::index::scan_carriers;
-    use super::{parse_carrier, tag, Carrier};
+    use super::{parse_carrier, parse_carrier_with, tag, Carrier};
     use cadmpeg_ir::geometry::SolvedCurveGeometry;
     use cadmpeg_ir::geometry::SolvedSurfaceGeometry;
     use cadmpeg_ir::math::Point3;
@@ -481,6 +524,50 @@ mod tests {
             bytes.extend_from_slice(&value.to_be_bytes());
         }
         bytes
+    }
+
+    /// A partition record whose attribute and references are pushed as pointers: a value above
+    /// `0x7ffe` takes two cells.
+    fn wide_compact_carrier(tag: u8, attr: u32, refs: [u32; 5], values: &[f64]) -> Vec<u8> {
+        let push = |bytes: &mut Vec<u8>, value: u32| {
+            if value <= 0x7ffe {
+                bytes.extend_from_slice(&u16::try_from(value).unwrap().to_be_bytes());
+            } else {
+                bytes.extend_from_slice(
+                    &(0x8000 | u16::try_from(value & 0x7fff).unwrap()).to_be_bytes(),
+                );
+                bytes.extend_from_slice(&u16::try_from(value >> 15).unwrap().to_be_bytes());
+            }
+        };
+        let mut bytes = vec![0, tag];
+        push(&mut bytes, attr);
+        bytes.extend_from_slice(&[0; 4]);
+        for reference in refs {
+            push(&mut bytes, reference);
+        }
+        bytes.push(0x2b);
+        for value in values {
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn a_hosted_scan_reads_a_compact_carrier_whose_pointers_are_wide() {
+        let values = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.001, 0.0, 1.0, 0.0];
+        let bytes = wide_compact_carrier(tag::CYLINDER, 40_000, [1, 33_000, 2, 3, 40_001], &values);
+        assert!(parse_carrier(&bytes, 0).is_none());
+        let Some(Carrier::Surface(carrier)) = parse_carrier_with(&bytes, 0, true) else {
+            panic!("expected a surface carrier");
+        };
+        assert_eq!(carrier.attr, 40_000);
+        assert_eq!(carrier.end, bytes.len());
+        // Without wide pointers the strict reading is the only one.
+        let narrow = compact_carrier(tag::CYLINDER, 7, &values);
+        assert_eq!(
+            parse_carrier_with(&narrow, 0, true).map(|c| matches!(c, Carrier::Surface(_))),
+            Some(true)
+        );
     }
 
     #[test]

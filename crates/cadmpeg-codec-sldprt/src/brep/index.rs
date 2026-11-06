@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{
-    blend, intersection, offset, parse_carrier, spline, subset, sweep, Carrier, CurveCarrier,
-    SurfaceCarrier,
+    blend, intersection, offset, spline, subset, sweep, Carrier, CurveCarrier, SurfaceCarrier,
 };
 use cadmpeg_core::decode::DecodeContext;
 use cadmpeg_ir::report::loss::LossNote;
@@ -223,6 +222,16 @@ pub(super) fn scan_carriers(
     ctx: &DecodeContext<'_>,
     body: &[u8],
 ) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
+    scan_carriers_with(ctx, body, false)
+}
+
+/// [`scan_carriers`], reading the compact analytic records that carry wide pointers when `wide`
+/// is set.
+pub(super) fn scan_carriers_with(
+    ctx: &DecodeContext<'_>,
+    body: &[u8],
+    wide: bool,
+) -> Result<CarrierIndex, cadmpeg_core::CodecError> {
     ctx.charge_work(
         cadmpeg_core::decode::u64_from_index(body.len()),
         "scan SLDPRT analytic carriers",
@@ -243,7 +252,7 @@ pub(super) fn scan_carriers(
                     "probe SLDPRT analytic carrier",
                 )?;
             }
-            if let Some(c) = parse_carrier(body, i) {
+            if let Some(c) = super::parse_carrier_with(body, i, wide) {
                 out.insert(ctx, c)?;
             }
         }
