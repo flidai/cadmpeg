@@ -3488,7 +3488,9 @@ fn decode_graph(
             });
         }
     }
-    solve_face_orientation(ctx, &mut out)?;
+    if face_senses_are_solved(hosted) {
+        solve_face_orientation(ctx, &mut out)?;
+    }
     synthesize_cylinder_seams(ctx, &mut out, &mut annotations, &source_stream)?;
     synthesize_sphere_seams(ctx, &mut out, &mut annotations, &source_stream)?;
     derive_planar_pcurves(ctx, &mut out, &mut annotations, &source_stream)?;
@@ -7427,6 +7429,16 @@ fn ruled_surface_line_pcurve(
     }))
 }
 
+/// Whether the face senses are replaced by the ones that the coedge senses of each connected shell
+/// imply. That rule is for the `SolidWorks` streams. On a hosted Solid Edge stream it gave every
+/// face of a shell one sense (all faces forward in each of the five open documents tried), while the
+/// senses the face records state agree with the side found from the edges for 98.5 percent of the
+/// planar faces of the models that match their stored volume. The hosted path keeps the record's
+/// own sense.
+fn face_senses_are_solved(hosted: bool) -> bool {
+    !hosted
+}
+
 fn solve_face_orientation(
     ctx: &DecodeContext<'_>,
     out: &mut Brep,
@@ -9472,6 +9484,12 @@ mod tests {
             .expect("orient reversed face pair");
         assert_eq!(brep.faces[0].sense, Sense::Forward);
         assert_eq!(brep.faces[1].sense, Sense::Forward);
+    }
+
+    #[test]
+    fn a_hosted_stream_keeps_the_face_senses_of_its_records() {
+        assert!(super::face_senses_are_solved(false));
+        assert!(!super::face_senses_are_solved(true));
     }
 
     #[test]
