@@ -446,6 +446,9 @@ fn vertex_use_with(buf: &[u8], off: usize, tolerant: bool) -> Option<VertexUse> 
     })
 }
 
+/// Below this magnitude a non-zero coordinate in metres is a misread, not noise.
+const IMPLAUSIBLE_COORDINATE_M: f64 = 1e-30;
+
 /// World point `00 1d`: 38-byte body, no magic, `refs[4]` at body+6, xyz as
 /// three big-endian f64 (metres) at body+14.
 fn parse_point(
@@ -453,6 +456,7 @@ fn parse_point(
     buf: &[u8],
     off: usize,
     prefixed: bool,
+    strict: bool,
 ) -> Result<Option<Point>, CodecError> {
     let Some(p) = body_start(buf, off, 0x1d) else {
         return Ok(None);
@@ -501,6 +505,13 @@ fn parse_point(
         // Reject exponent-poisoned reads from a misaligned candidate: real part
         // coordinates in metres sit well under this cap.
         if !v.is_finite() || v.abs() > 1e4 {
+            return Ok(None);
+        }
+        // A hosted stream also yields candidates whose doubles are poisoned the other way: a
+        // non-zero value below 1e-30 m is not a coordinate (arithmetic noise on a real
+        // coordinate stays above 1e-20 m), and such a candidate would replace the real point
+        // that the partition stream holds for the same attribute.
+        if strict && v != 0.0 && v.abs() < IMPLAUSIBLE_COORDINATE_M {
             return Ok(None);
         }
     }
@@ -1040,7 +1051,7 @@ pub(crate) fn patch_point(buf: &mut [u8], attr: u16, xyz_m: [f64; 3]) -> bool {
 /// Later full records replace earlier records with the same `attr`, matching
 /// partition-base plus deltas-override merge order.
 pub(crate) fn scan(ctx: &DecodeContext<'_>, body: &[u8]) -> Result<Tables, CodecError> {
-    scan_with_point_framing(ctx, body, false, None, None)
+    scan_with_point_framing(ctx, body, false, None, None, false)
 }
 
 /// Scan a partition stream while admitting typed FACE offsets that carry a
@@ -1060,6 +1071,7 @@ pub(super) fn scan_with_curve_attrs_excluding(
         false,
         Some(curve_attrs),
         Some(excluded_bridge_offsets),
+        false,
     )
 }
 
@@ -1076,6 +1088,26 @@ pub(super) fn scan_deltas_with_curve_attrs_excluding(
         true,
         Some(curve_attrs),
         Some(excluded_bridge_offsets),
+        false,
+    )
+}
+
+/// The scan of a stream that a hosting codec supplies, with the checks that the shared
+/// `SolidWorks` decode leaves out (`strict_points`).
+pub(super) fn scan_hosted_with_curve_attrs_excluding(
+    ctx: &DecodeContext<'_>,
+    body: &[u8],
+    is_deltas: bool,
+    curve_attrs: &HashSet<u16>,
+    excluded_bridge_offsets: &HashSet<usize>,
+) -> Result<Tables, CodecError> {
+    scan_with_point_framing(
+        ctx,
+        body,
+        is_deltas,
+        Some(curve_attrs),
+        Some(excluded_bridge_offsets),
+        true,
     )
 }
 
@@ -1085,6 +1117,7 @@ fn scan_with_point_framing(
     prefixed_points: bool,
     curve_attrs: Option<&HashSet<u16>>,
     excluded_bridge_offsets: Option<&HashSet<usize>>,
+    strict_points: bool,
 ) -> Result<Tables, CodecError> {
     let mut t = Tables::default();
     let mut loop_candidates = Vec::new();
@@ -1160,12 +1193,12 @@ fn scan_with_point_framing(
             }
             0x1d => {
                 let record = if prefixed_points {
-                    match parse_point(ctx, body, i, true)? {
+                    match parse_point(ctx, body, i, true, strict_points)? {
                         Some(record) => Some(record),
-                        None => parse_point(ctx, body, i, false)?,
+                        None => parse_point(ctx, body, i, false, strict_points)?,
                     }
                 } else {
-                    parse_point(ctx, body, i, false)?
+                    parse_point(ctx, body, i, false, strict_points)?
                 };
                 if let Some(record) = record {
                     t.insert_point(ctx, record)?;
@@ -1320,8 +1353,8 @@ mod tests {
         let mut policy = DecodePolicy::service();
         policy.limits.max_collection_items = 3;
         let (ctx, _) = DecodeContext::from_root_bytes(&bytes, &arena, &policy).expect("root");
-        let error =
-            parse_point(&ctx, &bytes, 0, false).expect_err("four references exceed three items");
+        let error = parse_point(&ctx, &bytes, 0, false, false)
+            .expect_err("four references exceed three items");
         assert!(matches!(error,
             cadmpeg_core::CodecError::ResourceLimit(limit)
                 if limit.dimension == ResourceDimension::CollectionItems
@@ -1330,11 +1363,44 @@ mod tests {
         let (ctx, _) =
             DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::service()).expect("root");
         assert_eq!(
-            parse_point(&ctx, &bytes, 0, false)
+            parse_point(&ctx, &bytes, 0, false, false)
                 .expect("service parse")
                 .map(|point| point.refs.len()),
             Some(4)
         );
+    }
+
+    #[test]
+    fn a_hosted_scan_rejects_a_point_whose_coordinates_are_misread_toward_zero() {
+        // A candidate in a deltas stream whose doubles carry a poisoned exponent (a value near
+        // 1e-298) must not replace the real point of the partition stream; noise at 1e-17 and an
+        // exact zero stay valid.
+        let build = |xyz: [f64; 3]| {
+            let mut bytes = vec![0, 0x1d];
+            bytes.extend(60_u16.to_be_bytes());
+            bytes.extend(0_u32.to_be_bytes());
+            for reference in [0_u16, 0x0102, 0, 0] {
+                bytes.extend(reference.to_be_bytes());
+            }
+            for value in xyz {
+                bytes.extend(value.to_be_bytes());
+            }
+            bytes
+        };
+        let arena = DecodeArena::new();
+        let (ctx, _) =
+            DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service()).expect("root");
+        let poisoned = build([1.8e-298, 0.5, 0.25]);
+        assert!(parse_point(&ctx, &poisoned, 0, false, true)
+            .expect("strict parse")
+            .is_none());
+        assert!(parse_point(&ctx, &poisoned, 0, false, false)
+            .expect("lenient parse")
+            .is_some());
+        let noise = build([6.0e-17, 0.0, 0.25]);
+        assert!(parse_point(&ctx, &noise, 0, false, true)
+            .expect("strict parse")
+            .is_some());
     }
 
     #[test]
@@ -1353,8 +1419,8 @@ mod tests {
         let mut policy = DecodePolicy::service();
         policy.limits.max_collection_items = 3;
         let (ctx, _) = DecodeContext::from_root_bytes(&bytes, &arena, &policy).expect("root");
-        let error =
-            parse_point(&ctx, &bytes, 0, true).expect_err("four references exceed three items");
+        let error = parse_point(&ctx, &bytes, 0, true, false)
+            .expect_err("four references exceed three items");
         assert!(matches!(error,
             cadmpeg_core::CodecError::ResourceLimit(limit)
                 if limit.dimension == ResourceDimension::CollectionItems
@@ -1726,7 +1792,7 @@ mod tests {
         ));
         assert!(patch_point(&mut bytes, 60, [4.0, 5.0, 6.0]));
 
-        let point = parse_point(&ctx, &bytes, 0, false)
+        let point = parse_point(&ctx, &bytes, 0, false, false)
             .expect("point parse")
             .expect("adjacent world point");
         assert_eq!(point.refs, vec![0, 0x0102, 0, 0]);

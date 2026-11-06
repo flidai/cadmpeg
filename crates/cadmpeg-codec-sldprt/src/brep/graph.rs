@@ -1754,7 +1754,15 @@ pub(crate) fn decode_bodies_in(
             selected_typed_face_offsets(ctx, &stream_typed_facts, typed_bridge_attrs.as_ref())?;
         carriers.merge_missing(ctx, scan_carriers(ctx, body)?)?;
         let curve_attrs = carriers.curve_attrs(ctx)?;
-        let scanned_tables = if is_deltas {
+        let scanned_tables = if hosting.rules {
+            topology::scan_hosted_with_curve_attrs_excluding(
+                ctx,
+                body,
+                is_deltas,
+                &curve_attrs,
+                &typed_face_offsets,
+            )
+        } else if is_deltas {
             topology::scan_deltas_with_curve_attrs_excluding(
                 ctx,
                 body,
