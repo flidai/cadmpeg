@@ -32,6 +32,9 @@ const PROBE_TYPES: std::ops::RangeInclusive<u8> = 0x01..=0x3f;
 const TABLE_TYPES: [u8; 6] = [0x0e, 0x0f, 0x10, 0x11, 0x12, 0x1d];
 /// The node type codes of the compact curve and surface carriers that the probe reaches.
 const CARRIER_TYPES: std::ops::RangeInclusive<u8> = 0x1e..=0x3f;
+/// The intersection, blend, and offset records: the compact frame of `attr`, the ordinal, five
+/// references, and a marker, followed by references and values.
+const FRAMED_TYPES: [u8; 3] = [0x26, 0x38, 0x3c];
 /// Probe cost: one work unit per this many stream bytes.
 const BYTES_PER_WORK_UNIT: usize = 64;
 /// The null real that marks a node without a tolerance of its own.
@@ -574,7 +577,10 @@ pub(crate) fn render(
             std::collections::BTreeMap::new();
         for index in list {
             ctx.charge_work(1, "render Parasolid carrier diagnostics")?;
-            let analytic = |hit: &&Hit| analytic_value_count(hit.node_type).is_some();
+            let analytic = |hit: &&Hit| {
+                analytic_value_count(hit.node_type).is_some()
+                    || FRAMED_TYPES.contains(&hit.node_type)
+            };
             let found = hits.get(index);
             let chosen = found.and_then(|found| {
                 found
@@ -643,15 +649,21 @@ pub(crate) fn render(
 
 /// How a compact analytic record whose header sits at `at` fails the parse: where its marker
 /// is (at the strict position, after the extra cells of wide pointers, or in the deltas
-/// framing) and what its values fail.
+/// framing) and what its values fail. For an intersection, blend, or offset record, only where
+/// its marker is.
 fn carrier_class(buf: &[u8], at: usize, tag: u8) -> String {
-    let Some(count) = analytic_value_count(tag) else {
+    let count = analytic_value_count(tag);
+    if count.is_none() && !FRAMED_TYPES.contains(&tag) {
         return "no_tag".to_owned();
-    };
+    }
     let tag_end = at + 2;
     let hdr = tag_end + usize::from(buf.get(tag_end) == Some(&0xff));
     let is_marker = |position: usize| matches!(buf.get(position), Some(0x2b | 0x2d));
     let values = |marker: usize| -> &'static str {
+        // The intersection, blend, and offset records have no value run to check here.
+        let Some(count) = count else {
+            return "framed";
+        };
         let mut read = [0_f64; 12];
         for (slot, value) in read.iter_mut().take(count).enumerate() {
             let Some(read_value) = View::f64_be_at(buf, marker + 1 + slot * 8) else {
