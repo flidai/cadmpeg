@@ -55,6 +55,7 @@ mod container;
 mod decode;
 mod dialect;
 mod loss;
+mod regions;
 mod transmit;
 
 use cadmpeg_core::decode::{DecodeContext, View};

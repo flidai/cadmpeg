@@ -755,6 +755,15 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             decoded_groups += 1;
         }
         let ranges = withhold_rejected_ranges(ctx, &mut ir)?;
+        let void_regions = crate::regions::drop_void_regions(ctx, &mut ir)?;
+        if !void_regions.is_empty() {
+            let mut builder =
+                cadmpeg_ir::annotations::AnnotationBuilder::resume(std::mem::take(&mut annotations));
+            for id in &void_regions {
+                builder.remove_entity(ctx, id)?;
+            }
+            annotations = builder.build();
+        }
         if ranges.repaired + ranges.edges + ranges.pcurves > 0 {
             let message = ctx.format_retained(
                 format_args!(

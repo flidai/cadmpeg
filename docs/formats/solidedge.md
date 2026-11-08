@@ -89,6 +89,8 @@ A deltas stream without a base state yields no body.
 
 The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves of the merged record set form the neutral B-rep. The streams of the decoded group are also retained as unknown records.
 
+A Parasolid solid body states its infinite outside as a region that has no shell. The decoder removes that region from a body that has a region with a shell. A body with only empty regions keeps them.
+
 ---
 
 ## 4. Classification
