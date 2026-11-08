@@ -755,6 +755,7 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
             decoded_groups += 1;
         }
         let ranges = withhold_rejected_ranges(ctx, &mut ir)?;
+        crate::orientation::reverse_hosted_traversal(ctx, &mut ir)?;
         let void_regions = crate::regions::drop_void_regions(ctx, &mut ir)?;
         if !void_regions.is_empty() {
             let mut builder =

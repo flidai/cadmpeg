@@ -110,25 +110,25 @@
           "carrier": {
             "curve": "sldprt:brep:curve#101"
           },
-          "end": "sldprt:brep:vertex#51",
+          "end": "sldprt:brep:vertex#50",
           "id": "sldprt:brep:edge#40",
-          "start": "sldprt:brep:vertex#50"
+          "start": "sldprt:brep:vertex#51"
         },
         {
           "carrier": {
             "curve": "sldprt:brep:curve#102"
           },
-          "end": "sldprt:brep:vertex#52",
+          "end": "sldprt:brep:vertex#51",
           "id": "sldprt:brep:edge#41",
-          "start": "sldprt:brep:vertex#51"
+          "start": "sldprt:brep:vertex#52"
         },
         {
           "carrier": {
             "curve": "sldprt:brep:curve#103"
           },
-          "end": "sldprt:brep:vertex#50",
+          "end": "sldprt:brep:vertex#52",
           "id": "sldprt:brep:edge#42",
-          "start": "sldprt:brep:vertex#52"
+          "start": "sldprt:brep:vertex#50"
         }
       ],
       "faces": [
@@ -150,9 +150,9 @@
         {
           "boundary": {
             "coedges": [
-              "sldprt:brep:coedge#30",
+              "sldprt:brep:coedge#32",
               "sldprt:brep:coedge#31",
-              "sldprt:brep:coedge#32"
+              "sldprt:brep:coedge#30"
             ],
             "kind": "ring"
           },

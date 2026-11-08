@@ -89,6 +89,8 @@ A deltas stream without a base state yields no body.
 
 The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves of the merged record set form the neutral B-rep. The streams of the decoded group are also retained as unknown records.
 
+The shared decoder reads each hosted loop ring in the order of its link cells, and it takes the vertex-use cell of a coedge as the vertex where the coedge starts. The decoder of Solid Edge reverses this reading (SE-20). Each loop ring runs the other way. An edge that has no stored parameter range swaps its start and end vertices and keeps the senses of its coedges. An edge that keeps a range keeps its ends and flips the senses of its coedges. Then the loops of a planar face run anticlockwise about the face normal that the face record states, and an arc edge runs anticlockwise about its circle from its start vertex to its end vertex.
+
 A Parasolid solid body states its infinite outside as a region that has no shell. The decoder removes that region from a body that has a region with a shell. A body with only empty regions keeps them.
 
 ---

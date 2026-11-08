@@ -55,6 +55,7 @@ mod container;
 mod decode;
 mod dialect;
 mod loss;
+mod orientation;
 mod regions;
 mod transmit;
 

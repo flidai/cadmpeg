@@ -338,3 +338,14 @@ Wide pointers in the intersection, blend, and offset records. The intersection (
 **Known.** `solidedge.md` §3.3 "The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, surfaces, and curves" gives the transfer. Observation: one `.par` file of 1 MB to 16 MB with the schema `SCH_2800143_28002` timed out. A synthetic body of 1.3 MB with 1,500 triangles decodes in about 0.1 s in a release build, so the record scan is not quadratic in the record count. A solver call that finds no answer spends its whole slice (SE-18). The coedge selection of the topology scan looked up the loops of each coedge candidate with a scan over all loops. A stream of several megabytes holds many coedge candidates that share one 16-bit attribute, so that scan was quadratic in the number of loops. The scan now uses an index by attribute. The decode now stops all solver calls after 24,000,000 local units in total, which bounds their time.
 
 **Need.** We must know the input structure that causes the timeout. Without the file, the change is a bound and not a fix. A rerun of the file shows if the bound is enough.
+
+### SE-20. Direction of hosted loops and of unranged arc edges
+
+**Question.** Does every hosted stream state its loop rings and its vertex-use cells in the reverse of the order that the shared decoder reads?
+
+**Known.** `solidedge.md` §3.3 gives the reversal that the decoder of Solid Edge applies. Observations on the 259 public `.par` files and the 2 `.psm` files: before the reversal, the loops of 34 of 34 measurable planar faces of one part ran clockwise about the normal that the face record states, and 32 of the 34 arcs of that part ran the long way round. After the reversal that part has a mesh area of 25,516.6 mm², and Solid Edge saves 25,518.3 mm² in the file (0.007 % apart). Over all files, the loops of planar faces agree with the face record in 4,455 of 4,601 cases after the reversal. The sense of a face on a cylinder, a cone, or a torus is not yet proved: 14 % of the cylinder faces still fail the OCCT face check after the reversal.
+
+**Conflict.** The reversal makes 24 more of the 249 converted files valid and closed, and it makes 5 files that were valid and closed before invalid. In 2 of those 5 files most arcs run more than a half turn without the reversal. A record or a rule that tells the two reading orders apart per file is not found: the edge-use, coedge, and circle records show no byte that differs between the two.
+
+**Need.** We must know where the stream states the direction of an edge against its curve, so that the reversal can follow a stored value and not a convention. A reference model with a known volume per file would also show how many of the files that are valid before the reversal are valid and wrong.
+
