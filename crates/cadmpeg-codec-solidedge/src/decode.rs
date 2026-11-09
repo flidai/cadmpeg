@@ -758,8 +758,9 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
         crate::orientation::reverse_hosted_traversal(ctx, &mut ir)?;
         let void_regions = crate::regions::drop_void_regions(ctx, &mut ir)?;
         if !void_regions.is_empty() {
-            let mut builder =
-                cadmpeg_ir::annotations::AnnotationBuilder::resume(std::mem::take(&mut annotations));
+            let mut builder = cadmpeg_ir::annotations::AnnotationBuilder::resume(std::mem::take(
+                &mut annotations,
+            ));
             for id in &void_regions {
                 builder.remove_entity(ctx, id)?;
             }

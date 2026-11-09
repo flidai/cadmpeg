@@ -33,13 +33,19 @@ pub(crate) fn drop_void_regions(
     let mut dropped = HashSet::new();
     for region in &ir.model.regions {
         if region.shells.is_empty() && with_shell.contains(&region.body) {
-            ctx.insert_hash_set(&mut dropped, region.id.clone(), "track Solid Edge void regions")?;
+            ctx.insert_hash_set(
+                &mut dropped,
+                region.id.clone(),
+                "track Solid Edge void regions",
+            )?;
         }
     }
     if dropped.is_empty() {
         return Ok(Vec::new());
     }
-    ir.model.regions.retain(|region| !dropped.contains(&region.id));
+    ir.model
+        .regions
+        .retain(|region| !dropped.contains(&region.id));
     for body in &mut ir.model.bodies {
         body.regions.retain(|region| !dropped.contains(region));
     }
@@ -69,7 +75,9 @@ mod tests {
         with_decode_context(&[], |ctx| {
             let dropped = drop_void_regions(ctx, &mut ir).expect("admitted");
             assert_eq!(dropped, vec![void_id]);
-            assert!(drop_void_regions(ctx, &mut ir).expect("admitted").is_empty());
+            assert!(drop_void_regions(ctx, &mut ir)
+                .expect("admitted")
+                .is_empty());
         });
         assert_eq!(ir.model.regions, vec![bounded.clone()]);
         assert_eq!(ir.model.bodies[0].regions, vec![bounded.id]);
@@ -80,7 +88,9 @@ mod tests {
         let mut ir = cadmpeg_ir::examples::unit_cube().expect("the example cube builds");
         ir.model.regions[0].shells.clear();
         with_decode_context(&[], |ctx| {
-            assert!(drop_void_regions(ctx, &mut ir).expect("admitted").is_empty());
+            assert!(drop_void_regions(ctx, &mut ir)
+                .expect("admitted")
+                .is_empty());
         });
         assert_eq!(ir.model.regions.len(), 1);
     }

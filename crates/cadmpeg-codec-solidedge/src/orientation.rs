@@ -50,7 +50,11 @@ pub(crate) fn reverse_hosted_traversal(
             continue;
         }
         std::mem::swap(&mut edge.start, &mut edge.end);
-        ctx.insert_hash_set(&mut swapped, edge.id.clone(), "track reversed Solid Edge edges")?;
+        ctx.insert_hash_set(
+            &mut swapped,
+            edge.id.clone(),
+            "track reversed Solid Edge edges",
+        )?;
         outcome.edges += 1;
     }
     for coedge in &mut ir.model.coedges {
@@ -68,7 +72,11 @@ pub(crate) fn reverse_hosted_traversal(
             continue;
         };
         let mut coedges = Vec::new();
-        ctx.reserve_vec(&mut coedges, ring.coedges().len(), "reverse Solid Edge loop ring")?;
+        ctx.reserve_vec(
+            &mut coedges,
+            ring.coedges().len(),
+            "reverse Solid Edge loop ring",
+        )?;
         coedges.extend(ring.coedges().iter().rev().cloned());
         let vertex_uses = ring.vertex_uses().to_vec();
         lp.replace_ring(ctx, coedges, vertex_uses)
