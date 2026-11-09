@@ -6,6 +6,10 @@
 //! or the rest of the tube. The loops and the face sense choose one. A fillet
 //! spans less than half a turn of the tube, so a face that the loops and sense
 //! make longer than half a turn takes the other side: its sense is flipped.
+//!
+//! A face bounded by two circles round the tube (two cross-sections, as on a
+//! pipe elbow) has the same choice round the torus axis: the elbow or the rest
+//! of the ring. An elbow spans at most half a turn round the axis.
 
 use std::collections::HashMap;
 use std::f64::consts::{PI, TAU};
@@ -24,10 +28,12 @@ const COAXIAL: f64 = 1.0e-6;
 struct Ring {
     angle: f64,
     direction: f64,
+    /// A circle round the tube (a meridian) and not round the axis.
+    meridian: bool,
 }
 
 /// Flip the sense of every torus face whose two circle loops select the band
-/// of more than half a turn. Returns the number of faces flipped.
+/// of more than half a turn, round the tube or round the axis. Returns the number of faces flipped.
 pub(crate) fn choose_torus_bands(
     ctx: &DecodeContext<'_>,
     ir: &mut CadIr,
@@ -83,8 +89,12 @@ pub(crate) fn choose_torus_bands(
                 rings.clear();
                 break;
             };
-            let c = circle.center().get();
-            let d = [c.x - center.x, c.y - center.y, c.z - center.z];
+            let circle_center = circle.center().get();
+            let d = [
+                circle_center.x - center.x,
+                circle_center.y - center.y,
+                circle_center.z - center.z,
+            ];
             let height = d[0] * axis.x + d[1] * axis.y + d[2] * axis.z;
             let off_axis = [
                 d[0] - height * axis.x,
@@ -94,15 +104,52 @@ pub(crate) fn choose_torus_bands(
             let off = (off_axis[0].powi(2) + off_axis[1].powi(2) + off_axis[2].powi(2)).sqrt();
             let circle_axis = circle.frame().axis().as_raw();
             let along = circle_axis.x * axis.x + circle_axis.y * axis.y + circle_axis.z * axis.z;
-            if off > COAXIAL * major || along.abs() < 1.0 - COAXIAL {
-                rings.clear();
-                break;
+            let forward = if matches!(coedge.sense, Sense::Forward) {
+                1.0
+            } else {
+                -1.0
+            };
+            if off <= COAXIAL * major && along.abs() >= 1.0 - COAXIAL {
+                rings.push(Ring {
+                    angle: height.atan2(circle.radius().get() - major),
+                    direction: along.signum() * forward,
+                    meridian: false,
+                });
+                continue;
             }
-            let forward = matches!(coedge.sense, Sense::Forward);
-            rings.push(Ring {
-                angle: height.atan2(circle.radius().get() - major),
-                direction: along.signum() * if forward { 1.0 } else { -1.0 },
-            });
+            if along.abs() <= COAXIAL
+                && height.abs() <= COAXIAL * major
+                && (off - major).abs() <= COAXIAL * major
+                && (circle.radius().get() - minor).abs() <= COAXIAL * major
+            {
+                let reference = *torus.frame().reference().as_raw();
+                let side = [
+                    axis.y * reference.z - axis.z * reference.y,
+                    axis.z * reference.x - axis.x * reference.z,
+                    axis.x * reference.y - axis.y * reference.x,
+                ];
+                let along_reference = off_axis[0] * reference.x
+                    + off_axis[1] * reference.y
+                    + off_axis[2] * reference.z;
+                let along_side =
+                    off_axis[0] * side[0] + off_axis[1] * side[1] + off_axis[2] * side[2];
+                let u = along_side.atan2(along_reference);
+                let e_u = [
+                    -u.sin() * reference.x + u.cos() * side[0],
+                    -u.sin() * reference.y + u.cos() * side[1],
+                    -u.sin() * reference.z + u.cos() * side[2],
+                ];
+                let turn = circle_axis.x * e_u[0] + circle_axis.y * e_u[1] + circle_axis.z * e_u[2];
+                // The coedge runs towards increasing v when it turns about -e_u.
+                rings.push(Ring {
+                    angle: u,
+                    direction: -turn.signum() * forward,
+                    meridian: true,
+                });
+                continue;
+            }
+            rings.clear();
+            break;
         }
         let [first, second] = rings.as_slice() else {
             continue;
@@ -114,9 +161,16 @@ pub(crate) fn choose_torus_bands(
         } else {
             -1.0
         };
+        if first.meridian != second.meridian {
+            continue;
+        }
+        // Round the tube a loop running towards increasing u has the face on its
+        // increasing-v side; round the axis a loop running towards increasing v has the
+        // face on its decreasing-u side.
+        let side = if first.meridian { -1.0 } else { 1.0 };
         let (from, to) = match (
-            first.direction * sense > 0.0,
-            second.direction * sense > 0.0,
+            first.direction * sense * side > 0.0,
+            second.direction * sense * side > 0.0,
         ) {
             (true, false) => (first.angle, second.angle),
             (false, true) => (second.angle, first.angle),
@@ -258,6 +312,61 @@ mod tests {
             tolerance: None,
         });
         ir
+    }
+
+    /// The same torus with one face bounded by the tube cross-sections at a
+    /// quarter turn apart round the axis (u = 0 and u = a quarter turn). The two
+    /// circles are stored with axes along the direction of increasing u.
+    fn elbow(first_forward: bool, second_forward: bool, sense: Sense) -> CadIr {
+        let mut ir = fillet(true, false, sense);
+        let m = &mut ir.model;
+        let rings = [
+            (
+                Point3::new(10.0, 0.0, 0.0),
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                first_forward,
+            ),
+            (
+                Point3::new(0.0, 10.0, 0.0),
+                Vector3::new(-1.0, 0.0, 0.0),
+                Vector3::new(0.0, 1.0, 0.0),
+                second_forward,
+            ),
+        ];
+        for (index, (center, axis, reference, forward)) in rings.into_iter().enumerate() {
+            m.curves[index].geometry = CurveGeometry::Solved(SolvedCurveGeometry::Circle(
+                CircleCurve::try_new(center, axis, reference, 2.0).unwrap(),
+            ));
+            let on = Point3::new(
+                center.x + 2.0 * reference.x,
+                center.y + 2.0 * reference.y,
+                0.0,
+            );
+            m.points[index] = Point::new(
+                m.points[index].id.clone(),
+                cadmpeg_ir::features::FinitePoint3::new(on).unwrap(),
+                None,
+            );
+            m.coedges[index].sense = if forward {
+                Sense::Forward
+            } else {
+                Sense::Reversed
+            };
+        }
+        ir
+    }
+
+    #[test]
+    fn a_quarter_elbow_keeps_its_sense_and_three_quarters_flip() {
+        // Seen from the outward tube normal, a cross-section that runs towards
+        // increasing v has the face on its decreasing-u side.
+        let mut ir = elbow(true, false, Sense::Forward);
+        assert_eq!(run(&mut ir), 0);
+        let mut ir = elbow(false, true, Sense::Forward);
+        assert_eq!(run(&mut ir), 1);
+        assert_eq!(ir.model.faces[0].sense, Sense::Reversed);
+        assert_eq!(run(&mut ir), 0);
     }
 
     fn run(ir: &mut CadIr) -> usize {
