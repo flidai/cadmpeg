@@ -355,3 +355,13 @@ Surfaces carry the same character: 1,151 of 2,828 cylinders and 161 of 5,741 pla
 
 **Need.** We must know where the stream states the direction of an edge against its curve, so that the reversal can follow a stored value and not a convention. A reference model with a known volume per file would also show how many of the files that are valid before the reversal are valid and wrong.
 
+### SE-21. Band of a torus face between two full circles
+
+**Question.** Which record states the band of a torus face whose boundary is two full circles round the torus axis?
+
+**Known.** `solidedge.md` §3.3 gives the rule that the decoder applies: the band that the loops and the face sense select must span at most half a turn of the tube, else the face sense flips. On a seeded sample of 600 of the coordinator's documents with a saved volume, the rule raises the models that agree with the saved volume and area within 1 percent from 150 to 246 (36 from an area mismatch, 51 from a volume mismatch, 9 from not valid) and loses none. Before the rule, 39 of the 40 area mismatches had a volume within 1 percent and an area 2 to 20 percent too large: the band was the rest of the tube, which adds area and only part of the tube volume. Over the 261 public documents the rule changes 13 valid models; each loses area.
+
+**Need.** The rule is geometric. A band of more than half a turn (a torus face that wraps most of the tube) would be cut to the wrong side. The face record, the coedge senses of the two circles, and the surface sense do not tell the bands apart on their own (SE-20: the surface sense does not combine with the face sense).
+
+**Conflict.** One sampled document that agreed with its saved volume at the pinned converter (a turned part with a torus between two circles) is 1.2 percent off after SE-20 and stays off with this rule.
+

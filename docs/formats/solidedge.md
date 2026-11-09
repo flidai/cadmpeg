@@ -93,6 +93,8 @@ The shared decoder reads each hosted loop ring in the order of its link cells, a
 
 A hosted curve or surface record has a sense character after its five references: `+` (`0x2b`) or `-` (`0x2d`). The shared decoder uses the byte to find the record and does not keep it. On a hosted stream the decoder of Solid Edge keeps it for curves: a circle or an ellipse whose record has `-` runs against its natural parameterisation, and an edge without a stored parameter range runs along the curve's direction from its start vertex to its end vertex. The decoder writes such a conic with its axis negated and its reference direction kept, so every point of the curve stays and the edge takes the arc that the record means (SE-20).
 
+A face on a torus whose boundary is two full circles round the torus axis is one of two bands of the tube: the arc from one circle to the other, or the rest of the tube. The loop directions and the face sense select one: the face lies to the left of each loop seen from its normal, and the natural torus normal points out of the tube. The decoder of Solid Edge flips the sense of such a face when the selected band spans more than half a turn of the tube (SE-21). A fillet spans less than half a turn.
+
 A Parasolid solid body states its infinite outside as a region that has no shell. The decoder removes that region from a body that has a region with a shell. A body with only empty regions keeps them.
 
 ---

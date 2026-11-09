@@ -756,6 +756,17 @@ pub(crate) fn decode(ctx: &DecodeContext<'_>, root: View<'_>) -> Result<Decoded,
         }
         let ranges = withhold_rejected_ranges(ctx, &mut ir)?;
         crate::orientation::reverse_hosted_traversal(ctx, &mut ir)?;
+        let torus_bands = crate::bands::choose_torus_bands(ctx, &mut ir)?;
+        if torus_bands > 0 {
+            let note = ctx.format_retained(
+                format_args!(
+                    "{torus_bands} torus face(s) between two full circles took the band of less \
+                     than half a turn of the tube; their face sense was flipped"
+                ),
+                "retain Solid Edge torus band note",
+            )?;
+            ctx.push_vec(&mut notes, note, "collect Solid Edge notes")?;
+        }
         let void_regions = crate::regions::drop_void_regions(ctx, &mut ir)?;
         if !void_regions.is_empty() {
             let mut builder = cadmpeg_ir::annotations::AnnotationBuilder::resume(std::mem::take(

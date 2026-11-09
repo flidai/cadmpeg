@@ -51,6 +51,7 @@
 //! of the transferred B-rep keep the `sldprt:brep` namespaces of that decoder,
 //! and its losses keep the `sldprt` loss namespace.
 
+mod bands;
 mod container;
 mod decode;
 mod dialect;
