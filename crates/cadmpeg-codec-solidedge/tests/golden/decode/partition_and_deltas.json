@@ -20,11 +20,6 @@
           "edge": "sldprt:brep:edge#40",
           "id": "sldprt:brep:coedge#30",
           "owner_loop": "sldprt:brep:loop#20",
-          "pcurves": [
-            {
-              "pcurve": "sldprt:brep:pcurve#30"
-            }
-          ],
           "radial_next": "sldprt:brep:coedge#30",
           "sense": "forward"
         },
@@ -32,11 +27,6 @@
           "edge": "sldprt:brep:edge#41",
           "id": "sldprt:brep:coedge#31",
           "owner_loop": "sldprt:brep:loop#20",
-          "pcurves": [
-            {
-              "pcurve": "sldprt:brep:pcurve#31"
-            }
-          ],
           "radial_next": "sldprt:brep:coedge#31",
           "sense": "forward"
         },
@@ -44,11 +34,6 @@
           "edge": "sldprt:brep:edge#42",
           "id": "sldprt:brep:coedge#32",
           "owner_loop": "sldprt:brep:loop#20",
-          "pcurves": [
-            {
-              "pcurve": "sldprt:brep:pcurve#32"
-            }
-          ],
           "radial_next": "sldprt:brep:coedge#32",
           "sense": "forward"
         }
@@ -162,62 +147,7 @@
       ],
       "occurrences": [],
       "parameters": [],
-      "pcurves": [
-        {
-          "geometry": {
-            "direction": {
-              "u": 1.0,
-              "v": 0.0
-            },
-            "kind": "line",
-            "origin": {
-              "u": 0.0,
-              "v": 0.0
-            }
-          },
-          "id": "sldprt:brep:pcurve#30",
-          "metadata": {
-            "form": {},
-            "source": "general"
-          }
-        },
-        {
-          "geometry": {
-            "direction": {
-              "u": -0.7071067811865476,
-              "v": 0.7071067811865476
-            },
-            "kind": "line",
-            "origin": {
-              "u": 100.0,
-              "v": 0.0
-            }
-          },
-          "id": "sldprt:brep:pcurve#31",
-          "metadata": {
-            "form": {},
-            "source": "general"
-          }
-        },
-        {
-          "geometry": {
-            "direction": {
-              "u": 0.0,
-              "v": -1.0
-            },
-            "kind": "line",
-            "origin": {
-              "u": 0.0,
-              "v": 100.0
-            }
-          },
-          "id": "sldprt:brep:pcurve#32",
-          "metadata": {
-            "form": {},
-            "source": "general"
-          }
-        }
-      ],
+      "pcurves": [],
       "pmi": [],
       "points": [
         {
@@ -440,7 +370,7 @@
     "notes": [
       "PARASOLID/STREAM0.P_B: partition stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (partition) created by test\", binary schema SCH_3201255_32001",
       "PARASOLID/STREAM0.D_B: deltas stream, text header schema SCH_3201255_32001, description \"TRANSMIT FILE (deltas) created by test\", binary schema SCH_3201255_32001",
-      "body group STREAM0: 24 entities decoded"
+      "body group STREAM0: 21 entities decoded"
     ],
     "transfer": {
       "geometry_transferred": true,
@@ -450,18 +380,6 @@
   "source_fidelity": {
     "annotations": {
       "exactness": {
-        "sldprt:brep:pcurve#30": {
-          "entity": "derived",
-          "scope": "entity"
-        },
-        "sldprt:brep:pcurve#31": {
-          "entity": "derived",
-          "scope": "entity"
-        },
-        "sldprt:brep:pcurve#32": {
-          "entity": "derived",
-          "scope": "entity"
-        },
         "sldprt:brep:surf#10": {
           "fields": {
             "geometry.u_axis": "derived"
@@ -529,21 +447,6 @@
           "offset": 331,
           "stream": "solidedge:parasolid",
           "tag": "00_0f"
-        },
-        "sldprt:brep:pcurve#30": {
-          "offset": 0,
-          "stream": "solidedge:parasolid",
-          "tag": "derived_planar_pcurve"
-        },
-        "sldprt:brep:pcurve#31": {
-          "offset": 0,
-          "stream": "solidedge:parasolid",
-          "tag": "derived_planar_pcurve"
-        },
-        "sldprt:brep:pcurve#32": {
-          "offset": 0,
-          "stream": "solidedge:parasolid",
-          "tag": "derived_planar_pcurve"
         },
         "sldprt:brep:point#60": {
           "offset": 584,

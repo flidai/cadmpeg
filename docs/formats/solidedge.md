@@ -95,6 +95,8 @@ A hosted curve or surface record has a sense character after its five references
 
 A face on a torus whose boundary is two full circles round the torus axis is one of two bands of the tube: the arc from one circle to the other, or the rest of the tube. The loop directions and the face sense select one: the face lies to the left of each loop seen from its normal, and the natural torus normal points out of the tube. The decoder of Solid Edge flips the sense of such a face when the selected band spans more than half a turn of the tube (SE-21). A fillet spans less than half a turn.
 
+On a hosted stream the decoder derives no parameter-space curves from the 3D edges. The derivation runs before the reversals above and reads each edge on its own, so a face across the seam of a periodic surface gets values on both sides of the seam. A reader of the STEP output derives the curves from the surfaces.
+
 A Parasolid solid body states its infinite outside as a region that has no shell. The decoder removes that region from a body that has a region with a shell. A body with only empty regions keeps them.
 
 ---
