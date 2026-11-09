@@ -41,6 +41,7 @@ fn a_ring_edge_on_a_circle_starts_at_the_start_of_its_range() {
     ));
     let ctx = cadmpeg_test_support::service_decode_context();
     let carrier = |range| CurveCarrier {
+        sense_reversed: false,
         attr: 1,
         offset: 0,
         end: 0,

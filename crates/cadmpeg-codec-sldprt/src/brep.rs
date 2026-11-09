@@ -185,6 +185,9 @@ pub(crate) struct CurveCarrier {
     pub(crate) end: usize,
     pub(crate) geometry: CurveGeometry,
     parameter_range: Option<cadmpeg_ir::units::FiniteVector<2>>,
+    /// The record's sense character is `-`: the curve runs against its natural
+    /// parameterisation.
+    pub(crate) sense_reversed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -247,7 +250,8 @@ fn parse_carrier_at_marker(
         return None;
     }
 
-    decode_carrier_values(tt, vals, attr, off, end)
+    let reversed = body.get(marker_at) == Some(&0x2d);
+    decode_carrier_values(tt, vals, attr, off, end, reversed)
 }
 
 /// Where the marker of a partition record with wide pointers lies, and the attribute.
@@ -355,9 +359,11 @@ fn decode_carrier_values(
     attr: u16,
     offset: usize,
     end: usize,
+    sense_reversed: bool,
 ) -> Option<Carrier> {
     let curve = |geometry| {
         Carrier::Curve(CurveCarrier {
+            sense_reversed,
             attr,
             offset,
             end,
@@ -750,6 +756,19 @@ mod tests {
         assert!((radius - 1.5).abs() < 1.0e-12);
         assert_eq!(ratio, 1.0);
         assert!((half_angle - std::f64::consts::FRAC_PI_4).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn the_sense_character_of_a_compact_curve_record_is_kept() {
+        let circle = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.002];
+        for (sense, reversed) in [(b'+', false), (b'-', true)] {
+            let mut bytes = compact_carrier(tag::CIRCLE, 8, &circle);
+            bytes[18] = sense;
+            let Some(Carrier::Curve(carrier)) = parse_carrier(&bytes, 0) else {
+                panic!("expected curve carrier");
+            };
+            assert_eq!(carrier.sense_reversed, reversed);
+        }
     }
 
     #[test]

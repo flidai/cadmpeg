@@ -91,6 +91,8 @@ The bodies, regions, shells, faces, loops, coedges, edges, vertices, points, sur
 
 The shared decoder reads each hosted loop ring in the order of its link cells, and it takes the vertex-use cell of a coedge as the vertex where the coedge starts. The decoder of Solid Edge reverses this reading (SE-20). Each loop ring runs the other way. An edge that has no stored parameter range swaps its start and end vertices and keeps the senses of its coedges. An edge that keeps a range keeps its ends and flips the senses of its coedges. Then the loops of a planar face run anticlockwise about the face normal that the face record states, and an arc edge runs anticlockwise about its circle from its start vertex to its end vertex.
 
+A hosted curve or surface record has a sense character after its five references: `+` (`0x2b`) or `-` (`0x2d`). The shared decoder uses the byte to find the record and does not keep it. On a hosted stream the decoder of Solid Edge keeps it for curves: a circle or an ellipse whose record has `-` runs against its natural parameterisation, and an edge without a stored parameter range runs along the curve's direction from its start vertex to its end vertex. The decoder writes such a conic with its axis negated and its reference direction kept, so every point of the curve stays and the edge takes the arc that the record means (SE-20).
+
 A Parasolid solid body states its infinite outside as a region that has no shell. The decoder removes that region from a body that has a region with a shell. A body with only empty regions keeps them.
 
 ---

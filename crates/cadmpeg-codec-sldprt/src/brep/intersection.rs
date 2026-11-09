@@ -744,6 +744,7 @@ pub(super) fn scan_intersection_carriers(
         ctx.admit_hash_map_entry(&mut out, &attr, "collect Parasolid intersection carriers")?;
         out.entry(attr).or_insert(IntersectionCarrier {
             carrier: CurveCarrier {
+                sense_reversed: false,
                 attr,
                 offset,
                 end,

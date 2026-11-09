@@ -2686,6 +2686,9 @@ fn decode_graph(
                         "track emitted Parasolid curves",
                     )? {
                         emit_curve(ctx, &mut out, carrier)?;
+                        if hosted && carrier.sense_reversed && carrier.parameter_range.is_none() {
+                            reverse_last_conic(&mut out);
+                        }
                         if matches!(indexed, IndexedCurve::Derived(_)) {
                             let offset = carrier.offset;
                             annotations.note(
@@ -8362,6 +8365,57 @@ fn synthesize_sphere_seams(
     Ok(())
 }
 
+/// Emit the most recently pushed curve the other way round when it is a
+/// circle or an ellipse.
+///
+/// A hosted geometry record states its sense with the character after its
+/// references: `+` when the curve runs with its natural parameterisation and
+/// `-` when it runs against it. An edge without a stored parameter range runs
+/// from its start vertex to its end vertex in the curve's direction, so a `-`
+/// conic is emitted reversed and the edge takes the arc that the record means
+/// (SE-20). A line needs no reversal: its vertices bound it.
+fn reverse_last_conic(out: &mut Brep) {
+    if let Some(last) = out.curves.last_mut() {
+        if let Some(reversed) = reversed_conic(&last.geometry) {
+            last.geometry = reversed;
+        }
+    }
+}
+
+/// The same circle or ellipse traversed the other way: the axis is negated and
+/// the reference direction kept, so every point of the curve stays and the
+/// parameter runs clockwise about the old axis.
+fn reversed_conic(geometry: &CurveGeometry) -> Option<CurveGeometry> {
+    match geometry {
+        CurveGeometry::Solved(SolvedCurveGeometry::Circle(circle)) => {
+            let axis = *circle.frame().axis().as_raw();
+            let reference = *circle.frame().reference().as_raw();
+            cadmpeg_ir::geometry::analytic::CircleCurve::try_new(
+                circle.center().get(),
+                cadmpeg_ir::math::Vector3::new(-axis.x, -axis.y, -axis.z),
+                reference,
+                circle.radius().get(),
+            )
+            .ok()
+            .map(|c| CurveGeometry::Solved(SolvedCurveGeometry::Circle(c)))
+        }
+        CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(ellipse)) => {
+            let axis = *ellipse.frame().axis().as_raw();
+            let reference = *ellipse.frame().reference().as_raw();
+            cadmpeg_ir::geometry::analytic::EllipseCurve::try_new(
+                ellipse.center().get(),
+                cadmpeg_ir::math::Vector3::new(-axis.x, -axis.y, -axis.z),
+                reference,
+                ellipse.major_radius().get(),
+                ellipse.minor_radius().get(),
+            )
+            .ok()
+            .map(|c| CurveGeometry::Solved(SolvedCurveGeometry::Ellipse(c)))
+        }
+        _ => None,
+    }
+}
+
 fn emit_curve(
     ctx: &DecodeContext<'_>,
     out: &mut Brep,
@@ -8398,6 +8452,7 @@ mod tests {
             .unwrap(),
         ));
         let carrier = CurveCarrier {
+            sense_reversed: false,
             attr: 1,
             offset: 0,
             end: 0,
@@ -8408,6 +8463,7 @@ mod tests {
         let seam = super::closed_seam_point(&ctx, &carrier).unwrap().unwrap();
         assert!((seam.x - 8.0).abs() < 1e-9 && (seam.y + 2.0).abs() < 1e-9);
         let open = CurveCarrier {
+            sense_reversed: false,
             parameter_range: cadmpeg_ir::units::FiniteVector::new([0.0, 1.0]),
             ..carrier
         };
@@ -8664,8 +8720,61 @@ mod tests {
     }
 
     #[test]
+    fn a_reversed_conic_keeps_its_points_and_runs_the_other_way() {
+        use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+        use cadmpeg_ir::math::{Point3, Vector3};
+        let circle = CurveGeometry::Solved(SolvedCurveGeometry::Circle(
+            cadmpeg_ir::geometry::analytic::CircleCurve::try_new(
+                Point3::new(1.0, 2.0, 3.0),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                4.0,
+            )
+            .unwrap(),
+        ));
+        let Some(CurveGeometry::Solved(SolvedCurveGeometry::Circle(reversed))) =
+            super::reversed_conic(&circle)
+        else {
+            panic!("a circle reverses");
+        };
+        assert_eq!(reversed.center().get(), Point3::new(1.0, 2.0, 3.0));
+        assert_eq!(reversed.radius().get(), 4.0);
+        assert_eq!(
+            *reversed.frame().axis().as_raw(),
+            Vector3::new(0.0, 0.0, -1.0)
+        );
+        assert_eq!(
+            *reversed.frame().reference().as_raw(),
+            Vector3::new(1.0, 0.0, 0.0)
+        );
+        // The point a quarter turn on is now at -y: the parameter runs clockwise about +z.
+        let quarter = |c: &cadmpeg_ir::geometry::analytic::CircleCurve| {
+            let y = c
+                .frame()
+                .axis()
+                .as_raw()
+                .cross(*c.frame().reference().as_raw());
+            Point3::new(
+                c.center().get().x + c.radius().get() * y.x,
+                c.center().get().y + c.radius().get() * y.y,
+                c.center().get().z + c.radius().get() * y.z,
+            )
+        };
+        assert_eq!(quarter(&reversed), Point3::new(1.0, -2.0, 3.0));
+        let line = CurveGeometry::Solved(SolvedCurveGeometry::Line(
+            cadmpeg_ir::geometry::analytic::LineCurve::try_new(
+                Point3::new(0.0, 0.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+            )
+            .unwrap(),
+        ));
+        assert!(super::reversed_conic(&line).is_none());
+    }
+
+    #[test]
     fn line_edge_parameters_convert_from_metres_to_millimetres() {
         let carrier = crate::brep::CurveCarrier {
+            sense_reversed: false,
             attr: 1,
             offset: 0,
             end: 0,
