@@ -302,6 +302,7 @@ fn assembly_occurrence_native_record_refuses_before_id_creation() {
             owner_reference: 0,
             node_index: 0,
             state: [0; 2],
+            extended_state: None,
             ordinal_key: 0,
             related_references: Vec::new(),
             child_reference: 0,
@@ -354,6 +355,7 @@ fn assembly_placement_native_record_refuses_id_and_digest_before_creation() {
         placements: vec![AssemblyPlacement {
             segment_token: "segment".into(),
             record_ordinal: 1,
+            leading_value: 0,
             header_id: 0,
             owner_reference: 0,
             attribute_reference: 0,
@@ -932,6 +934,7 @@ fn ufrx_model_state_refuses_id_and_parameter_limits_before_creation() {
         state: [0; 2],
         prefix_count: 0,
         parameters: Vec::new(),
+        table_entry_count: None,
         suffix: source,
     };
     let id_len = "inventor:ufrx:model-state#0".len();
@@ -1045,11 +1048,13 @@ fn ufrx_model_state_conversion_issue_refuses_before_failure_text_creation() {
         state: [0; 2],
         prefix_count: 0,
         parameters: Vec::new(),
+        table_entry_count: None,
         suffix: source,
     };
     let mut policy = DecodePolicy::service();
     policy.limits.max_retained_bytes =
-        u64::try_from("suffix_len must be 77".len() - 1).expect("detail length fits");
+        u64::try_from("suffix_len does not frame the model-state suffix".len() - 1)
+            .expect("detail length fits");
     let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).expect("context");
     let mut issues = Vec::new();
     assert!(matches!(
@@ -1230,11 +1235,12 @@ fn ufrx_occurrence_refuses_id_limit_before_creation() {
 fn ufrx_representation_refuses_retained_limit_before_creation() {
     let arena = DecodeArena::new();
     let representation = UfrxRepresentationState {
-        prefix: 0,
-        active_representation: None,
+        active_lod_state: 0,
+        representations: Vec::new(),
         secondary_active_lod_state: [0; 2],
         active_model_state: "Primary".into(),
         active_model_state_state: [0; 2],
+        model_state_extension: None,
     };
     let mut policy = DecodePolicy::service();
     policy.limits.max_retained_bytes =
@@ -1612,7 +1618,7 @@ fn nonfinite_assembly_placement_transform_is_rejected_at_parse() {
 fn rejected_placement_digest_records_its_source_and_keeps_later_placements() {
     let wire = serde_json::json!({
         "id": "inventor:assembly:placement#segment-1", "segment_token": "segment", "record_ordinal": 1,
-        "header_id": 0, "owner_reference": 0, "attribute_reference": 0, "state": 0,
+        "leading_value": 0, "header_id": 0, "owner_reference": 0, "attribute_reference": 0, "state": 0,
         "transform_prefix": false, "transform_encoding": [0, 0],
         "transform": [[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],
         "branch": 0, "graphics_state": 0, "occurrence_id": 1, "graphics_index": 0,
@@ -1644,7 +1650,7 @@ fn rejected_placement_digest_records_its_source_and_keeps_later_placements() {
 fn placement_conversion_issue_refuses_before_failure_text_creation() {
     let wire: AssemblyPlacementRecordWire = serde_json::from_value(serde_json::json!({
         "id": "inventor:assembly:placement#segment-1", "segment_token": "segment", "record_ordinal": 1,
-        "header_id": 0, "owner_reference": 0, "attribute_reference": 0, "state": 0,
+        "leading_value": 0, "header_id": 0, "owner_reference": 0, "attribute_reference": 0, "state": 0,
         "transform_prefix": false, "transform_encoding": [0, 0],
         "transform": [[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],
         "branch": 0, "graphics_state": 0, "occurrence_id": 1, "graphics_index": 0,
@@ -1670,7 +1676,7 @@ fn placement_conversion_issue_refuses_before_failure_text_creation() {
 fn uppercase_placement_digest_refuses_before_failure_text_creation() {
     let wire: AssemblyPlacementRecordWire = serde_json::from_value(serde_json::json!({
         "id": "inventor:assembly:placement#segment-1", "segment_token": "segment", "record_ordinal": 1,
-        "header_id": 0, "owner_reference": 0, "attribute_reference": 0, "state": 0,
+        "leading_value": 0, "header_id": 0, "owner_reference": 0, "attribute_reference": 0, "state": 0,
         "transform_prefix": false, "transform_encoding": [0, 0],
         "transform": [[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],
         "branch": 0, "graphics_state": 0, "occurrence_id": 1, "graphics_index": 0,
@@ -1729,11 +1735,12 @@ fn decode_ufrx(edit: impl FnOnce(&mut UfrxDocument<'_>)) -> Decoded {
         original_file_name: "part.ipt".into(),
         caption: "part".into(),
         representation: Some(UfrxRepresentationState {
-            prefix: 0,
-            active_representation: None,
+            active_lod_state: 0,
+            representations: Vec::new(),
             secondary_active_lod_state: [0; 2],
             active_model_state: "Primary".into(),
             active_model_state_state: [0; 2],
+            model_state_extension: None,
         }),
         model_states: vec![UfrxModelState {
             prefix: 0,
@@ -1741,6 +1748,7 @@ fn decode_ufrx(edit: impl FnOnce(&mut UfrxDocument<'_>)) -> Decoded {
             state: [0; 2],
             prefix_count: 0,
             parameters: vec![],
+            table_entry_count: None,
             suffix: source,
         }],
         references: vec![InventorExternalReference {

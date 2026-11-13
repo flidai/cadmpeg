@@ -104,6 +104,38 @@ The schema-15 representation/model-state branch and its occurrence table are fra
 
 **Note.** `parse_occurrence_export` chooses export branches from the first two u32 values and numeric thresholds (`count`, `next`, and `0xffff`) rather than a typed discriminator. A valid single-entry or future export form in the same numeric range can be consumed as the empty or alternate form.
 
+### AS-04. Occurrence header without property sections
+
+**Question.** What grammar follows an extended occurrence header whose u32 sequence after the marker is 0, 0, 0 instead of 0, 1, 0?
+
+**Known.** These occurrences do not continue with the two property sections. The bytes that follow are not aligned to the property-section grammar. The UFRxDoc record that contains such an occurrence is malformed, so the document transfers no occurrence placements.
+
+**Need.** We must frame this occurrence form to join its document's occurrences to their placements.
+
+### AS-05. Occurrence marker and placement leading value semantics
+
+**Question.** What do occurrence marker bit `0x4000` (marker `0x6080`) and the `AmGraphics` placement leading u32 mean?
+
+**Known.** Both values are retained. Neither changes the record frame. The placement leading value is zero for most placements and takes small positive values for others.
+
+**Need.** If either value makes the stored transform relative to a frame other than the assembly root, the neutral occurrence transform must compose that frame.
+
+### AS-06. Model-state table semantics
+
+**Question.** What do the model-state table entry values, row identifiers, cell index pairs, and cell values mean, and which cell form do the tables that the cell grammar does not frame use?
+
+**Known.** The table is framed and retained as part of the model-state suffix span. Some tables contain cells that the index-pair grammar does not frame; their UFRxDoc records are malformed.
+
+**Need.** Model-state semantic transfer and the remaining table form require the field roles.
+
+### AS-07. UFRxDoc LOD table with more than one entry
+
+**Question.** What is the entry grammar of a UFRxDoc LOD table whose count is greater than one?
+
+**Known.** A one-entry table contains a u16 kind, a u16 state, a counted UTF-16LE name, and two state bytes. When the count is greater than one, the second entry does not obey this grammar and the UFRxDoc record is malformed.
+
+**Need.** We must frame the multi-entry table to reach the occurrence table of these documents.
+
 ### AS-02. Transform units and exceptional branches
 
 **Question.** What semantics apply to non-active placement branches, scale, mirrored state, and singular matrices?
@@ -185,6 +217,14 @@ The schema-15 representation/model-state branch and its occurrence table are fra
 **Known.** The compound reader admits valid CFB version 3 and 4 containers. The Inventor semantic envelope is schema 31 and metadata version 8. Those grammars are applied to every document, whatever it declares; a declaration outside them leaves the document dialect-unverified.
 
 **Need.** Each governing variant requires a separate finite support envelope.
+
+### EN-03. Version bands between the 2022 and 2026 grammars
+
+**Question.** Which `AmDc` segment major versions from 27 through 29 store the occurrence `extended_state`, and which UFRxDoc header section version 16 documents carry the model-state extension word and model-state table?
+
+**Known.** `AmDc` segment major version 26 omits `extended_state` and version 30 stores it. Header section version 15 omits the extension word and table, and version 17 stores them. The decoder applies the version-26 and version-15 grammars below the first stored version.
+
+**Need.** Documents saved in the intermediate releases require the exact threshold.
 
 ### EN-02. Drawing and presentation documents
 

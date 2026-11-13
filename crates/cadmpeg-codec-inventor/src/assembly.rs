@@ -47,6 +47,8 @@ pub(crate) struct AssemblyOccurrence {
     pub(crate) owner_reference: u32,
     pub(crate) node_index: u32,
     pub(crate) state: [i32; 2],
+    /// The third state value that `AmDc` segment major versions 30 and later store.
+    pub(crate) extended_state: Option<i32>,
     pub(crate) ordinal_key: u32,
     pub(crate) related_references: Vec<u32>,
     pub(crate) child_reference: u32,
@@ -57,6 +59,7 @@ pub(crate) struct AssemblyOccurrence {
 pub(crate) struct AssemblyPlacement<'a> {
     pub(crate) segment_token: String,
     pub(crate) record_ordinal: u32,
+    pub(crate) leading_value: u32,
     pub(crate) header_id: u16,
     pub(crate) owner_reference: u32,
     pub(crate) attribute_reference: u32,
@@ -301,17 +304,29 @@ pub(crate) fn inventory<'a>(
         };
         for record in &table.records {
             let result = if segment.kind == SegmentKind::AmDc && record.type_id == OCCURRENCE_TYPE {
-                parse_occurrence(ctx, record.payload).and_then(|mut occurrence| {
-                    ctx.charge_collection_items(1, "admit Inventor assembly occurrence record")?;
-                    ctx.charge_retained(
-                        cadmpeg_core::decode::u64_from_index(segment.pair.token.as_str().len()),
-                        "retain Inventor assembly occurrence token",
-                    )?;
-                    occurrence.segment_token = segment.pair.token.as_str().into();
-                    occurrence.record_ordinal = record.ordinal;
-                    occurrences.push(occurrence);
-                    Ok(())
-                })
+                segment
+                    .registry
+                    .map(|join| join.version_major)
+                    .ok_or_else(|| {
+                        CodecError::Malformed(
+                            "Inventor occurrence framing requires the AmDc segment version".into(),
+                        )
+                    })
+                    .and_then(|version_major| parse_occurrence(ctx, record.payload, version_major))
+                    .and_then(|mut occurrence| {
+                        ctx.charge_collection_items(
+                            1,
+                            "admit Inventor assembly occurrence record",
+                        )?;
+                        ctx.charge_retained(
+                            cadmpeg_core::decode::u64_from_index(segment.pair.token.as_str().len()),
+                            "retain Inventor assembly occurrence token",
+                        )?;
+                        occurrence.segment_token = segment.pair.token.as_str().into();
+                        occurrence.record_ordinal = record.ordinal;
+                        occurrences.push(occurrence);
+                        Ok(())
+                    })
             } else if segment.kind == SegmentKind::AmGraphics
                 && matches!(record.type_id, PLACEMENT_TYPE_CA | PLACEMENT_TYPE_B9)
             {
@@ -359,9 +374,13 @@ pub(crate) fn inventory<'a>(
     })
 }
 
+/// `AmDc` segment major version from which an occurrence stores a third state value.
+const EXTENDED_OCCURRENCE_STATE_VERSION: u8 = 30;
+
 fn parse_occurrence<'a>(
     ctx: &DecodeContext<'a>,
     payload: View<'a>,
+    segment_version_major: u8,
 ) -> Result<AssemblyOccurrence, CodecError> {
     let mut cursor = Cursor::new(payload);
     let header_value = cursor.u32("occurrence header value")?;
@@ -374,6 +393,11 @@ fn parse_occurrence<'a>(
         cursor.i32("occurrence state")?,
         cursor.i32("occurrence state")?,
     ];
+    let extended_state = if segment_version_major >= EXTENDED_OCCURRENCE_STATE_VERSION {
+        Some(cursor.i32("occurrence extended state")?)
+    } else {
+        None
+    };
     require(
         cursor.u32("occurrence relation-list marker")?,
         0x3000_0002,
@@ -439,6 +463,7 @@ fn parse_occurrence<'a>(
         owner_reference,
         node_index,
         state,
+        extended_state,
         ordinal_key,
         related_references,
         child_reference,
@@ -451,7 +476,7 @@ fn parse_placement<'a>(
     payload: View<'a>,
 ) -> Result<AssemblyPlacement<'a>, CodecError> {
     let mut cursor = Cursor::new(payload);
-    require(cursor.u32("placement prefix")?, 0, "placement prefix")?;
+    let leading_value = cursor.u32("placement leading value")?;
     let header_id = cursor.u16("placement header id")?;
     let owner_reference = cursor.u32("placement owner reference")?;
     let attribute_reference = cursor.u32("placement attribute reference")?;
@@ -483,6 +508,7 @@ fn parse_placement<'a>(
     Ok(AssemblyPlacement {
         segment_token: String::new(),
         record_ordinal: 0,
+        leading_value,
         header_id,
         owner_reference,
         attribute_reference,
@@ -969,11 +995,31 @@ mod tests {
             let (ctx, root) =
                 DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
                     .expect("synthetic occurrence fits policy");
-            let occurrence = parse_occurrence(&ctx, root).expect("synthetic occurrence parses");
+            let occurrence = parse_occurrence(&ctx, root, 26).expect("synthetic occurrence parses");
             assert_eq!(occurrence.occurrence_id, 42);
             assert_eq!(occurrence.related_references, related);
             assert_eq!(occurrence.header_value, 6);
+            assert_eq!(occurrence.extended_state, None);
         }
+    }
+
+    #[test]
+    fn segment_version_30_occurrence_stores_a_third_state_value() {
+        let bytes = occurrence_fixture_with(42, &[0x8000_0008], Some(7));
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic occurrence fits policy");
+        let occurrence = parse_occurrence(&ctx, root, 30).expect("version-30 occurrence parses");
+        assert_eq!(occurrence.state, [-1, -1]);
+        assert_eq!(occurrence.extended_state, Some(7));
+        assert_eq!(occurrence.occurrence_id, 42);
+        assert_eq!(occurrence.related_references, [0x8000_0008]);
+        assert!(parse_occurrence(&ctx, root, 29).is_err());
+
+        let bytes = occurrence_fixture(42, &[]);
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic occurrence fits policy");
+        assert!(parse_occurrence(&ctx, root, 30).is_err());
     }
 
     #[test]
@@ -1004,6 +1050,22 @@ mod tests {
         let placement = parse_placement(&ctx, root).expect("synthetic rotation parses");
         assert_eq!(placement.transform.rows()[0][1], -1.0);
         assert_eq!(placement.transform.rows()[1][0], 1.0);
+    }
+
+    #[test]
+    fn placement_leading_value_is_retained_without_changing_the_frame() {
+        for leading_value in [0_u32, 1, 126] {
+            let mut bytes = placement_fixture(7, true, 0x8124, 0x7657, &[1.0, 2.0, 3.0]);
+            bytes[..4].copy_from_slice(&leading_value.to_le_bytes());
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+                    .expect("synthetic placement fits policy");
+            let placement = parse_placement(&ctx, root).expect("synthetic placement parses");
+            assert_eq!(placement.leading_value, leading_value);
+            assert_eq!(placement.occurrence_id, 7);
+            assert_eq!(placement.transform.rows()[2][3], 3.0);
+        }
     }
 
     #[test]
@@ -1238,6 +1300,7 @@ mod tests {
             owner_reference: 0,
             node_index: 0,
             state: [0, 0],
+            extended_state: None,
             ordinal_key: occurrence_id,
             related_references: Vec::new(),
             child_reference: 0,
@@ -1250,6 +1313,7 @@ mod tests {
             id: format!("inventor:assembly:placement#{occurrence_id}"),
             segment_token: "synthetic".into(),
             record_ordinal: occurrence_id,
+            leading_value: 0,
             header_id: 0,
             owner_reference: 0,
             attribute_reference: 0,
@@ -1269,6 +1333,14 @@ mod tests {
     }
 
     fn occurrence_fixture(occurrence_id: u32, related: &[u32]) -> Vec<u8> {
+        occurrence_fixture_with(occurrence_id, related, None)
+    }
+
+    fn occurrence_fixture_with(
+        occurrence_id: u32,
+        related: &[u32],
+        extended_state: Option<i32>,
+    ) -> Vec<u8> {
         let mut bytes = Vec::new();
         push_u32(&mut bytes, 6);
         push_u16(&mut bytes, 31);
@@ -1278,6 +1350,9 @@ mod tests {
         push_u32(&mut bytes, 9);
         push_u32(&mut bytes, u32::MAX);
         push_u32(&mut bytes, u32::MAX);
+        if let Some(value) = extended_state {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
         push_u32(&mut bytes, 0x3000_0002);
         push_u32(&mut bytes, 0);
         push_u32(&mut bytes, 5);

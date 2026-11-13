@@ -5,8 +5,6 @@ use cadmpeg_container::compound::{CompoundSnapshot, CompoundStreamId};
 use cadmpeg_core::decode::{DecodeContext, View};
 use cadmpeg_core::CodecError;
 
-use crate::rse::DocumentKind;
-
 #[derive(Debug)]
 pub(crate) enum UfrxState<'a> {
     Absent,
@@ -64,16 +62,27 @@ pub(crate) struct UfrxModelState<'a> {
     pub(crate) state: [u16; 2],
     pub(crate) prefix_count: u32,
     pub(crate) parameters: Vec<UfrxModelStateParameter>,
+    /// The model-state table entry count, present from header section version 17.
+    pub(crate) table_entry_count: Option<u32>,
+    /// The whole suffix span: head, optional table, and tail.
     pub(crate) suffix: View<'a>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UfrxRepresentationState {
-    pub(crate) prefix: u16,
-    pub(crate) active_representation: Option<(String, String)>,
+    pub(crate) active_lod_state: u16,
+    pub(crate) representations: Vec<UfrxRepresentation>,
     pub(crate) secondary_active_lod_state: [u16; 2],
     pub(crate) active_model_state: String,
     pub(crate) active_model_state_state: [u16; 2],
+    pub(crate) model_state_extension: Option<u32>,
+}
+
+/// One named representation and its kind, such as a design view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UfrxRepresentation {
+    pub(crate) name: String,
+    pub(crate) kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,50 +130,46 @@ pub(crate) struct InventorEmbeddedReference<'a> {
 pub(crate) fn parse<'a>(
     ctx: &DecodeContext<'a>,
     snapshot: &CompoundSnapshot<'a>,
-    document_kind: &DocumentKind,
 ) -> Result<UfrxState<'a>, CodecError> {
     let Some(stream) = snapshot.stream("UFRxDoc") else {
         return Ok(UfrxState::Absent);
     };
     let source = snapshot.open(ctx, stream)?;
-    Ok(
-        match parse_stream(ctx, source, stream.id(), document_kind) {
-            Ok(document) => UfrxState::parsed(ctx, document)?,
-            Err(CodecError::NotImplemented(detail)) => {
-                let (schema, section_versions) = parse_schema_table(ctx, source)?;
-                UfrxState::Unsupported {
-                    stream: stream.id(),
-                    schema,
-                    section_versions,
-                    source,
-                    detail,
-                }
+    Ok(match parse_stream(ctx, source, stream.id()) {
+        Ok(document) => UfrxState::parsed(ctx, document)?,
+        Err(CodecError::NotImplemented(detail)) => {
+            let (schema, section_versions) = parse_schema_table(ctx, source)?;
+            UfrxState::Unsupported {
+                stream: stream.id(),
+                schema,
+                section_versions,
+                source,
+                detail,
             }
-            Err(error) => {
-                if !matches!(error, CodecError::ResourceLimit(_)) {
-                    ctx.charge_formatted_retained(
-                        format_args!("{error}"),
-                        "retain Inventor malformed UFRx detail",
-                    )?;
-                }
-                UfrxState::Malformed {
-                    stream: stream.id(),
-                    detail: crate::issue_detail(error)?,
-                }
+        }
+        Err(error) => {
+            if !matches!(error, CodecError::ResourceLimit(_)) {
+                ctx.charge_formatted_retained(
+                    format_args!("{error}"),
+                    "retain Inventor malformed UFRx detail",
+                )?;
             }
-        },
-    )
+            UfrxState::Malformed {
+                stream: stream.id(),
+                detail: crate::issue_detail(error)?,
+            }
+        }
+    })
 }
 
 fn parse_stream<'a>(
     ctx: &DecodeContext<'a>,
     source: View<'a>,
     stream: CompoundStreamId,
-    document_kind: &DocumentKind,
 ) -> Result<UfrxDocument<'a>, CodecError> {
     let mut declaration = Cursor::new(source);
     let schema = declaration.u16("schema")?;
-    match parse_stream_grammar(ctx, source, stream, document_kind) {
+    match parse_stream_grammar(ctx, source, stream) {
         Ok(document) => Ok(document),
         Err(error) if !(11..=15).contains(&schema) => match error {
             CodecError::ResourceLimit(_) => Err(error),
@@ -180,7 +185,6 @@ fn parse_stream_grammar<'a>(
     ctx: &DecodeContext<'a>,
     source: View<'a>,
     stream: CompoundStreamId,
-    document_kind: &DocumentKind,
 ) -> Result<UfrxDocument<'a>, CodecError> {
     let mut cursor = Cursor::new(source);
     let schema = cursor.u16("schema")?;
@@ -235,55 +239,45 @@ fn parse_stream_grammar<'a>(
         cursor.utf16(ctx, "header pair key", 65_536)?;
         cursor.utf16(ctx, "header pair value", 65_536)?;
     }
-    cursor.take(4, "active LOD state")?;
-    let assembly_representation = if schema == 15 {
-        match document_kind {
-            DocumentKind::Assembly => true,
-            DocumentKind::Part => false,
-            DocumentKind::Drawing
-            | DocumentKind::Presentation
-            | DocumentKind::Mixed
-            | DocumentKind::Unknown => {
-                ctx.charge_formatted_retained(
-                    format_args!(
-                        "UFRxDoc schema 15 {} header is not implemented",
-                        document_kind.label()
-                    ),
-                    "retain UFRx schema header diagnostic",
-                )?;
-                return Err(CodecError::NotImplemented(format!(
-                    "UFRxDoc schema 15 {} header is not implemented",
-                    document_kind.label()
-                )));
-            }
-        }
-    } else {
-        false
-    };
     let representation = if schema == 15 {
-        let prefix = cursor.u16("representation prefix")?;
-        let active_representation = if assembly_representation {
-            Some((
-                cursor.utf16(ctx, "active representation", 65_536)?,
-                cursor.utf16(ctx, "active representation kind", 65_536)?,
-            ))
+        let active_lod_state = cursor.u16("active LOD state")?;
+        let representation_count = cursor.count32("representation count", 65_536)?;
+        ctx.charge_collection_items(
+            cadmpeg_core::decode::u64_from_index(representation_count),
+            "admit UFRxDoc representations",
+        )?;
+        let mut representations =
+            ctx.vector_storage(representation_count, "admit UFRxDoc representations")?;
+        for _ in 0..representation_count {
+            representations.push(UfrxRepresentation {
+                name: cursor.utf16(ctx, "representation name", 65_536)?,
+                kind: cursor.utf16(ctx, "representation kind", 65_536)?,
+            });
+        }
+        let secondary_active_lod_state = [
+            cursor.u16("secondary active LOD state")?,
+            cursor.u16("secondary active LOD state")?,
+        ];
+        let active_model_state = cursor.utf16(ctx, "active model state", 65_536)?;
+        let active_model_state_state = [
+            cursor.u16("active model-state state")?,
+            cursor.u16("active model-state state")?,
+        ];
+        let model_state_extension = if section_versions[2] >= EXTENDED_MODEL_STATE_SECTION_VERSION {
+            Some(cursor.u32("model-state extension")?)
         } else {
             None
         };
         Some(UfrxRepresentationState {
-            prefix,
-            active_representation,
-            secondary_active_lod_state: [
-                cursor.u16("secondary active LOD state")?,
-                cursor.u16("secondary active LOD state")?,
-            ],
-            active_model_state: cursor.utf16(ctx, "active model state", 65_536)?,
-            active_model_state_state: [
-                cursor.u16("active model-state state")?,
-                cursor.u16("active model-state state")?,
-            ],
+            active_lod_state,
+            representations,
+            secondary_active_lod_state,
+            active_model_state,
+            active_model_state_state,
+            model_state_extension,
         })
     } else {
+        cursor.take(4, "active LOD state")?;
         if section_versions[2] >= 12 {
             cursor.utf16(ctx, "active design view", 65_536)?;
         }
@@ -309,7 +303,13 @@ fn parse_stream_grammar<'a>(
 
     let lod_count = cursor.count32("LOD count", 65_536)?;
     let model_states = if schema == 15 {
-        parse_model_states(ctx, source, &mut cursor, lod_count)?
+        parse_model_states(
+            ctx,
+            source,
+            &mut cursor,
+            lod_count,
+            section_versions[2] >= EXTENDED_MODEL_STATE_SECTION_VERSION,
+        )?
     } else if lod_count != 0 {
         ctx.charge_formatted_retained(
             format_args!("UFRxDoc contains {lod_count} unframed LOD records"),
@@ -521,9 +521,9 @@ fn parse_occurrences<'a>(
             }
             let marker_offset = cursor.position();
             let marker = cursor.u16("occurrence extended-header marker")?;
-            if marker != 0x2080 {
+            if !matches!(marker, 0x2080 | 0x6080) {
                 return Err(CodecError::malformed(format_args!(
-                    "UFRxDoc occurrence extended-header marker at offset {marker_offset} is {marker:#06x}, expected 0x2080"
+                    "UFRxDoc occurrence extended-header marker at offset {marker_offset} is {marker:#06x}, expected 0x2080 or 0x6080"
                 )));
             }
             require_u32(
@@ -705,7 +705,7 @@ fn parse_occurrence_value(
             cursor.u32("occurrence property value")?;
         }
         0x02 | 0x03 | 0x11 | 0x12 | 0x13 | 0x15 | 0x16 | 0x17 | 0x18 | 0x1c | 0x1f | 0x20
-        | 0x22 | 0x23 | 0x24 | 0x25 | 0x2a | 0x2b | 0x2c | 0x2d => {
+        | 0x22 | 0x23 | 0x24 | 0x25 | 0x2a | 0x2b | 0x2c | 0x2d | 0x2e => {
             cursor.take(16, "occurrence property id")?;
         }
         _ => {
@@ -772,6 +772,7 @@ fn parse_model_states<'a>(
     source: View<'a>,
     cursor: &mut Cursor<'_>,
     count: usize,
+    tabled: bool,
 ) -> Result<Vec<UfrxModelState<'a>>, CodecError> {
     ctx.charge_collection_items(
         cadmpeg_core::decode::u64_from_index(count),
@@ -804,7 +805,18 @@ fn parse_model_states<'a>(
             });
         }
         let suffix_start = cursor.position();
-        cursor.take(77, "model-state suffix")?;
+        let table_entry_count = if tabled {
+            cursor.take(MODEL_STATE_SUFFIX_HEAD, "model-state suffix head")?;
+            let entries = parse_model_state_table(ctx, cursor)?;
+            cursor.take(MODEL_STATE_SUFFIX_TAIL, "model-state suffix tail")?;
+            Some(entries)
+        } else {
+            cursor.take(
+                MODEL_STATE_SUFFIX_HEAD + MODEL_STATE_SUFFIX_TAIL,
+                "model-state suffix",
+            )?;
+            None
+        };
         let suffix = source
             .child(
                 source.start() + suffix_start,
@@ -819,10 +831,60 @@ fn parse_model_states<'a>(
             state,
             prefix_count,
             parameters,
+            table_entry_count,
             suffix,
         });
     }
     Ok(states)
+}
+
+/// Header section version (entry 2) from which the model-state header carries an
+/// extension word and each model-state suffix carries a table.
+const EXTENDED_MODEL_STATE_SECTION_VERSION: u16 = 17;
+/// Fixed model-state suffix bytes before the optional table.
+const MODEL_STATE_SUFFIX_HEAD: usize = 10;
+/// Fixed model-state suffix bytes after the optional table.
+const MODEL_STATE_SUFFIX_TAIL: usize = 67;
+
+/// Frames the counted model-state table and returns its entry count.
+///
+/// Each entry holds an identifier, two values, and a row count. Each row holds
+/// an identifier and a cell count. Each cell holds a u32 index-pair count, the
+/// u32 index pairs, and a u32 value.
+fn parse_model_state_table(
+    ctx: &DecodeContext<'_>,
+    cursor: &mut Cursor<'_>,
+) -> Result<u32, CodecError> {
+    let entries = cursor.count32("model-state table entry count", 1_000_000)?;
+    ctx.charge_collection_items(
+        cadmpeg_core::decode::u64_from_index(entries),
+        "admit UFRxDoc model-state table entries",
+    )?;
+    for _ in 0..entries {
+        cursor.u32("model-state table entry id")?;
+        cursor.u32("model-state table entry value")?;
+        cursor.u32("model-state table entry value")?;
+        let rows = cursor.count32("model-state table row count", 1_000_000)?;
+        ctx.charge_collection_items(
+            cadmpeg_core::decode::u64_from_index(rows),
+            "admit UFRxDoc model-state table rows",
+        )?;
+        for _ in 0..rows {
+            cursor.u32("model-state table row id")?;
+            let cells = cursor.count32("model-state table cell count", 1_000_000)?;
+            ctx.charge_collection_items(
+                cadmpeg_core::decode::u64_from_index(cells),
+                "admit UFRxDoc model-state table cells",
+            )?;
+            for _ in 0..cells {
+                let pairs = cursor.count32("model-state table cell index count", 65_536)?;
+                cursor.take(pairs * 8, "model-state table cell indexes")?;
+                cursor.u32("model-state table cell value")?;
+            }
+        }
+    }
+    u32::try_from(entries)
+        .map_err(|_| CodecError::Malformed("UFRxDoc model-state table is too large".into()))
 }
 
 fn parse_schema_table(
@@ -979,9 +1041,8 @@ mod tests {
 
     use super::{
         parse_embedded_references, parse_occurrence_item_value, parse_occurrence_value,
-        parse_occurrences, parse_schema_table, parse_stream, Cursor, UfrxState,
+        parse_occurrences, parse_schema_table, parse_stream, Cursor, UfrxRepresentation, UfrxState,
     };
-    use crate::rse::DocumentKind;
     use crate::test_support::truncation::{displayed_truncation, located_truncation};
     use cadmpeg_container::compound::CompoundSnapshot;
     use cadmpeg_core::decode::{DecodeContext, View};
@@ -1027,14 +1088,13 @@ mod tests {
         let (limited, _) =
             DecodeContext::from_root_bytes(&bytes, &arena, &policy).expect("limited context");
         assert!(matches!(
-            super::parse(&limited, &snapshot, &DocumentKind::Part),
+            super::parse(&limited, &snapshot),
             Err(CodecError::ResourceLimit(limit))
                 if limit.dimension == ResourceDimension::RetainedBytes
                     && limit.operation == "retain Inventor malformed UFRx detail"
         ));
         assert!(matches!(
-            super::parse(&setup, &snapshot, &DocumentKind::Part)
-                .expect("malformed UFRx remains an inventory state"),
+            super::parse(&setup, &snapshot).expect("malformed UFRx remains an inventory state"),
             UfrxState::Malformed { .. }
         ));
     }
@@ -1071,8 +1131,7 @@ mod tests {
         let (setup, root) =
             DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::service())
                 .expect("fixture context");
-        let document = parse_stream(&setup, root, stream_id(), &DocumentKind::Assembly)
-            .expect("fixture document parses");
+        let document = parse_stream(&setup, root, stream_id()).expect("fixture document parses");
         let mut policy = DecodePolicy::service();
         policy.limits.max_collection_items = 0;
         let (limited, _) =
@@ -1083,8 +1142,8 @@ mod tests {
                 if limit.dimension == ResourceDimension::CollectionItems
                     && limit.operation == "admit UFRxDoc parsed document"
         ));
-        let document = parse_stream(&setup, root, stream_id(), &DocumentKind::Assembly)
-            .expect("fixture document parses again");
+        let document =
+            parse_stream(&setup, root, stream_id()).expect("fixture document parses again");
         let (service, _) = DecodeContext::from_root_bytes(&[], &arena, &DecodePolicy::service())
             .expect("service context");
         assert!(matches!(
@@ -1105,11 +1164,7 @@ mod tests {
             .id()
     }
 
-    fn assert_diagnostic_refuses_retained_limit(
-        bytes: &[u8],
-        document_kind: &DocumentKind,
-        operation: &'static str,
-    ) {
+    fn assert_diagnostic_refuses_retained_limit(bytes: &[u8], operation: &'static str) {
         let arena = DecodeArena::new();
         let mut cap = 0;
         let mut needed = None;
@@ -1118,7 +1173,7 @@ mod tests {
             policy.limits.max_retained_bytes = cap;
             let (ctx, root) =
                 DecodeContext::from_root_bytes(bytes, &arena, &policy).expect("fixture context");
-            match parse_stream(&ctx, root, stream_id(), document_kind) {
+            match parse_stream(&ctx, root, stream_id()) {
                 Err(CodecError::ResourceLimit(limit))
                     if limit.dimension == ResourceDimension::RetainedBytes =>
                 {
@@ -1142,7 +1197,7 @@ mod tests {
         let (ctx, root) =
             DecodeContext::from_root_bytes(bytes, &arena, &policy).expect("limited context");
         assert!(matches!(
-            parse_stream(&ctx, root, stream_id(), document_kind),
+            parse_stream(&ctx, root, stream_id()),
             Err(CodecError::ResourceLimit(limit))
                 if limit.dimension == ResourceDimension::RetainedBytes
                     && limit.operation == operation
@@ -1151,19 +1206,9 @@ mod tests {
         let (ctx, root) = DecodeContext::from_root_bytes(bytes, &arena, &DecodePolicy::service())
             .expect("service context");
         assert!(matches!(
-            parse_stream(&ctx, root, stream_id(), document_kind),
+            parse_stream(&ctx, root, stream_id()),
             Err(CodecError::NotImplemented(_))
         ));
-    }
-
-    #[test]
-    fn schema_15_document_kind_diagnostic_refuses_before_format() {
-        let (bytes, _) = fixture(15);
-        assert_diagnostic_refuses_retained_limit(
-            &bytes,
-            &DocumentKind::Unknown,
-            "retain UFRx schema header diagnostic",
-        );
     }
 
     #[test]
@@ -1171,11 +1216,7 @@ mod tests {
         let (mut bytes, invariant_offset) = fixture(11);
         let lod_count_offset = invariant_offset + 2 + 4 + 4;
         bytes[lod_count_offset..lod_count_offset + 4].copy_from_slice(&1_u32.to_le_bytes());
-        assert_diagnostic_refuses_retained_limit(
-            &bytes,
-            &DocumentKind::Assembly,
-            "retain UFRx unframed LOD diagnostic",
-        );
+        assert_diagnostic_refuses_retained_limit(&bytes, "retain UFRx unframed LOD diagnostic");
     }
 
     #[test]
@@ -1186,7 +1227,7 @@ mod tests {
             let (ctx, root) =
                 DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
                     .expect("synthetic UFRxDoc fits policy");
-            let document = parse_stream(&ctx, root, stream_id(), &DocumentKind::Assembly)
+            let document = parse_stream(&ctx, root, stream_id())
                 .unwrap_or_else(|error| panic!("synthetic UFRxDoc schema {schema}: {error}"));
             assert_eq!(document.schema, schema);
             assert_eq!(document.original_file_name, "synthetic.ipt");
@@ -1204,25 +1245,20 @@ mod tests {
                     .expect("schema 15 representation state");
                 assert_eq!(representation.active_model_state, "Master");
                 assert_eq!(
-                    representation
-                        .active_representation
-                        .as_ref()
-                        .map(|(name, _)| name.as_str()),
-                    Some("Default")
+                    representation.representations,
+                    [UfrxRepresentation {
+                        name: "Default".into(),
+                        kind: "DesignView".into(),
+                    }]
                 );
-                assert_eq!(
-                    representation
-                        .active_representation
-                        .as_ref()
-                        .map(|(_, kind)| kind.as_str()),
-                    Some("DesignView")
-                );
+                assert_eq!(representation.model_state_extension, None);
                 assert_eq!(document.model_states.len(), 1);
                 assert_eq!(document.model_states[0].prefix, 0);
                 assert_eq!(document.model_states[0].name, "Master");
                 assert_eq!(document.model_states[0].parameters[0].name, "width");
                 assert_eq!(document.model_states[0].parameters[0].value, "12.5");
                 assert_eq!(document.model_states[0].suffix.window(), &[0x5a; 77]);
+                assert_eq!(document.model_states[0].table_entry_count, None);
             } else {
                 assert!(document.representation.is_none());
                 assert!(document.model_states.is_empty());
@@ -1232,20 +1268,89 @@ mod tests {
     }
 
     #[test]
-    fn schema_15_part_omits_assembly_representation_strings() {
-        let (bytes, _) = fixture_for_kind(15, false);
+    fn occurrence_property_tag_2e_selects_a_sixteen_byte_value() {
+        let bytes = [0x2e_u8; 17];
         let arena = DecodeArena::new();
         let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
-            .expect("synthetic part UFRxDoc fits policy");
+            .expect("synthetic property value fits policy");
+        let mut cursor = Cursor::new(root);
+        parse_occurrence_value(&ctx, &mut cursor, 0x2e).expect("tag 0x2e value parses");
+        assert_eq!(cursor.position(), 16);
+    }
 
-        let document = parse_stream(&ctx, root, stream_id(), &DocumentKind::Part)
-            .expect("schema-15 part UFRxDoc parses");
+    #[test]
+    fn schema_15_representation_table_is_counted() {
+        let representations = [
+            ("Body", "Export"),
+            ("Default", "DesignView"),
+            ("GlobalState", "Export"),
+        ];
+        let (bytes, _) = fixture_with(15, 15, &representations);
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic UFRxDoc fits policy");
+
+        let document =
+            parse_stream(&ctx, root, stream_id()).expect("counted representation table parses");
 
         let representation = document.representation.expect("model-state header parses");
-        assert_eq!(representation.active_representation, None);
+        assert_eq!(
+            representation
+                .representations
+                .iter()
+                .map(|entry| (entry.name.as_str(), entry.kind.as_str()))
+                .collect::<Vec<_>>(),
+            representations
+        );
         assert_eq!(representation.active_model_state, "Master");
         assert_eq!(document.model_states.len(), 1);
         assert_eq!(document.references.len(), 1);
+        assert_eq!(document.unparsed_tail.window(), b"tail");
+    }
+
+    #[test]
+    fn schema_15_empty_representation_table_frames() {
+        let (bytes, _) = fixture_with(15, 15, &[]);
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic UFRxDoc fits policy");
+        let document = parse_stream(&ctx, root, stream_id()).expect("empty table parses");
+        let representation = document.representation.expect("model-state header parses");
+        assert!(representation.representations.is_empty());
+        assert_eq!(document.references.len(), 1);
+    }
+
+    #[test]
+    fn header_section_version_17_adds_a_model_state_extension() {
+        let (bytes, _) = fixture_with(15, 17, &[("Default", "DesignView")]);
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic UFRxDoc fits policy");
+        let document = parse_stream(&ctx, root, stream_id()).expect("version-17 header parses");
+        let representation = document.representation.expect("model-state header parses");
+        assert_eq!(representation.model_state_extension, Some(2));
+        assert_eq!(document.model_states.len(), 1);
+        let state = &document.model_states[0];
+        assert_eq!(state.table_entry_count, Some(1));
+        assert_eq!(state.suffix.window().len(), 10 + 4 + 16 + 24 + 32 + 67);
+        assert_eq!(&state.suffix.window()[..10], &[0x5a; 10]);
+        assert!(state.suffix.window().ends_with(&[0x5b; 67]));
+        assert_eq!(document.references.len(), 1);
+        assert_eq!(document.occurrences.len(), 1);
+        assert_eq!(document.unparsed_tail.window(), b"tail");
+    }
+
+    #[test]
+    fn header_section_version_17_without_the_extension_is_malformed() {
+        let (mut bytes, invariant_offset) = fixture_with(15, 15, &[("Default", "DesignView")]);
+        let header_section_version_offset = 4 + 2 * 2;
+        bytes[header_section_version_offset..header_section_version_offset + 2]
+            .copy_from_slice(&17_u16.to_le_bytes());
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic UFRxDoc fits policy");
+        assert!(invariant_offset > header_section_version_offset);
+        assert!(parse_stream(&ctx, root, stream_id()).is_err());
     }
 
     #[test]
@@ -1254,7 +1359,7 @@ mod tests {
         let arena = DecodeArena::new();
         let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
             .expect("synthetic UFRxDoc fits policy");
-        let document = parse_stream(&ctx, root, stream_id(), &DocumentKind::Assembly)
+        let document = parse_stream(&ctx, root, stream_id())
             .expect("foreign schema uses the residual grammar");
         assert_eq!(document.schema, 16);
         assert_eq!(document.original_file_name, "synthetic.ipt");
@@ -1268,7 +1373,7 @@ mod tests {
         let arena = DecodeArena::new();
         let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
             .expect("synthetic UFRxDoc fits policy");
-        let Err(error) = parse_stream(&ctx, root, stream_id(), &DocumentKind::Assembly) else {
+        let Err(error) = parse_stream(&ctx, root, stream_id()) else {
             panic!("broken foreign schema must recover as unsupported");
         };
         assert!(
@@ -1286,7 +1391,7 @@ mod tests {
         let arena = DecodeArena::new();
         let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
             .expect("synthetic UFRxDoc fits policy");
-        assert!(parse_stream(&ctx, root, stream_id(), &DocumentKind::Assembly,).is_err());
+        assert!(parse_stream(&ctx, root, stream_id()).is_err());
     }
 
     #[test]
@@ -1308,6 +1413,27 @@ mod tests {
         assert_eq!(occurrences[0].title.as_deref(), Some("extended"));
         assert_eq!(occurrences[0].header_padding_words, 2);
         assert_eq!(cursor.position(), bytes.len());
+    }
+
+    #[test]
+    fn extended_occurrence_header_marker_admits_0x6080_only_beside_0x2080() {
+        for (marker, framed) in [(0x6080_u16, true), (0x4080, false), (0x2081, false)] {
+            let mut bytes = Vec::new();
+            push_u32(&mut bytes, 1);
+            push_occurrence(&mut bytes, 28, 2020, 9, 17, "extended");
+            let offset = bytes
+                .windows(2)
+                .position(|window| window == 0x2080_u16.to_le_bytes())
+                .expect("fixture marker");
+            bytes[offset..offset + 2].copy_from_slice(&marker.to_le_bytes());
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+                    .expect("synthetic occurrence fits policy");
+            let mut cursor = Cursor::new(root);
+            let result = parse_occurrences(&ctx, root, &mut cursor, 28, 2020);
+            assert_eq!(result.is_ok(), framed, "marker {marker:#06x}");
+        }
     }
 
     #[test]
@@ -1347,14 +1473,18 @@ mod tests {
     }
 
     fn fixture(schema: u16) -> (Vec<u8>, usize) {
-        fixture_for_kind(schema, true)
+        let header_section_version = if schema == 15 { 15 } else { 12 };
+        fixture_with(schema, header_section_version, &[("Default", "DesignView")])
     }
 
-    fn fixture_for_kind(schema: u16, assembly: bool) -> (Vec<u8>, usize) {
+    fn fixture_with(
+        schema: u16,
+        header_section_version: u16,
+        representations: &[(&str, &str)],
+    ) -> (Vec<u8>, usize) {
         let mut bytes = Vec::new();
         push_u16(&mut bytes, schema);
         push_u16(&mut bytes, if schema == 15 { 27 } else { 23 });
-        let header_section_version = if schema == 15 { 15 } else { 12 };
         for value in [
             31,
             19,
@@ -1397,17 +1527,24 @@ mod tests {
         push_u16(&mut bytes, 0);
         push_u32(&mut bytes, 0);
         push_u32(&mut bytes, 0);
-        bytes.extend_from_slice(&[0; 4]);
         if schema == 15 {
             push_u16(&mut bytes, 0);
-            if assembly {
-                push_utf16(&mut bytes, "Default");
-                push_utf16(&mut bytes, "DesignView");
+            push_u32(
+                &mut bytes,
+                u32::try_from(representations.len()).expect("fixture count fits u32"),
+            );
+            for (name, kind) in representations {
+                push_utf16(&mut bytes, name);
+                push_utf16(&mut bytes, kind);
             }
             bytes.extend_from_slice(&[0; 4]);
             push_utf16(&mut bytes, "Master");
             bytes.extend_from_slice(&[0; 4]);
+            if header_section_version >= 17 {
+                push_u32(&mut bytes, 2);
+            }
         } else {
+            bytes.extend_from_slice(&[0; 4]);
             push_utf16(&mut bytes, "Default");
             bytes.extend_from_slice(&[0; 4]);
             push_u16(&mut bytes, 0);
@@ -1435,7 +1572,13 @@ mod tests {
             push_u16(&mut bytes, 1);
             push_utf16(&mut bytes, "12.5");
             push_u16(&mut bytes, 0);
-            bytes.extend_from_slice(&[0x5a; 77]);
+            if header_section_version >= 17 {
+                bytes.extend_from_slice(&[0x5a; 10]);
+                push_model_state_table(&mut bytes);
+                bytes.extend_from_slice(&[0x5b; 67]);
+            } else {
+                bytes.extend_from_slice(&[0x5a; 77]);
+            }
         } else {
             push_u32(&mut bytes, 0);
         }
@@ -1461,6 +1604,20 @@ mod tests {
         push_occurrence(&mut bytes, 18, 0, 7, 42, "placed");
         bytes.extend_from_slice(b"tail");
         (bytes, invariant_offset)
+    }
+
+    /// One table entry with two rows: a one-pair cell and a two-pair cell.
+    fn push_model_state_table(bytes: &mut Vec<u8>) {
+        push_u32(bytes, 1);
+        for value in [13, 2, 1, 2] {
+            push_u32(bytes, value);
+        }
+        for value in [111, 1, 1, 0, 1, 112] {
+            push_u32(bytes, value);
+        }
+        for value in [112, 1, 2, 1, 0, 0, 0, 115] {
+            push_u32(bytes, value);
+        }
     }
 
     fn push_occurrence(

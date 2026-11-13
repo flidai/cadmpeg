@@ -37,7 +37,7 @@ use crate::native::ufrx::{
     EmbeddedReferenceRecordWire, ExternalReferenceRecord, ExternalReferenceRecordWire,
     UfrxModelStateParameterRecord, UfrxModelStateRecord, UfrxModelStateRecordWire,
     UfrxOccurrenceRecord, UfrxOccurrenceRecordWire, UfrxParsedPrefix, UfrxRecord,
-    UfrxRepresentationRecord, UfrxRepresentationRecordWire,
+    UfrxRepresentationEntryWire, UfrxRepresentationRecord, UfrxRepresentationRecordWire,
 };
 use crate::native::{
     ActiveCarrierRecord, AssemblyOccurrenceRecord, AssemblyPlacementRecord,
@@ -1894,6 +1894,7 @@ fn project_ufrx_model_state(
 ) -> Result<Option<UfrxModelStateRecord>, CodecError> {
     let issue_detail = model_state_issue(
         cadmpeg_core::decode::u64_from_index(state.suffix.window().len()),
+        state.table_entry_count,
         &state.name,
     );
     if let Some(detail) = issue_detail {
@@ -1931,6 +1932,7 @@ fn project_ufrx_model_state(
         state: state.state,
         prefix_count: state.prefix_count,
         parameters,
+        table_entry_count: state.table_entry_count,
         suffix_len: cadmpeg_core::decode::u64_from_index(state.suffix.window().len()),
         suffix_sha256: cadmpeg_ir::hash::digest::Sha256Digest::digest_for_decode(
             ctx,
@@ -2123,13 +2125,9 @@ fn project_ufrx_representation(
 ) -> Result<Option<UfrxRepresentationRecord>, CodecError> {
     let issue_detail = representation_issue(
         state
-            .active_representation
-            .as_ref()
-            .map(|(name, _)| name.as_str()),
-        state
-            .active_representation
-            .as_ref()
-            .map(|(_, kind)| kind.as_str()),
+            .representations
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.kind.as_str())),
         &state.active_model_state,
     );
     if let Some(detail) = issue_detail {
@@ -2138,24 +2136,32 @@ fn project_ufrx_representation(
             "retain Inventor UFRx representation conversion issue",
         )?;
     }
-    let (active_representation, active_representation_kind) =
-        match state.active_representation.as_ref() {
-            Some((name, kind)) => (
-                Some(ctx.copy_retained_text(name, "retain Inventor UFRx representation name")?),
-                Some(ctx.copy_retained_text(kind, "retain Inventor UFRx representation kind")?),
-            ),
-            None => (None, None),
-        };
+    ctx.charge_collection_items(
+        cadmpeg_core::decode::u64_from_index(state.representations.len()),
+        "retain Inventor UFRx representations",
+    )?;
+    let mut representations = ctx.vector_storage(
+        state.representations.len(),
+        "retain Inventor UFRx representations",
+    )?;
+    for entry in &state.representations {
+        representations.push(UfrxRepresentationEntryWire {
+            name: ctx
+                .copy_retained_text(&entry.name, "retain Inventor UFRx representation name")?,
+            kind: ctx
+                .copy_retained_text(&entry.kind, "retain Inventor UFRx representation kind")?,
+        });
+    }
     let wire = UfrxRepresentationRecordWire {
-        prefix: state.prefix,
-        active_representation,
-        active_representation_kind,
+        active_lod_state: state.active_lod_state,
+        representations,
         secondary_active_lod_state: state.secondary_active_lod_state,
         active_model_state: ctx.copy_retained_text(
             &state.active_model_state,
             "retain Inventor UFRx active model state",
         )?,
         active_model_state_state: state.active_model_state_state,
+        model_state_extension: state.model_state_extension,
     };
     admit_ufrx_record(
         ctx,
