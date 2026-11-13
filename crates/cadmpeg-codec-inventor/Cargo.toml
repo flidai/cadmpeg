@@ -28,6 +28,7 @@ serde_json.workspace = true
 cadmpeg-test-support = { workspace = true }
 flate2.workspace = true
 zip.workspace = true
+zstd.workspace = true
 
 [lints]
 workspace = true

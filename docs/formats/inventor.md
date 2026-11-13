@@ -20,7 +20,7 @@ An `RSeDb` stream starts with a 16-byte database identifier, a u32 schema, an 8-
 
 ## 3. RSe metadata stream
 
-An `M<token>` stream starts with a u32 byte count and that many UTF-8 marker bytes. The supported marker is `RSe Meta Stream Version 8`. It is followed by u16 version 8, eight u16 header values, a u32-counted UTF-16LE display name, a 16-byte segment identifier, three u32 state words, two u32-counted UTF-8 timestamp strings, and a one-byte body form. One exact zlib member occupies the remainder of the stream.
+An `M<token>` stream starts with a u32 byte count and that many UTF-8 marker bytes. The supported marker is `RSe Meta Stream Version 8`. It is followed by u16 version 8, eight u16 header values, a u32-counted UTF-16LE display name, a 16-byte segment identifier, three u32 state words, two u32-counted UTF-8 timestamp strings, and a one-byte body form. The body form selects the compression of the remainder of the stream. Form 1 is one exact zlib member. Form 2 is one exact Zstandard frame without skippable frames or trailing bytes. Other forms are malformed.
 
 The inflated body starts with seven u16 values and contains 11 sections plus a terminal 16-byte identifier. Sections 1 through 4 use a forward counted frame:
 
@@ -36,7 +36,7 @@ Sections 5 through 11 use backward framing. The eight bytes before a section pay
 
 ## 4. RSe bulk stream and records
 
-A `B<token>` stream starts with a 16-byte prefix and a u16 form. One exact zlib member occupies the remainder. The prefix and form are retained as envelope values; they do not select a segment by themselves.
+A `B<token>` stream starts with a 16-byte prefix and a u16 form. The form selects the compression of the remainder. Form `0x0104` is one exact zlib member. Form `0x0204` is one exact Zstandard frame without skippable frames or trailing bytes. Other forms are malformed. The prefix and form are retained as envelope values; they do not select a segment by themselves.
 
 Each stored section-1 block descriptor frames one record in block order. A record contains:
 
