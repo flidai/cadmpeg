@@ -1418,6 +1418,9 @@ fn face_on_unknown_surface_is_skipped_and_reported() {
         report.losses
     );
     assert!(unknown_notes[0].message.contains("1 face(s)"));
+    assert!(unknown_notes[0]
+        .message
+        .contains("surface kinds: unknown carrier: 1"));
     assert!(report.losses.iter().any(|loss| {
         loss.code == StepLossCode::ShellOmittedUnclassifiedFace.kind()
             && loss.severity == cadmpeg_ir::report::Severity::Error
@@ -1653,10 +1656,87 @@ fn cone_semi_angle_inside_wr2_is_planned() {
 }
 
 #[test]
-fn zero_cone_semi_angle_is_refused_at_planning() {
-    let error = circular_cone_plan(0.0).expect_err("zero cone angle is outside WR2");
+fn zero_cone_semi_angle_is_planned() {
+    assert!(circular_cone_plan(0.0).is_ok());
+}
+
+/// Writes a document whose single surface is a zero-angle cone.
+fn zero_angle_cone_report(
+    radius: f64,
+    ratio: f64,
+) -> Result<(cadmpeg_ir::report::export::ExportReport, String), cadmpeg_core::CodecError> {
+    let mut ir = unit_cube().expect("unit cube fixture is admitted");
+    ir.model.surfaces[0].geometry = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Cone(
+        cadmpeg_ir::geometry::analytic::ConeSurface::try_new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            radius,
+            ratio,
+            0.0,
+        )
+        .unwrap(),
+    ));
+    let mut buf = Vec::new();
+    let report = write_step(
+        &ir,
+        &mut buf,
+        StepSchema::Ap214,
+        &StepWriteOptions::default(),
+    )?;
+    let text = String::from_utf8(buf).expect("STEP output is UTF-8");
+    Ok((report, text))
+}
+
+#[test]
+fn zero_angle_circular_cone_is_written_as_a_cylinder() {
+    let (report, text) = zero_angle_cone_report(2.0, 1.0).expect("circular section is written");
+
+    assert!(text.contains("CYLINDRICAL_SURFACE('',#"));
+    assert!(text.contains(",2.)"));
+    assert!(!text.contains("CONICAL_SURFACE"));
+    assert!(!report
+        .losses
+        .iter()
+        .any(|loss| loss.code == StepLossCode::EllipticalConeReduced.kind()));
+}
+
+#[test]
+fn zero_angle_elliptical_cone_is_written_as_an_extruded_ellipse() {
+    let (report, text) = zero_angle_cone_report(2.0, 0.5).expect("elliptical section is written");
+
+    assert!(text.contains("SURFACE_OF_LINEAR_EXTRUSION"));
+    assert!(text.contains("ELLIPSE('',#"));
+    assert!(text.contains(",2.,1.)"));
+    assert!(!text.contains("CONICAL_SURFACE"));
+    assert!(!report
+        .losses
+        .iter()
+        .any(|loss| loss.code == StepLossCode::EllipticalConeReduced.kind()));
+}
+
+#[test]
+fn zero_angle_cone_without_radius_is_refused_at_planning() {
+    let mut ir = unit_cube().expect("unit cube fixture is admitted");
+    ir.model.surfaces[0].geometry = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Cone(
+        cadmpeg_ir::geometry::analytic::ConeSurface::try_new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            0.0,
+            1.0,
+            0.0,
+        )
+        .unwrap(),
+    ));
+    let error = StepCodec::default()
+        .plan(
+            EncodeInput::new(&ir, None),
+            TargetRequest::Explicit(StepSchema::Ap214.descriptor().id.as_str()),
+        )
+        .expect_err("a zero-angle cone of zero radius has no section");
     assert!(
-        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0"))
+        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0 with radius 0"))
     );
 }
 
@@ -1736,7 +1816,7 @@ fn transformed_cone_basis(ratio: f64, half_angle: f64) -> SolvedSurfaceGeometry 
 
 #[test]
 fn transformed_cone_basis_outside_wr2_is_refused_at_planning() {
-    let ir = transformed_surface_ir(transformed_cone_basis(1.0, 0.0));
+    let ir = transformed_surface_ir(transformed_cone_basis(1.0, std::f64::consts::FRAC_PI_2));
     let error = StepCodec::default()
         .plan(
             EncodeInput::new(&ir, None),
@@ -1744,8 +1824,16 @@ fn transformed_cone_basis_outside_wr2_is_refused_at_planning() {
         )
         .expect_err("transformed cone basis remains outside WR2");
     assert!(
-        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0"))
+        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("outside (0, pi/2)"))
     );
+}
+
+#[test]
+fn transformed_zero_angle_cone_basis_is_a_replicated_cylinder() {
+    let (_, text) = transformed_surface_report(transformed_cone_basis(1.0, 0.0));
+
+    assert!(text.contains("SURFACE_REPLICA"));
+    assert!(text.contains("CYLINDRICAL_SURFACE"));
 }
 
 #[test]
@@ -1859,7 +1947,7 @@ fn a_cone_cache_for_an_unwritable_construction_is_refused_at_planning() {
             Vector3::new(1.0, 0.0, 0.0),
             2.0,
             1.0,
-            0.0,
+            std::f64::consts::FRAC_PI_2,
         )
         .unwrap(),
     ));
@@ -1895,7 +1983,7 @@ fn a_cone_cache_for_an_unwritable_construction_is_refused_at_planning() {
         )
         .expect_err("a cached cone outside WR2 cannot be written");
     assert!(
-        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("semi-angle 0"))
+        matches!(error, cadmpeg_core::CodecError::NotImplemented(message) if message.contains("outside (0, pi/2)"))
     );
 }
 
