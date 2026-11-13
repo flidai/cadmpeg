@@ -20,7 +20,7 @@ An `RSeDb` stream starts with a 16-byte database identifier, a u32 schema, an 8-
 
 ## 3. RSe metadata stream
 
-An `M<token>` stream starts with a u32 byte count and that many UTF-8 marker bytes. The supported marker is `RSe Meta Stream Version 8`. It is followed by u16 version 8, eight u16 header values, a u32-counted UTF-16LE display name, a 16-byte segment identifier, three u32 state words, two u32-counted UTF-8 timestamp strings, and a one-byte body form. One exact zlib member occupies the remainder of the stream.
+An `M<token>` stream starts with a u32 byte count and that many UTF-8 marker bytes. The supported marker is `RSe Meta Stream Version 8`. It is followed by u16 version 8, eight u16 header values, a u32-counted UTF-16LE display name, a 16-byte segment identifier, three u32 state words, two u32-counted UTF-8 timestamp strings, and a one-byte body form. The body form selects the compression of the remainder of the stream. Form 1 is one exact zlib member. Form 2 is one exact Zstandard frame without skippable frames or trailing bytes. Other forms are malformed.
 
 The inflated body starts with seven u16 values and contains 11 sections plus a terminal 16-byte identifier. Sections 1 through 4 use a forward counted frame:
 
@@ -32,11 +32,11 @@ span u32
 
 `span` equals `4 + count * item_size`. Section 1 items are 4-byte block descriptors. Bit 31 states that the corresponding bulk block is stored; bits 0 through 30 give its payload length. Section 2 items are 10 bytes. Section 3 items are 28 bytes. Section 4 items are 28-byte type descriptors and the count does not exceed 256. A type descriptor contains a 16-byte type identifier and two `(u16, u32)` field pairs.
 
-Sections 5 through 11 use backward framing. The eight bytes before a section payload contain a u32 span to the previous payload and a u32 discriminator. The section chain joins the section 4 footer exactly. Section 11 has a 72-byte payload. The 16-byte terminal identifier follows section 11.
+Sections 5 through 11 use backward framing. The eight bytes before a section payload contain a u32 span to the previous payload and a u32 discriminator. The section chain joins the section 4 footer exactly. Section 9 entries contain a u16 value and a u8 form. Form 1 adds a 16-byte identifier and form 3 adds eight bytes; the entries exhaust the section payload. Section 11 has a 72-byte payload. The 16-byte terminal identifier follows section 11.
 
 ## 4. RSe bulk stream and records
 
-A `B<token>` stream starts with a 16-byte prefix and a u16 form. One exact zlib member occupies the remainder. The prefix and form are retained as envelope values; they do not select a segment by themselves.
+A `B<token>` stream starts with a 16-byte prefix and a u16 form. The form selects the compression of the remainder. Form `0x0104` is one exact zlib member. Form `0x0204` is one exact Zstandard frame without skippable frames or trailing bytes. Other forms are malformed. The prefix and form are retained as envelope values; they do not select a segment by themselves.
 
 Each stored section-1 block descriptor frames one record in block order. A record contains:
 
@@ -69,7 +69,7 @@ The ZIP package, `InstanceProperties.bin` page framing, schemas, and typed prope
 
 ## 8. External references
 
-`UFRxDoc` schemas 11 through 15 start with a u16 schema and a u16 section-version count. The section-version table governs optional header fields. The schema-15 representation/model-state branch adds a u16 representation prefix. An assembly then stores two counted UTF-16LE representation strings. A part omits these two strings. Both document kinds continue with a two-u16 secondary LOD state, a counted UTF-16LE active model-state name, and a two-u16 model-state pair; they omit the older header-version-flags field. The model-state table precedes the external-reference table. Each model-state record contains a u8 prefix, counted UTF-16LE name, two-u16 state pair, u32 prefix count, u32 parameter count, the counted parameter records, and a 77-byte suffix. Each parameter record contains a counted UTF-16LE name, u8 tag, u16 kind, u16 state, counted UTF-16LE value, and u16 trailer.
+`UFRxDoc` schemas 11 through 15 start with a u16 schema and a u16 section-version count. The section-version table governs optional header fields. In the schema-15 representation/model-state branch, the header-pair table is followed by a u16 active LOD state and a u32 representation count. Each representation record contains a counted UTF-16LE name and a counted UTF-16LE kind. Parts and assemblies use the same representation table. The branch continues with a two-u16 secondary LOD state, a counted UTF-16LE active model-state name, and a two-u16 model-state pair. When section-version entry 2 is 17 or later, a u32 model-state extension value follows the pair. The branch omits the older header-version-flags field. The model-state table precedes the external-reference table. Each model-state record contains a u8 prefix, counted UTF-16LE name, two-u16 state pair, u32 prefix count, u32 parameter count, the counted parameter records, and a suffix. When section-version entry 2 is less than 17, the suffix is 77 bytes. When it is 17 or later, the suffix contains 10 head bytes, a model-state table, and 67 tail bytes. The model-state table starts with a u32 entry count. Each entry contains a u32 identifier, two u32 values, a u32 row count, and the rows. Each row contains a u32 identifier, a u32 cell count, and the cells. Each cell contains a u32 index-pair count, that many pairs of u32 indexes, and a u32 value. Each parameter record contains a counted UTF-16LE name, u8 tag, u16 kind, u16 state, counted UTF-16LE value, and u16 trailer.
 
 The external-reference table contains counted UTF-16LE paths and names, state groups, 16-byte document and database identifiers, a u32 reference identifier, u32 occurrence count, u32 version, and u32 flags. Section-version entry 4 values of 2 or later add a zero-byte table terminator. Persisted paths remain unresolved. The codec does not open them.
 
@@ -85,9 +85,9 @@ header_value u32
 title_form_or_count u32
 ```
 
-For occurrence section versions before 28, title form 0 has no title, form 1 is followed by a separately counted UTF-16LE title, and other nonzero values are the title code-unit count. The header then contains five state bytes, one additional byte at version 20 or later, and another byte at version 21 or later. At version 28 or later, every nonzero title form is followed by a separately counted UTF-16LE title. The header then contains at most eight zero u16 values, u16 marker `0x2080`, and the u32 sequence 0, 1, 0.
+For occurrence section versions before 28, title form 0 has no title, form 1 is followed by a separately counted UTF-16LE title, and other nonzero values are the title code-unit count. The header then contains five state bytes, one additional byte at version 20 or later, and another byte at version 21 or later. At version 28 or later, every nonzero title form is followed by a separately counted UTF-16LE title. The header then contains at most eight zero u16 values, u16 marker `0x2080` or `0x6080`, and the u32 sequence 0, 1, 0.
 
-Two property sections follow the header. Each starts with a u32 section value and u32 property count. A property contains a Boolean presence byte, u8 type tag, u32 value, the repeated type tag, the tag-selected value, and a u32 trailer. Settings follow as counted UTF-16LE name, 16-byte identifier, and counted UTF-8 value records. The export section contains ten state bytes, version-selected padding, and either an empty count, a `0x00ffffff` or `0xffffffff` sentinel followed by zero u32, or a bounded typed export table. Each occurrence record is bounded by exhaustion of these nested counts.
+Two property sections follow the header. Each starts with a u32 section value and u32 property count. A property contains a Boolean presence byte, u8 type tag, u32 value, the repeated type tag, the tag-selected value, and a u32 trailer. Tags `0x05` and `0x1e` select a counted UTF-16LE string. Tags `0x07`, `0x0d`, `0x0f`, `0x10`, and `0x1d` select one byte. Tag `0x19` selects a u32. Tags `0x02`, `0x03`, `0x11` through `0x13`, `0x15` through `0x18`, `0x1c`, `0x1f`, `0x20`, `0x22` through `0x25`, and `0x2a` through `0x2e` select 16 bytes. Settings follow as counted UTF-16LE name, 16-byte identifier, and counted UTF-8 value records. The export section contains ten state bytes, version-selected padding, and either an empty count, a `0x00ffffff` or `0xffffffff` sentinel followed by zero u32, or a bounded typed export table. Each occurrence record is bounded by exhaustion of these nested counts.
 
 ## 9. Assembly records
 
@@ -101,6 +101,7 @@ flags u32
 owner_reference u32
 node_index u32
 state i32[2]
+extended_state i32           segment major version 30 and later
 relation_marker u32 = 0x30000002
 relation_count u32 = 0
 ordinal_key u32
@@ -115,9 +116,9 @@ label counted UTF-16LE = "DCx"
 trailer u16 = 1
 ```
 
-The record ends after the trailer. Occurrence identifiers are document-local values and are not required to be dense.
+The record ends after the trailer. `AmDc` segment major versions 30 and later store `extended_state`; earlier versions omit it. Occurrence identifiers are document-local values and are not required to be dense.
 
-An `AmGraphics` record with type identifier `a26371cad011b2d30008bfbb21eddc09` or `07d0d0b9d4112d5f6000f8830e73fcb0` stores an assembly placement. Its common payload prefix contains u32 zero, u16 header identifier, u32 owner reference, u32 attribute reference, u8 state, and a compact 4-by-4 transform. The transform can start with optional u32 `0x00000203`, followed by a u16 set mask and a u16 zero mask. The 16 matrix elements use row-major bit positions. A clear zero-mask bit stores an f64 when the set-mask bit is clear and represents `1` when the set-mask bit is set. A set zero-mask bit represents `0` when the set-mask bit is clear and `-1` when the set-mask bit is set. Stored f64 values are finite.
+An `AmGraphics` record with type identifier `a26371cad011b2d30008bfbb21eddc09` or `07d0d0b9d4112d5f6000f8830e73fcb0` stores an assembly placement. Its common payload prefix contains a u32 leading value, u16 header identifier, u32 owner reference, u32 attribute reference, u8 state, and a compact 4-by-4 transform. The transform can start with optional u32 `0x00000203`, followed by a u16 set mask and a u16 zero mask. The 16 matrix elements use row-major bit positions. A clear zero-mask bit stores an f64 when the set-mask bit is clear and represents `1` when the set-mask bit is set. A set zero-mask bit represents `0` when the set-mask bit is clear and `-1` when the set-mask bit is set. Stored f64 values are finite.
 
 The active placement branch continues with u8 branch, u8 graphics state, u32 occurrence identifier, counted UTF-16LE label `"GRx"`, u16 invariant 1, u32 graphics index, u32 object reference, and the occurrence identifier again. Both occurrence-identifier fields are equal. The remaining branch-specific suffix is retained. A placement joins an occurrence through the exact occurrence identifier.
 

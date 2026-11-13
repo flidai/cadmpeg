@@ -409,7 +409,7 @@ fn reverse_section<'a>(
         )));
     }
     let payload = child(body, header + 8, *end, "metadata section payload")?;
-    validate_reverse_section(number, discriminator, payload.window().len())?;
+    validate_reverse_section(number, discriminator, payload)?;
     *end = header;
     *payload_len = previous_span - 4;
     Ok(MetaSection {
@@ -457,8 +457,9 @@ fn counted_section<'a>(
 fn validate_reverse_section(
     number: ReverseSectionNumber,
     discriminator: u32,
-    payload_len: usize,
+    payload: View<'_>,
 ) -> Result<(), CodecError> {
+    let payload_len = payload.window().len();
     if number != ReverseSectionNumber::Five && discriminator > 1_000_000 {
         return Err(CodecError::malformed(format_args!(
             "RSe metadata section {number} count exceeds 1000000"
@@ -480,7 +481,7 @@ fn validate_reverse_section(
             }
         }
         ReverseSectionNumber::Eight => 20,
-        ReverseSectionNumber::Nine => 19,
+        ReverseSectionNumber::Nine => return validate_section_9(discriminator, payload),
         ReverseSectionNumber::Ten => 8,
         ReverseSectionNumber::Eleven => 4,
         ReverseSectionNumber::Five | ReverseSectionNumber::Six => return Ok(()),
@@ -495,6 +496,33 @@ fn validate_reverse_section(
     if payload_len != expected {
         return Err(CodecError::malformed(format_args!(
             "RSe metadata section {number} stores {payload_len} bytes for {discriminator} entries of {item_size} bytes"
+        )));
+    }
+    Ok(())
+}
+
+/// Section 9 entries are a u16 value and a u8 form. Form 1 adds a 16-byte
+/// identifier and form 3 adds eight bytes. The entries exhaust the payload.
+fn validate_section_9(count: u32, payload: View<'_>) -> Result<(), CodecError> {
+    let mut view = payload;
+    for _ in 0..count {
+        crate::reader::u16(&mut view, "metadata section 9 entry value")?;
+        let form = crate::reader::u8(&mut view, "metadata section 9 entry form")?;
+        let len = match form {
+            1 => 16,
+            3 => 8,
+            form => {
+                return Err(CodecError::malformed(format_args!(
+                    "RSe metadata section 9 entry form {form} is not 1 or 3"
+                )))
+            }
+        };
+        crate::reader::take(&mut view, len, "metadata section 9 entry")?;
+    }
+    if view.remaining() != 0 {
+        return Err(CodecError::malformed(format_args!(
+            "RSe metadata section 9 leaves {} bytes after {count} entries",
+            view.remaining()
         )));
     }
     Ok(())
@@ -611,6 +639,11 @@ use crate::test_support::test_fixtures::push_u32;
 
 #[cfg(test)]
 pub(crate) fn synthetic_meta_table_body() -> Vec<u8> {
+    synthetic_meta_table_body_with_section_9(0, &[])
+}
+
+#[cfg(test)]
+fn synthetic_meta_table_body_with_section_9(count: u32, section_9: &[u8]) -> Vec<u8> {
     let mut body = Vec::new();
     for value in [3_u16, 0, 2, 1, 0, 4, 0] {
         body.extend_from_slice(&value.to_le_bytes());
@@ -626,8 +659,8 @@ pub(crate) fn synthetic_meta_table_body() -> Vec<u8> {
     push_u32(&mut body, 4);
     push_u32(&mut body, 32);
 
-    let payloads = [0_usize, 0, 0, 0, 0, 0, SECTION_11_PAYLOAD_LEN];
-    let counts = [u32::MAX, 0, 0, 0, 0, 0, 18];
+    let payloads = [0_usize, 0, 0, 0, section_9.len(), 0, SECTION_11_PAYLOAD_LEN];
+    let counts = [u32::MAX, 0, 0, 0, count, 0, 18];
     push_u32(&mut body, counts[0]);
     body.resize(body.len() + payloads[0], 0);
     for index in 1..payloads.len() {
@@ -636,7 +669,11 @@ pub(crate) fn synthetic_meta_table_body() -> Vec<u8> {
             u32::try_from(payloads[index - 1]).expect("fixture value fits u32") + 4,
         );
         push_u32(&mut body, counts[index]);
-        body.resize(body.len() + payloads[index], 0);
+        if index == 4 {
+            body.extend_from_slice(section_9);
+        } else {
+            body.resize(body.len() + payloads[index], 0);
+        }
     }
     body.extend_from_slice(&[0x77; 16]);
     body
@@ -719,12 +756,45 @@ mod tests {
 
     use super::{
         frame_bulk_records, parse_extended_record_trailer, parse_meta_tables,
-        synthetic_meta_table_body, Cursor, TERMINAL_ID_LEN,
+        synthetic_meta_table_body, synthetic_meta_table_body_with_section_9, Cursor,
+        TERMINAL_ID_LEN,
     };
     use crate::layout::meta_body_prefix as meta_prefix;
     use crate::test_support::test_fixtures::push_u32;
     use crate::test_support::truncation::located_truncation;
     use cadmpeg_core::decode::{DecodeContext, View};
+
+    #[test]
+    fn section_9_entries_take_their_length_from_the_entry_form() {
+        let mut entries = Vec::new();
+        entries.extend_from_slice(&1_u16.to_le_bytes());
+        entries.push(3);
+        entries.extend_from_slice(&[0x11; 8]);
+        entries.extend_from_slice(&3_u16.to_le_bytes());
+        entries.push(1);
+        entries.extend_from_slice(&[0x22; 16]);
+        assert_eq!(entries.len(), 11 + 19);
+        let cases: [(u32, Vec<u8>, bool); 5] = [
+            (2, entries.clone(), true),
+            (1, entries[..11].to_vec(), true),
+            (1, entries[11..].to_vec(), true),
+            (1, entries.clone(), false),
+            (1, [&[1_u8, 0, 2][..], &[0; 8]].concat(), false),
+        ];
+        for (count, payload, framed) in cases {
+            let body = synthetic_meta_table_body_with_section_9(count, &payload);
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&body, &arena, &DecodePolicy::default())
+                    .expect("synthetic metadata body fits policy");
+            assert_eq!(
+                parse_meta_tables(&ctx, root).is_ok(),
+                framed,
+                "{count} entries in {} bytes",
+                payload.len()
+            );
+        }
+    }
 
     #[test]
     fn record_trailer_type_diagnostic_refuses_retained_limit_before_format() {

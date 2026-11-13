@@ -14,9 +14,18 @@ fn is_blank(value: &str) -> bool {
     value.chars().all(char::is_whitespace)
 }
 
-pub(crate) fn model_state_issue(suffix_len: u64, name: &str) -> Option<&'static str> {
-    if suffix_len != 77 {
-        Some("suffix_len must be 77")
+pub(crate) fn model_state_issue(
+    suffix_len: u64,
+    table_entry_count: Option<u32>,
+    name: &str,
+) -> Option<&'static str> {
+    let framed = match table_entry_count {
+        None => suffix_len == 77,
+        Some(0) => suffix_len == 81,
+        Some(_) => suffix_len > 81,
+    };
+    if !framed {
+        Some("suffix_len does not frame the model-state suffix")
     } else if is_blank(name) {
         Some("name must not be empty")
     } else {
@@ -81,21 +90,19 @@ pub(crate) fn occurrence_issue(header_padding_words: u8, record_len: u64) -> Opt
     }
 }
 
-pub(crate) fn representation_issue(
-    name: Option<&str>,
-    kind: Option<&str>,
+pub(crate) fn representation_issue<'a>(
+    representations: impl IntoIterator<Item = (&'a str, &'a str)>,
     active_model_state: &str,
 ) -> Option<&'static str> {
-    match (name, kind) {
-        (Some(name), Some(_)) if is_blank(name) => Some("active_representation must not be empty"),
-        (Some(_), Some(kind)) if is_blank(kind) => {
-            Some("active_representation_kind must not be empty")
+    for (name, kind) in representations {
+        if is_blank(name) {
+            return Some("representation name must not be empty");
         }
-        (None, None) | (Some(_), Some(_)) => {
-            is_blank(active_model_state).then_some("active_model_state must not be empty")
+        if is_blank(kind) {
+            return Some("representation kind must not be empty");
         }
-        _ => Some("active_representation and active_representation_kind must be present together"),
     }
+    is_blank(active_model_state).then_some("active_model_state must not be empty")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,75 +147,93 @@ pub(crate) struct UfrxParsedPrefix {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "UfrxRepresentationRecordWire")]
 pub(crate) struct UfrxRepresentationRecord {
-    prefix: u16,
-    pub(crate) active_representation: Option<(NonBlankString, NonBlankString)>,
+    active_lod_state: u16,
+    representations: Vec<UfrxRepresentationEntry>,
     secondary_active_lod_state: [u16; 2],
     active_model_state: NonBlankString,
     active_model_state_state: [u16; 2],
+    model_state_extension: Option<u32>,
+}
+
+/// One named representation and its kind in the `UFRxDoc` representation table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UfrxRepresentationEntry {
+    name: NonBlankString,
+    kind: NonBlankString,
+}
+
+impl Serialize for UfrxRepresentationEntry {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut fields = serializer.serialize_struct("UfrxRepresentationEntryWire", 2)?;
+        fields.serialize_field("name", self.name.as_str())?;
+        fields.serialize_field("kind", self.kind.as_str())?;
+        fields.end()
+    }
 }
 
 impl Serialize for UfrxRepresentationRecord {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let (active_representation, active_representation_kind) = self
-            .active_representation
-            .as_ref()
-            .map_or((None, None), |(name, kind)| {
-                (Some(name.as_str()), Some(kind.as_str()))
-            });
         let mut fields = serializer.serialize_struct("UfrxRepresentationRecordWire", 6)?;
-        fields.serialize_field("prefix", &self.prefix)?;
-        fields.serialize_field("active_representation", &active_representation)?;
-        fields.serialize_field("active_representation_kind", &active_representation_kind)?;
+        fields.serialize_field("active_lod_state", &self.active_lod_state)?;
+        fields.serialize_field("representations", &self.representations)?;
         fields.serialize_field(
             "secondary_active_lod_state",
             &self.secondary_active_lod_state,
         )?;
         fields.serialize_field("active_model_state", self.active_model_state.as_str())?;
         fields.serialize_field("active_model_state_state", &self.active_model_state_state)?;
+        fields.serialize_field("model_state_extension", &self.model_state_extension)?;
         fields.end()
     }
 }
 
 #[derive(Deserialize)]
+pub(crate) struct UfrxRepresentationEntryWire {
+    pub(crate) name: String,
+    pub(crate) kind: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct UfrxRepresentationRecordWire {
-    pub(crate) prefix: u16,
-    pub(crate) active_representation: Option<String>,
-    pub(crate) active_representation_kind: Option<String>,
+    pub(crate) active_lod_state: u16,
+    pub(crate) representations: Vec<UfrxRepresentationEntryWire>,
     pub(crate) secondary_active_lod_state: [u16; 2],
     pub(crate) active_model_state: String,
     pub(crate) active_model_state_state: [u16; 2],
+    pub(crate) model_state_extension: Option<u32>,
 }
 
 impl TryFrom<UfrxRepresentationRecordWire> for UfrxRepresentationRecord {
     type Error = String;
     fn try_from(wire: UfrxRepresentationRecordWire) -> Result<Self, Self::Error> {
         if let Some(issue) = representation_issue(
-            wire.active_representation.as_deref(),
-            wire.active_representation_kind.as_deref(),
+            wire.representations
+                .iter()
+                .map(|entry| (entry.name.as_str(), entry.kind.as_str())),
             &wire.active_model_state,
         ) {
             return Err(issue.into());
         }
-        let active_representation =
-            match (wire.active_representation, wire.active_representation_kind) {
-                (None, None) => None,
-                (Some(name), Some(kind)) => Some((
-                    NonBlankString::new(name).ok_or("active_representation must not be empty")?,
-                    NonBlankString::new(kind)
-                        .ok_or("active_representation_kind must not be empty")?,
-                )),
-                _ => return Err(
-                    "active_representation and active_representation_kind must be present together"
-                        .into(),
-                ),
-            };
+        let representations = wire
+            .representations
+            .into_iter()
+            .map(|entry| {
+                Ok(UfrxRepresentationEntry {
+                    name: NonBlankString::new(entry.name)
+                        .ok_or("representation name must not be empty")?,
+                    kind: NonBlankString::new(entry.kind)
+                        .ok_or("representation kind must not be empty")?,
+                })
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
         Ok(Self {
-            prefix: wire.prefix,
-            active_representation,
+            active_lod_state: wire.active_lod_state,
+            representations,
             secondary_active_lod_state: wire.secondary_active_lod_state,
             active_model_state: NonBlankString::new(wire.active_model_state)
                 .ok_or("active_model_state must not be empty")?,
             active_model_state_state: wire.active_model_state_state,
+            model_state_extension: wire.model_state_extension,
         })
     }
 }
@@ -223,12 +248,14 @@ pub(crate) struct UfrxModelStateRecord {
     state: [u16; 2],
     prefix_count: u32,
     parameters: Vec<UfrxModelStateParameterRecord>,
+    table_entry_count: Option<u32>,
+    suffix_len: u64,
     suffix_sha256: Sha256Digest,
 }
 
 impl Serialize for UfrxModelStateRecord {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut fields = serializer.serialize_struct("UfrxModelStateRecordWire", 9)?;
+        let mut fields = serializer.serialize_struct("UfrxModelStateRecordWire", 10)?;
         fields.serialize_field("id", &self.id)?;
         fields.serialize_field("ordinal", &self.ordinal)?;
         fields.serialize_field("prefix", &self.prefix)?;
@@ -236,7 +263,8 @@ impl Serialize for UfrxModelStateRecord {
         fields.serialize_field("state", &self.state)?;
         fields.serialize_field("prefix_count", &self.prefix_count)?;
         fields.serialize_field("parameters", &self.parameters)?;
-        fields.serialize_field("suffix_len", &77_u64)?;
+        fields.serialize_field("table_entry_count", &self.table_entry_count)?;
+        fields.serialize_field("suffix_len", &self.suffix_len)?;
         fields.serialize_field("suffix_sha256", &self.suffix_sha256)?;
         fields.end()
     }
@@ -251,6 +279,7 @@ pub(crate) struct UfrxModelStateRecordWire {
     pub(crate) state: [u16; 2],
     pub(crate) prefix_count: u32,
     pub(crate) parameters: Vec<UfrxModelStateParameterRecord>,
+    pub(crate) table_entry_count: Option<u32>,
     pub(crate) suffix_len: u64,
     pub(crate) suffix_sha256: String,
 }
@@ -258,7 +287,8 @@ pub(crate) struct UfrxModelStateRecordWire {
 impl TryFrom<UfrxModelStateRecordWire> for UfrxModelStateRecord {
     type Error = String;
     fn try_from(wire: UfrxModelStateRecordWire) -> Result<Self, Self::Error> {
-        if let Some(issue) = model_state_issue(wire.suffix_len, &wire.name) {
+        if let Some(issue) = model_state_issue(wire.suffix_len, wire.table_entry_count, &wire.name)
+        {
             return Err(issue.into());
         }
         Ok(Self {
@@ -269,6 +299,8 @@ impl TryFrom<UfrxModelStateRecordWire> for UfrxModelStateRecord {
             state: wire.state,
             prefix_count: wire.prefix_count,
             parameters: wire.parameters,
+            table_entry_count: wire.table_entry_count,
+            suffix_len: wire.suffix_len,
             suffix_sha256: Sha256Digest::try_from(wire.suffix_sha256)
                 .map_err(|error| format!("suffix_sha256: {error}"))?,
         })
@@ -964,9 +996,11 @@ mod tests {
         }
 
         let representation = serde_json::json!({
-            "prefix": 0, "active_representation": "Master",
-            "active_representation_kind": "LOD", "secondary_active_lod_state": [0, 0],
-            "active_model_state": "Primary", "active_model_state_state": [0, 0]
+            "active_lod_state": 0,
+            "representations": [{"name": "Master", "kind": "LOD"}],
+            "secondary_active_lod_state": [0, 0],
+            "active_model_state": "Primary", "active_model_state_state": [0, 0],
+            "model_state_extension": 2
         });
         let admitted: UfrxRepresentationRecord =
             serde_json::from_value(representation.clone()).expect("valid fixture");
@@ -985,7 +1019,8 @@ mod tests {
         let expected = serde_json::json!({
             "id": "inventor:ufrx:model-state#0", "ordinal": 0, "prefix": 0,
             "name": "Primary", "state": [0, 0], "prefix_count": 0,
-            "parameters": [], "suffix_len": 77, "suffix_sha256": "a".repeat(64)
+            "parameters": [], "table_entry_count": null, "suffix_len": 77,
+            "suffix_sha256": "a".repeat(64)
         });
         let record: UfrxModelStateRecord =
             serde_json::from_value(expected.clone()).expect("valid fixture");
@@ -1058,8 +1093,24 @@ mod tests {
 
     #[test]
     fn ufrx_conversion_issues_preserve_wire_refusal_order() {
-        assert_eq!(model_state_issue(76, " "), Some("suffix_len must be 77"));
-        assert_eq!(model_state_issue(77, " "), Some("name must not be empty"));
+        assert_eq!(
+            model_state_issue(76, None, " "),
+            Some("suffix_len does not frame the model-state suffix")
+        );
+        assert_eq!(
+            model_state_issue(77, None, " "),
+            Some("name must not be empty")
+        );
+        assert_eq!(model_state_issue(81, Some(0), "state"), None);
+        assert_eq!(
+            model_state_issue(77, Some(0), "state"),
+            Some("suffix_len does not frame the model-state suffix")
+        );
+        assert_eq!(model_state_issue(121, Some(1), "state"), None);
+        assert_eq!(
+            model_state_issue(81, Some(1), "state"),
+            Some("suffix_len does not frame the model-state suffix")
+        );
         assert_eq!(
             embedded_reference_issue(0),
             Some("record_len must not be zero")
@@ -1070,21 +1121,18 @@ mod tests {
         );
         assert_eq!(occurrence_issue(8, 0), Some("record_len must not be zero"));
         assert_eq!(
-            representation_issue(Some(" "), Some(" "), " "),
-            Some("active_representation must not be empty")
+            representation_issue([(" ", " ")], " "),
+            Some("representation name must not be empty")
         );
         assert_eq!(
-            representation_issue(Some("name"), Some(" "), " "),
-            Some("active_representation_kind must not be empty")
+            representation_issue([("name", " ")], " "),
+            Some("representation kind must not be empty")
         );
         assert_eq!(
-            representation_issue(Some("name"), None, " "),
-            Some("active_representation and active_representation_kind must be present together")
-        );
-        assert_eq!(
-            representation_issue(None, None, " "),
+            representation_issue([], " "),
             Some("active_model_state must not be empty")
         );
+        assert_eq!(representation_issue([("name", "kind")], "state"), None);
         assert_eq!(
             external_reference_issue(" ", byte_document_id_present(&[0; 16])),
             Some("path or a nonzero document_id is required")
@@ -1226,11 +1274,16 @@ mod tests {
     }
 
     #[test]
-    fn representation_admission_rejects_empty_names_and_half_pairs() {
+    fn representation_admission_rejects_empty_names() {
         let valid = serde_json::json!({
-            "prefix": 0, "active_representation": "Master",
-            "active_representation_kind": "LOD", "secondary_active_lod_state": [0, 0],
-            "active_model_state": "Primary", "active_model_state_state": [0, 0]
+            "active_lod_state": 0,
+            "representations": [
+                {"name": "Default", "kind": "DesignView"},
+                {"name": "Body", "kind": "Export"}
+            ],
+            "secondary_active_lod_state": [2, 0],
+            "active_model_state": "Primary", "active_model_state_state": [0, 0],
+            "model_state_extension": null
         });
         let record: UfrxRepresentationRecord =
             serde_json::from_value(valid.clone()).expect("valid native record fixture");
@@ -1238,26 +1291,20 @@ mod tests {
             serde_json::to_value(record).expect("valid native record fixture"),
             valid
         );
-        for field in [
-            "active_representation",
-            "active_representation_kind",
-            "active_model_state",
+        for (pointer, field) in [
+            ("/representations/1/name", "representation name"),
+            ("/representations/0/kind", "representation kind"),
+            ("/active_model_state", "active_model_state"),
         ] {
             let mut wire = valid.clone();
-            wire[field] = serde_json::json!("");
+            *wire.pointer_mut(pointer).expect("fixture field") = serde_json::json!("");
             assert!(serde_json::from_value::<UfrxRepresentationRecord>(wire)
                 .expect_err("invalid native record fixture")
                 .to_string()
                 .contains(field));
         }
-        for field in ["active_representation", "active_representation_kind"] {
-            let mut wire = valid.clone();
-            wire[field] = serde_json::Value::Null;
-            assert!(serde_json::from_value::<UfrxRepresentationRecord>(wire).is_err());
-        }
         let mut wire = valid;
-        wire["active_representation"] = serde_json::Value::Null;
-        wire["active_representation_kind"] = serde_json::Value::Null;
+        wire["representations"] = serde_json::json!([]);
         assert!(serde_json::from_value::<UfrxRepresentationRecord>(wire).is_ok());
     }
 
@@ -1266,7 +1313,7 @@ mod tests {
         let valid = serde_json::json!({
             "id": "state", "ordinal": 0, "prefix": 0, "name": "Primary",
             "state": [0, 0], "prefix_count": 0, "parameters": [],
-            "suffix_len": 77, "suffix_sha256": "a".repeat(64)
+            "table_entry_count": null, "suffix_len": 77, "suffix_sha256": "a".repeat(64)
         });
         let record: UfrxModelStateRecord =
             serde_json::from_value(valid.clone()).expect("valid native record fixture");
@@ -1308,6 +1355,7 @@ mod tests {
                 state: [0, 0],
                 prefix_count: 0,
                 parameters: vec![],
+                table_entry_count: None,
                 suffix_len: 77,
                 suffix_sha256: "0".repeat(64),
             })

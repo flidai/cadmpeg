@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use cadmpeg_container::compound::{CompoundEntry, CompoundSnapshot, CompoundStreamId};
-use cadmpeg_container::compression::inflate_zlib_exact;
+use cadmpeg_container::compression::{inflate_zlib_exact, inflate_zstd_exact};
 use cadmpeg_core::decode::{DecodeContext, View};
 use cadmpeg_core::CodecError;
 use cadmpeg_ir::ids::IdentityKey;
@@ -333,6 +333,42 @@ pub(crate) struct BulkForm(u16);
 impl BulkForm {
     pub(crate) const fn value(self) -> u16 {
         self.0
+    }
+
+    fn compression(self) -> Result<SegmentCompression, CodecError> {
+        match self.0 {
+            0x0104 => Ok(SegmentCompression::Zlib),
+            0x0204 => Ok(SegmentCompression::Zstd),
+            form => Err(CodecError::malformed(format_args!(
+                "RSe bulk envelope form {form:#06x} selects no compression method"
+            ))),
+        }
+    }
+}
+
+/// The compression method an `RSe` envelope form selects for its member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentCompression {
+    Zlib,
+    Zstd,
+}
+
+impl SegmentCompression {
+    fn from_meta_body_form(form: u8) -> Result<Self, CodecError> {
+        match form {
+            1 => Ok(Self::Zlib),
+            2 => Ok(Self::Zstd),
+            form => Err(CodecError::malformed(format_args!(
+                "RSe metadata body form {form} selects no compression method"
+            ))),
+        }
+    }
+
+    fn expand<'a>(self, ctx: &DecodeContext<'a>, member: View<'a>) -> Result<View<'a>, CodecError> {
+        match self {
+            Self::Zlib => inflate_zlib_exact(ctx, member),
+            Self::Zstd => inflate_zstd_exact(ctx, member),
+        }
     }
 }
 
@@ -758,7 +794,7 @@ fn parse_bulk_stream<'a>(
     let compressed = source
         .child(source.start() + envelope::LEN, source.end())
         .ok_or_else(|| CodecError::Malformed("RSe bulk member range is invalid".into()))?;
-    let expanded = inflate_zlib_exact(ctx, compressed)?;
+    let expanded = form.compression()?.expand(ctx, compressed)?;
     Ok(BulkEnvelope {
         prefix,
         form,
@@ -869,6 +905,7 @@ fn parse_meta_stream_v8<'a>(
     let created = cursor.length_prefixed_utf8(ctx, "creation timestamp")?;
     let modified = cursor.length_prefixed_utf8(ctx, "modification timestamp")?;
     let body_form = cursor.u8("body form")?;
+    let compression = SegmentCompression::from_meta_body_form(body_form)?;
     if cursor.remaining() == 0 {
         return Err(CodecError::Malformed(
             "RSe metadata stream has no compressed body".into(),
@@ -877,7 +914,7 @@ fn parse_meta_stream_v8<'a>(
     let compressed = source
         .child(cursor.position(), source.end())
         .ok_or_else(|| CodecError::Malformed("RSe metadata body range is invalid".into()))?;
-    let body = inflate_zlib_exact(ctx, compressed)?;
+    let body = compression.expand(ctx, compressed)?;
     let tables = parse_meta_tables(ctx, body)?;
     Ok(SegmentMeta {
         declared,
@@ -1535,7 +1572,125 @@ mod tests {
         assert!(parse_bulk_stream(&ctx, root).is_err());
     }
 
+    #[test]
+    fn meta_stream_body_form_two_is_one_exact_zstd_frame() {
+        let bytes = zstd_meta_fixture(2, false);
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic metadata stream fits policy");
+        let SegmentMetaState::Parsed(meta) =
+            parse_meta_stream(&ctx, root).expect("synthetic metadata stream parses")
+        else {
+            panic!("a form-2 body frames under the version-8 grammar")
+        };
+        assert_eq!(meta.body_form, 2);
+        assert_eq!(
+            meta.body.window(),
+            crate::records::synthetic_meta_table_body().as_slice()
+        );
+        assert_eq!(meta.tables.blocks.len(), 2);
+        assert_eq!(meta.tables.types.len(), 1);
+    }
+
+    #[test]
+    fn meta_stream_body_form_selects_the_compression_method() {
+        for (bytes, reason) in [
+            (zstd_meta_fixture(2, true), "a Zstandard suffix"),
+            (
+                zstd_meta_fixture(1, false),
+                "a Zstandard frame under the zlib form",
+            ),
+            (zstd_meta_fixture(3, false), "a form that selects no method"),
+            (
+                meta_envelope(2, b"not compressed"),
+                "zlib-free bytes under form 2",
+            ),
+        ] {
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+                    .expect("synthetic metadata stream fits policy");
+            let state = parse_meta_stream(&ctx, root).expect("the declaration reads first");
+            assert!(
+                matches!(
+                    state,
+                    SegmentMetaState::Malformed {
+                        declared: Some(_),
+                        ..
+                    }
+                ),
+                "{reason} is malformed after the declaration"
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_stream_form_0204_is_one_exact_zstd_frame() {
+        let bytes = zstd_bulk_fixture(0x0204, false);
+        let arena = DecodeArena::new();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+            .expect("synthetic bulk stream fits policy");
+        let bulk = parse_bulk_stream(&ctx, root).expect("synthetic bulk stream parses");
+        assert_eq!(bulk.form.value(), 0x0204);
+        assert_eq!(bulk.expanded.window(), b"framed bulk records");
+    }
+
+    #[test]
+    fn bulk_stream_form_selects_the_compression_method() {
+        for (bytes, reason) in [
+            (zstd_bulk_fixture(0x0204, true), "a Zstandard suffix"),
+            (
+                zstd_bulk_fixture(0x0104, false),
+                "a Zstandard frame under the zlib form",
+            ),
+            (
+                zstd_bulk_fixture(0x0304, false),
+                "a form that selects no method",
+            ),
+            (
+                bulk_fixture_with_form(0x0204),
+                "a zlib member under the Zstandard form",
+            ),
+        ] {
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::default())
+                    .expect("synthetic bulk stream fits policy");
+            assert!(
+                parse_bulk_stream(&ctx, root).is_err(),
+                "{reason} is malformed"
+            );
+        }
+    }
+
+    fn bulk_fixture_with_form(form: u16) -> Vec<u8> {
+        let mut bytes = bulk_fixture(false);
+        bytes[16..18].copy_from_slice(&form.to_le_bytes());
+        bytes
+    }
+
     fn meta_fixture(suffix: bool) -> Vec<u8> {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&crate::records::synthetic_meta_table_body())
+            .expect("write synthetic zlib body");
+        let mut bytes = meta_envelope(1, &encoder.finish().expect("finish synthetic zlib body"));
+        if suffix {
+            bytes.push(0);
+        }
+        bytes
+    }
+
+    fn zstd_meta_fixture(form: u8, suffix: bool) -> Vec<u8> {
+        let mut member = zstd::bulk::compress(&crate::records::synthetic_meta_table_body(), 3)
+            .expect("compress synthetic Zstandard body");
+        if suffix {
+            member.push(0);
+        }
+        meta_envelope(form, &member)
+    }
+
+    fn meta_envelope(form: u8, member: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::new();
         push_bytes(&mut bytes, b"RSe Meta Stream Version 8");
         bytes.extend_from_slice(&8_u16.to_le_bytes());
@@ -1549,29 +1704,39 @@ mod tests {
         }
         push_bytes(&mut bytes, b"created");
         push_bytes(&mut bytes, b"modified");
-        bytes.push(1);
+        bytes.push(form);
+        bytes.extend_from_slice(member);
+        bytes
+    }
+
+    fn bulk_fixture(suffix: bool) -> Vec<u8> {
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder
-            .write_all(&crate::records::synthetic_meta_table_body())
-            .expect("write synthetic zlib body");
-        bytes.extend_from_slice(&encoder.finish().expect("finish synthetic zlib body"));
+            .write_all(b"framed bulk records")
+            .expect("write synthetic bulk member");
+        let mut bytes = bulk_envelope(
+            0x0104,
+            &encoder.finish().expect("finish synthetic bulk member"),
+        );
         if suffix {
             bytes.push(0);
         }
         bytes
     }
 
-    fn bulk_fixture(suffix: bool) -> Vec<u8> {
-        let mut bytes = vec![0x3c; 16];
-        bytes.extend_from_slice(&0x0104_u16.to_le_bytes());
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(b"framed bulk records")
-            .expect("write synthetic bulk member");
-        bytes.extend_from_slice(&encoder.finish().expect("finish synthetic bulk member"));
+    fn zstd_bulk_fixture(form: u16, suffix: bool) -> Vec<u8> {
+        let mut member =
+            zstd::bulk::compress(b"framed bulk records", 3).expect("compress synthetic member");
         if suffix {
-            bytes.push(0);
+            member.push(0);
         }
+        bulk_envelope(form, &member)
+    }
+
+    fn bulk_envelope(form: u16, member: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x3c; 16];
+        bytes.extend_from_slice(&form.to_le_bytes());
+        bytes.extend_from_slice(member);
         bytes
     }
 

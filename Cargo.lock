@@ -291,6 +291,7 @@ dependencies = [
  "serde",
  "serde_json",
  "zip",
+ "zstd 0.14.0",
 ]
 
 [[package]]

@@ -9,6 +9,7 @@ use flate2::read::DeflateDecoder;
 use flate2::{Decompress, FlushDecompress, Status};
 
 const INFLATE_CHUNK: usize = 8192;
+const ZSTD_FRAME_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
 /// Inflates one zlib member that starts at `source`.
 ///
@@ -94,6 +95,43 @@ pub fn inflate_zlib_exact<'a>(
     Ok(view)
 }
 
+/// Decompresses exactly one Zstandard frame that occupies all of `source`.
+///
+/// Skippable frames, a second frame, and trailing input are rejected. The
+/// frame window is admitted by [`DecodeContext::open_zstd`] before the decoder
+/// allocates, and the output is charged through
+/// [`DecodeContext::begin_expand`].
+pub fn inflate_zstd_exact<'a>(
+    ctx: &DecodeContext<'a>,
+    source: View<'a>,
+) -> Result<View<'a>, CodecError> {
+    let input = source.window();
+    if input.get(..4) != Some(ZSTD_FRAME_MAGIC.as_slice()) {
+        return Err(CodecError::Malformed(
+            "Zstandard member does not start with a frame magic".into(),
+        ));
+    }
+    let frame_len = zstd::zstd_safe::find_frame_compressed_size(input)
+        .map_err(|_| CodecError::Malformed("Zstandard member has no complete frame".into()))?;
+    if frame_len != input.len() {
+        return Err(CodecError::Malformed(
+            "Zstandard frame does not exhaust its declared input".into(),
+        ));
+    }
+    let mut decoder = ctx.open_zstd(source)?;
+    let mut writer = ctx.begin_expand(ExpandSpec::Unknown)?;
+    let mut chunk = [0_u8; INFLATE_CHUNK];
+    loop {
+        let read = decoder.read_chunk(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        writer.write(&chunk[..read])?;
+    }
+    drop(decoder);
+    writer.finalize()
+}
+
 /// Inflates a raw-DEFLATE member that occupies all of `source`.
 ///
 /// `spec` is charged through [`DecodeContext::begin_expand`].
@@ -163,7 +201,7 @@ mod tests {
 
     use super::{
         inflate_deflate, inflate_deflate_owned, inflate_zlib_exact, inflate_zlib_member,
-        inflate_zlib_member_owned,
+        inflate_zlib_member_owned, inflate_zstd_exact,
     };
 
     #[test]
@@ -378,5 +416,74 @@ mod tests {
             Some(b"Document.xml".as_slice())
         );
         assert!(ctx.inflate_probe(root, 11, true).expect("probe").is_none());
+    }
+
+    #[test]
+    fn exact_zstd_accepts_one_complete_frame() {
+        let compressed = zstd::bulk::compress(b"one frame", 3).expect("frame");
+        let arena = DecodeArena::new();
+        let (ctx, root) =
+            DecodeContext::from_root_bytes(&compressed, &arena, &DecodePolicy::service())
+                .expect("test input fits service profile");
+        assert_eq!(
+            inflate_zstd_exact(&ctx, root)
+                .expect("complete frame decompresses")
+                .window(),
+            b"one frame"
+        );
+    }
+
+    #[test]
+    fn exact_zstd_rejects_trailing_input_and_second_frame() {
+        let frame = zstd::bulk::compress(b"one frame", 3).expect("frame");
+        let mut suffixed = frame.clone();
+        suffixed.extend_from_slice(b"suffix");
+        let mut doubled = frame.clone();
+        doubled.extend_from_slice(&frame);
+        for bytes in [suffixed, doubled] {
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::service())
+                    .expect("test input fits service profile");
+            assert!(matches!(
+                inflate_zstd_exact(&ctx, root),
+                Err(CodecError::Malformed(message))
+                    if message == "Zstandard frame does not exhaust its declared input"
+            ));
+        }
+    }
+
+    #[test]
+    fn exact_zstd_rejects_skippable_and_truncated_frames() {
+        let mut skippable = vec![0x50, 0x2a, 0x4d, 0x18];
+        skippable.extend_from_slice(&0_u32.to_le_bytes());
+        let frame = zstd::bulk::compress(b"one frame payload", 3).expect("frame");
+        let truncated = frame[..frame.len() - 1].to_vec();
+        for bytes in [skippable, truncated] {
+            let arena = DecodeArena::new();
+            let (ctx, root) =
+                DecodeContext::from_root_bytes(&bytes, &arena, &DecodePolicy::service())
+                    .expect("test input fits service profile");
+            assert!(matches!(
+                inflate_zstd_exact(&ctx, root),
+                Err(CodecError::Malformed(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn exact_zstd_charges_the_per_expand_limit() {
+        let compressed = zstd::bulk::compress(b"twelve bytes", 3).expect("frame");
+        let arena = DecodeArena::new();
+        let mut policy = DecodePolicy::service();
+        policy.limits.max_decompressed_bytes_per_expand = 11;
+        let (ctx, root) =
+            DecodeContext::from_root_bytes(&compressed, &arena, &policy).expect("root");
+        assert!(matches!(
+            inflate_zstd_exact(&ctx, root),
+            Err(CodecError::ResourceLimit(limit))
+                if limit.dimension == ResourceDimension::DecompressedBytes
+                    || limit.dimension == ResourceDimension::MaterializedBytes
+        ));
     }
 }
