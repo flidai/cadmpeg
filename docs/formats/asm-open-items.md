@@ -211,6 +211,26 @@ identity that does not own the admitted carrier.
 **Note.** Do not use first-definition order as construction identity. Reject an ambiguous owner when
 the record grammar does not identify one construction.
 
+### GC-38. Parameter chart of a `helix_spl_line` surface
+
+**Question.** Which function maps a `(u, v)` pair of a `helix_spl_line` surface to a model-space
+point?
+
+**Known.** `asm.md` §6.3 "**`helix_spl_circ` / `helix_spl_line`**" gives the angular interval, the
+secondary interval, the inline helix path, and the model-space profile direction. Pcurves on the
+surface use the angular interval as the `u` range and the secondary interval as the `v` range. Along
+a pcurve at constant `u`, the angle about the path axis changes by `v` and the axial position changes
+by `-pitch * v / (2 * pi)` in the path axis direction. The function `center + major * cos(v) + minor * sin(v) +
+pitch * v / (2 * pi) + u * direction` does not give the edge vertices. With a profile direction
+parallel to the path axis, the distance from the axis changes with `u`.
+
+**Need.** A writer that has no helix surface record, for example STEP, must build a surface with the
+same chart or must map the pcurves. Without the function, the decoder has no solved carrier, and a
+face on the surface has no exportable support.
+
+**Note.** The surface is cacheless. `procedural_surface_definition_is_exact_carrier` in
+`brep/geometry.rs` admits it with no solved carrier.
+
 ## 2. Topology
 
 ### TG-01. Missing partner coedge substitution
