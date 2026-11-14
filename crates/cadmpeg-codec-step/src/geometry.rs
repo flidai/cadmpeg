@@ -468,6 +468,36 @@ fn basis_surface(e: &mut Emitter, g: &SolvedSurfaceGeometry) -> Option<Ref> {
                 &format!("'',{pl},{}", e.real(radius)),
             )
         }
+        // A zero-angle cone is a cylinder over its cross-section. The circular
+        // section is a `cylindrical_surface`; the elliptical section is a
+        // `surface_of_linear_extrusion` of an `ellipse` along the unit axis.
+        // Both keep the cone chart: `u` is the section angle and `v` the axial
+        // distance from the origin.
+        SolvedSurfaceGeometry::Cone(cone_surface) if cone_surface.half_angle().get() == 0.0 => {
+            let origin = cone_surface.origin().get();
+            let axis = *cone_surface.frame().axis();
+            let ref_direction = *cone_surface.frame().reference();
+            let radius = cone_surface.radius().get();
+            let ratio = cone_surface.ratio().get();
+            let pl = placement(e, origin, axis, ref_direction);
+            if ratio == 1.0 {
+                e.emit(
+                    "CYLINDRICAL_SURFACE",
+                    &format!("'',{pl},{}", e.real(radius)),
+                )
+            } else {
+                let section = e.emit(
+                    "ELLIPSE",
+                    &format!("'',{pl},{},{}", e.real(radius), e.real(radius * ratio)),
+                );
+                let axis_direction = direction(e, axis.into());
+                let extrusion = e.emit("VECTOR", &format!("'',{axis_direction},{}", e.real(1.0)));
+                e.emit(
+                    "SURFACE_OF_LINEAR_EXTRUSION",
+                    &format!("'',{section},{extrusion}"),
+                )
+            }
+        }
         // ISO 10303-42 `conical_surface` holds `semi_angle` in `(0, pi/2)`.
         // Reversing the axis and angle maps a negative-angle cone exactly under
         // the parameter change `(u, v) -> (-u, -v)`.

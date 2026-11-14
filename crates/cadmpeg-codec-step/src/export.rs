@@ -103,13 +103,9 @@ pub(crate) fn write_step_outcome(
         )));
     }
     for surface in &ir.model.surfaces {
-        if let Some(half_angle) = surface
-            .geometry
-            .solved()
-            .and_then(out_of_domain_cone_half_angle)
-        {
+        if let Some(reason) = surface.geometry.solved().and_then(unwritable_cone) {
             return Err(cadmpeg_core::CodecError::NotImplemented(format!(
-                "STEP conical_surface cannot represent surface '{}' with semi-angle {half_angle} outside (0, pi/2)",
+                "STEP cannot represent cone surface '{}': {reason}",
                 surface.id
             )));
         }
@@ -129,13 +125,24 @@ pub(crate) fn write_step_outcome(
     Ok(outcome)
 }
 
-fn out_of_domain_cone_half_angle(mut geometry: &SolvedSurfaceGeometry) -> Option<f64> {
+/// The reason no STEP surface holds a cone carrier.
+///
+/// `conical_surface` holds a semi-angle in `(0, pi/2)`. A zero-angle cone is
+/// written as a cylinder over its section, which needs a positive radius.
+fn unwritable_cone(mut geometry: &SolvedSurfaceGeometry) -> Option<String> {
     loop {
         match geometry {
             SolvedSurfaceGeometry::Cone(cone) => {
                 let angle = cone.half_angle().get();
-                return (angle == 0.0 || angle.abs() >= std::f64::consts::FRAC_PI_2)
-                    .then_some(angle);
+                return if angle.abs() >= std::f64::consts::FRAC_PI_2 {
+                    Some(format!(
+                        "conical_surface semi-angle {angle} is outside (0, pi/2)"
+                    ))
+                } else if angle == 0.0 && cone.radius().get() == 0.0 {
+                    Some("semi-angle 0 with radius 0 has no cylindrical section".to_owned())
+                } else {
+                    None
+                };
             }
             SolvedSurfaceGeometry::Transformed(placed) => geometry = placed.basis(),
             _ => return None,
@@ -270,7 +277,8 @@ pub(crate) struct Builder<'a> {
     /// Faces skipped because their surface geometry is unknown (opaque), so no
     /// STEP surface exists to build an `ADVANCED_FACE` on. Deduplicated (a face
     /// is reached once per shell) and aggregated into a single counted loss.
-    unknown_surface_faces: BTreeSet<String>,
+    /// Omitted face id to the kind of the surface it rests on.
+    unknown_surface_faces: BTreeMap<String, String>,
 
     /// Individual enclosing topology relations that could not be emitted.
     topology_relation_losses: BTreeSet<String>,
@@ -435,7 +443,7 @@ impl<'a> Builder<'a> {
             written_procedural_curves: BTreeSet::new(),
             written_analytic_surfaces: Vec::new(),
             curveless_edges: BTreeSet::new(),
-            unknown_surface_faces: BTreeSet::new(),
+            unknown_surface_faces: BTreeMap::new(),
             topology_relation_losses: BTreeSet::new(),
             face_step_refs: HashMap::new(),
             body_step_refs: HashMap::new(),
@@ -2374,7 +2382,8 @@ impl<'a> Builder<'a> {
         // Surface emission admits either a writable construction or a solved
         // carrier. An absent or opaque solved cache cannot veto a construction.
         let Some(surf_ref) = self.emit_surface(surface_id) else {
-            self.unknown_surface_faces.insert(face_id.to_string());
+            let kind = self.unwritable_surface_kind(surface_id);
+            self.unknown_surface_faces.insert(face_id.to_string(), kind);
             return None;
         };
 
@@ -2859,6 +2868,30 @@ impl<'a> Builder<'a> {
             return Some(r);
         }
         None
+    }
+
+    /// Name the surface a face could not be written on: the construction kind
+    /// when one is attached, otherwise the solved carrier state.
+    fn unwritable_surface_kind(&self, surface_id: &str) -> String {
+        if let Some(procedural) = self.procedural_surfaces.get(surface_id) {
+            let kind = serde_json::to_value(procedural.definition())
+                .ok()
+                .and_then(|value| value.get("kind")?.as_str().map(str::to_owned));
+            return format!("{} construction", kind.as_deref().unwrap_or("unnamed"));
+        }
+        match self
+            .surfaces
+            .get(surface_id)
+            .and_then(|surface| surface.geometry.solved())
+        {
+            None => "unsolved carrier".to_owned(),
+            Some(solved) => match geometry::emitted_basis(solved) {
+                SolvedSurfaceGeometry::Nurbs(_) => "invalid NURBS carrier".to_owned(),
+                SolvedSurfaceGeometry::Polygonal(_) => "polygonal carrier".to_owned(),
+                SolvedSurfaceGeometry::Unknown { .. } => "unknown carrier".to_owned(),
+                _ => "non-similarity placed carrier".to_owned(),
+            },
+        }
     }
 
     fn surface_chart_reversed(&self, surface_id: &str) -> bool {
@@ -4086,10 +4119,7 @@ impl<'a> Builder<'a> {
             .iter()
             .filter(|written| {
                 matches!(written, WrittenAnalyticSurface::Carrier(SolvedSurfaceGeometry::Cone(cone_surface))
-                if {
-                    let ratio = cone_surface.ratio().get();
-                    ratio != 1.0
-                })
+                if cone_surface.ratio().get() != 1.0 && cone_surface.half_angle().get() != 0.0)
             })
             .count();
         if elliptical_cones > 0 {
@@ -4111,12 +4141,21 @@ impl<'a> Builder<'a> {
             );
         }
         if !self.unknown_surface_faces.is_empty() {
+            let mut kinds = BTreeMap::<&str, usize>::new();
+            for kind in self.unknown_surface_faces.values() {
+                *kinds.entry(kind.as_str()).or_default() += 1;
+            }
+            let kinds = kinds
+                .iter()
+                .map(|(kind, count)| format!("{kind}: {count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             self.loss(
                 StepLossCode::UnknownSurfaceFaceOmitted,
                 format!(
                     "{} face(s) rest on an unknown or STEP-unsupported surface and were omitted \
                      from the STEP shell (an ADVANCED_FACE requires a surface); their \
-                     topology remains in the IR",
+                     topology remains in the IR; surface kinds: {kinds}",
                     self.unknown_surface_faces.len()
                 ),
             );
